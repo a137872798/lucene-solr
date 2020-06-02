@@ -43,10 +43,13 @@ import org.apache.lucene.util.InfoStream;
  * @see DocumentsWriterFlushControl
  * @see DocumentsWriterPerThread
  * @see IndexWriterConfig#setFlushPolicy(FlushPolicy)
+ * 代表刷盘策略
  */
 abstract class FlushPolicy {
   protected LiveIndexWriterConfig indexWriterConfig;
   protected InfoStream infoStream;
+
+  // 下面有一些钩子方法 给目标对象在合适的时机调用
 
   /**
    * Called for each delete term. If this is a delete triggered due to an update

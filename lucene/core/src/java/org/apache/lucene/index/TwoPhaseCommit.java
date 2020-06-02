@@ -25,6 +25,7 @@ import java.io.IOException;
  * {@link TwoPhaseCommit}s.
  * 
  * @lucene.experimental
+ * 这不就是 TCC吗...
  */
 public interface TwoPhaseCommit {
 

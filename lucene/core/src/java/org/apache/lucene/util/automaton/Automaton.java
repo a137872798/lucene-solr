@@ -52,7 +52,7 @@ import org.apache.lucene.util.Sorter;
  *  adjacent labels going to the same dest are combined).
  *
  * @lucene.experimental */
-
+// 自动机
 public class Automaton implements Accountable {
 
   /** Where we next write to the int[] states; this increments by 2 for

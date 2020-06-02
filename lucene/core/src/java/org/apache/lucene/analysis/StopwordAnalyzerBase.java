@@ -29,11 +29,13 @@ import org.apache.lucene.util.IOUtils;
  *
  *
  * @since 3.1
+ * 该对象可以解析出 停词   stopword 也就是无法作为查询关键字的词
  */
 public abstract class StopwordAnalyzerBase extends Analyzer {
 
   /**
    * An immutable stopword set
+   * 停词 数据集
    */
   protected final CharArraySet stopwords;
 
@@ -52,7 +54,7 @@ public abstract class StopwordAnalyzerBase extends Analyzer {
    * Creates a new instance initialized with the given stopword set
    * 
    * @param stopwords
-   *          the analyzer's stopword set
+   *          the analyzer's stopword set    用于存放停词的容器
    */
   protected StopwordAnalyzerBase(final CharArraySet stopwords) {
     // analyzers should use char array set for stopwords!
@@ -79,11 +81,12 @@ public abstract class StopwordAnalyzerBase extends Analyzer {
    * @param resource
    *          name of the resource file associated with the given class
    * @param comment
-   *          comment string to ignore in the stopword file
+   *          comment string to ignore in the stopword file    如果从文件中扫描出来的数据包含了该字符串作为前缀 那么不会作为停词
    * @return a CharArraySet containing the distinct stopwords from the given
    *         file
    * @throws IOException
    *           if loading the stopwords throws an {@link IOException}
+   *           从一个资源中加载停词
    */
   protected static CharArraySet loadStopwordSet(final boolean ignoreCase,
       final Class<? extends Analyzer> aClass, final String resource,
@@ -128,6 +131,7 @@ public abstract class StopwordAnalyzerBase extends Analyzer {
    *         reader
    * @throws IOException
    *           if loading the stopwords throws an {@link IOException}
+   *           从输入流中读取数据 并作为停词的数据集
    */
   protected static CharArraySet loadStopwordSet(Reader stopwords) throws IOException {
     try {

@@ -203,11 +203,14 @@ public final class CodecUtil {
    *  version assumes the first int has already been read
    *  and validated from the input. */
   public static int checkHeaderNoMagic(DataInput in, String codec, int minVersion, int maxVersion) throws IOException {
+    // 读取一个编码数
     final String actualCodec = in.readString();
+    // 与期待值不匹配  抛出异常
     if (!actualCodec.equals(codec)) {
       throw new CorruptIndexException("codec mismatch: actual codec=" + actualCodec + " vs expected codec=" + codec, in);
     }
 
+    // 开始校验版本号
     final int actualVersion = in.readInt();
     if (actualVersion < minVersion) {
       throw new IndexFormatTooOldException(in, actualVersion, minVersion, maxVersion);
@@ -354,7 +357,9 @@ public final class CodecUtil {
   }
   
   /** Expert: just reads and verifies the suffix of an index header */
+  // 匹配特定的前缀
   public static String checkIndexHeaderSuffix(DataInput in, String expectedSuffix) throws IOException {
+    // 获取前缀长度 并按照这个长度读取数据到 byte[]中
     int suffixLength = in.readByte() & 0xFF;
     byte suffixBytes[] = new byte[suffixLength];
     in.readBytes(suffixBytes, 0, suffixBytes.length);

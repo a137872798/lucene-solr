@@ -31,6 +31,7 @@ import org.apache.lucene.util.InfoStream;
 public class SegmentWriteState {
 
   /** {@link InfoStream} used for debugging messages. */
+  // 用于输出 debugging 信息的
   public final InfoStream infoStream;
 
   /** {@link Directory} where this segment will be written
@@ -38,6 +39,7 @@ public class SegmentWriteState {
   public final Directory directory;
 
   /** {@link SegmentInfo} describing this segment. */
+  // 描述当前段的信息
   public final SegmentInfo segmentInfo;
 
   /** {@link FieldInfos} describing all fields in this

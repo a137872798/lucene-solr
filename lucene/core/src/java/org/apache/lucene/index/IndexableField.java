@@ -29,14 +29,14 @@ import org.apache.lucene.util.BytesRef;
  *  consumes Iterable&lt;IndexableField&gt; as a document.
  *
  *  @lucene.experimental */
-
+// 代表索引中的某个字段    IndexWriter 每次都是以 Field为单位
 public interface IndexableField {
 
-  /** Field name */
+  /** Field name */ // 返回该字符的名称
   public String name();
 
   /** {@link IndexableFieldType} describing the properties
-   * of this field. */
+   * of this field. */ // 该字符的类型
   public IndexableFieldType fieldType();
 
   /**
@@ -52,13 +52,16 @@ public interface IndexableField {
    *              check.
    * @return TokenStream value for indexing the document.  Should always return
    *         a non-null value if the field is to be indexed
+   *         将该字段转换成一个 token流
    */
   public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse);
 
   /** Non-null if this field has a binary value */
+  // 以二进制数据流的方式读取索引字段
   public BytesRef binaryValue();
 
   /** Non-null if this field has a string value */
+  // 以字符串的方式读取索引字段
   public String stringValue();
 
   /**
@@ -69,8 +72,10 @@ public interface IndexableField {
   }
 
   /** Non-null if this field has a Reader value */
+  // 将数据以输入流的形式返回
   public Reader readerValue();
 
   /** Non-null if this field has a numeric value */
+  // 将数据以数字形式返回
   public Number numericValue();
 }

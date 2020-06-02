@@ -88,9 +88,13 @@ import org.apache.lucene.util.SuppressForbidden;
  * from the Lucene {@code misc} module in favor of {@link MMapDirectory}.
  * </p>
  * @see <a href="http://blog.thetaphi.de/2012/07/use-lucenes-mmapdirectory-on-64bit.html">Blog post about MMapDirectory</a>
+ * 基于 mmap 的目录对象 那么就是通过内存映射的方式来减少一次 用户态到内核态的数据拷贝
  */
 public class MMapDirectory extends FSDirectory {
   private boolean useUnmapHack = UNMAP_SUPPORTED;
+  /**
+   * 代表 mmap 创建后需要预加载
+   */
   private boolean preload;
 
   /** 
@@ -98,6 +102,10 @@ public class MMapDirectory extends FSDirectory {
    * @see #MMapDirectory(Path, LockFactory, int)
    */
   public static final int DEFAULT_MAX_CHUNK_SIZE = Constants.JRE_IS_64BIT ? (1 << 30) : (1 << 28);
+
+  /**
+   * chunkSize 是2的多少次幂
+   */
   final int chunkSizePower;
 
   /** Create a new MMapDirectory for the named location.
@@ -159,6 +167,7 @@ public class MMapDirectory extends FSDirectory {
     if (maxChunkSize <= 0) {
       throw new IllegalArgumentException("Maximum chunk size for mmap must be >0");
     }
+    // size 是 2的多少次幂
     this.chunkSizePower = 31 - Integer.numberOfLeadingZeros(maxChunkSize);
     assert this.chunkSizePower >= 0 && this.chunkSizePower <= 30;
   }
@@ -229,6 +238,7 @@ public class MMapDirectory extends FSDirectory {
   }
 
   /** Creates an IndexInput for the file with the given name. */
+  // 使用给定的name 从目录下找到某个文件 并生成输入流
   @Override
   public IndexInput openInput(String name, IOContext context) throws IOException {
     ensureOpen();
@@ -237,6 +247,7 @@ public class MMapDirectory extends FSDirectory {
     try (FileChannel c = FileChannel.open(path, StandardOpenOption.READ)) {
       final String resourceDescription = "MMapIndexInput(path=\"" + path.toString() + "\")";
       final boolean useUnmap = getUseUnmap();
+      // 创建一个 mmap 对象 同时创建一个 guard对象 管理该byteBuffer的回收工作
       return ByteBufferIndexInput.newInstance(resourceDescription,
           map(resourceDescription, c, 0, c.size()), 
           c.size(), chunkSizePower, new ByteBufferGuard(resourceDescription, useUnmap ? CLEANER : null));
@@ -244,30 +255,45 @@ public class MMapDirectory extends FSDirectory {
   }
 
   /** Maps a file into a set of buffers */
+  /**
+   * 根据文件通道创建一组 MMapByteBuffer
+   * @param resourceDescription
+   * @param fc
+   * @param offset
+   * @param length
+   * @return
+   * @throws IOException
+   */
   final ByteBuffer[] map(String resourceDescription, FileChannel fc, long offset, long length) throws IOException {
+    // 代表本次创建了太多的 chunk
     if ((length >>> chunkSizePower) >= Integer.MAX_VALUE)
       throw new IllegalArgumentException("RandomAccessFile too big for chunk size: " + resourceDescription);
-    
+
     final long chunkSize = 1L << chunkSizePower;
     
     // we always allocate one more buffer, the last one may be a 0 byte one
+    // 总是多分配一个 Buffer
     final int nrBuffers = (int) (length >>> chunkSizePower) + 1;
     
     ByteBuffer buffers[] = new ByteBuffer[nrBuffers];
     
     long bufferStart = 0L;
-    for (int bufNr = 0; bufNr < nrBuffers; bufNr++) { 
+    for (int bufNr = 0; bufNr < nrBuffers; bufNr++) {
+      // 计算当前buffer的长度
       int bufSize = (int) ( (length > (bufferStart + chunkSize))
           ? chunkSize
+              // 余数
               : (length - bufferStart)
           );
       MappedByteBuffer buffer;
       try {
+        // 为该段文件创建内存映射
         buffer = fc.map(MapMode.READ_ONLY, offset + bufferStart, bufSize);
       } catch (IOException ioe) {
         throw convertMapFailedIOException(ioe, resourceDescription, bufSize);
       }
       if (preload) {
+        // 进行预加载  (难道说调用map的时候内存映射还没真正创建??? 底层先不了解)
         buffer.load();
       }
       buffers[bufNr] = buffer;
@@ -320,11 +346,15 @@ public class MMapDirectory extends FSDirectory {
   
   /** Reference to a BufferCleaner that does unmapping; {@code null} if not supported. */
   private static final BufferCleaner CLEANER;
-  
+
+  /**
+   * 该对象在创建的时候会检测当前系统是否支持使用 mmap
+   */
   static {
     final Object hack = AccessController.doPrivileged((PrivilegedAction<Object>) MMapDirectory::unmapHackImpl);
     if (hack instanceof BufferCleaner) {
       CLEANER = (BufferCleaner) hack;
+      // 代表支持 mmap
       UNMAP_SUPPORTED = true;
       UNMAP_NOT_SUPPORTED_REASON = null;
     } else {
@@ -333,7 +363,11 @@ public class MMapDirectory extends FSDirectory {
       UNMAP_NOT_SUPPORTED_REASON = hack.toString();
     }
   }
-  
+
+  /**
+   * 通过Unsafe类
+   * @return
+   */
   @SuppressForbidden(reason = "Needs access to private APIs in DirectBuffer, sun.misc.Cleaner, and sun.misc.Unsafe to enable hack")
   private static Object unmapHackImpl() {
     final Lookup lookup = lookup();
@@ -342,6 +376,7 @@ public class MMapDirectory extends FSDirectory {
       final Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
       // first check if Unsafe has the right method, otherwise we can give up
       // without doing any security critical stuff:
+      // 创建句柄对象 找到 Unsafe的 invokeCleaner 方法
       final MethodHandle unmapper = lookup.findVirtual(unsafeClass, "invokeCleaner",
           methodType(void.class, ByteBuffer.class));
       // fetch the unsafe instance and bind it to the virtual MH:
@@ -357,10 +392,17 @@ public class MMapDirectory extends FSDirectory {
       return "Unmapping is not supported on this platform, because internal Java APIs are not compatible with this Lucene version: " + e; 
     }
   }
-  
+
+  /**
+   * 通过调用句柄生成 cleaner对象  这里跟kafka使用mmap一毛一样 也是使用句柄来创建的
+   * @param unmappableBufferClass   应该是入参的类型吧
+   * @param unmapper
+   * @return
+   */
   private static BufferCleaner newBufferCleaner(final Class<?> unmappableBufferClass, final MethodHandle unmapper) {
     assert Objects.equals(methodType(void.class, ByteBuffer.class), unmapper.type());
     return (String resourceDescription, ByteBuffer buffer) -> {
+      // 无法映射 非DirectBuffer
       if (!buffer.isDirect()) {
         throw new IllegalArgumentException("unmapping only works with direct buffers");
       }
@@ -369,6 +411,7 @@ public class MMapDirectory extends FSDirectory {
       }
       final Throwable error = AccessController.doPrivileged((PrivilegedAction<Throwable>) () -> {
         try {
+          // invokeExact 在执行时方法必须严格匹配参数类型  如果找不到适配的方法  抛出异常
           unmapper.invokeExact(buffer);
           return null;
         } catch (Throwable t) {

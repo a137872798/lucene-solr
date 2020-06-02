@@ -26,12 +26,10 @@ import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
  * You have to implement {@link #accept} and return a boolean if the current
  * token should be preserved. {@link #incrementToken} uses this method
  * to decide if a token should be passed to the caller.
+ * 添加特殊的钩子 让子类拓展
  */
 public abstract class FilteringTokenFilter extends TokenFilter {
 
-  /**
-   * 这个attr 是用来增加 pos的
-   */
   private final PositionIncrementAttribute posIncrAtt = addAttribute(PositionIncrementAttribute.class);
   private int skippedPositions;
 
@@ -50,7 +48,7 @@ public abstract class FilteringTokenFilter extends TokenFilter {
   public final boolean incrementToken() throws IOException {
     skippedPositions = 0;
     while (input.incrementToken()) {
-      // 代表接收
+      // 当token解析器成功解析到token时  对数据流进行处理
       if (accept()) {
         if (skippedPositions != 0) {
           // 修改当前 pos
@@ -58,7 +56,7 @@ public abstract class FilteringTokenFilter extends TokenFilter {
         }
         return true;
       }
-      // 如果未被接收 这里会累加跳过的值
+      // 代表 accept无法处理数据 就记录这些数据为跳过的数据
       skippedPositions += posIncrAtt.getPositionIncrement();
     }
 

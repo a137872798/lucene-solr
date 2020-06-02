@@ -36,6 +36,8 @@ import org.apache.lucene.util.NamedSPILoader;
  * If you implement your own codec, make sure that it has a no-arg constructor
  * so SPI can load it.
  * @see ServiceLoader
+ * 编解码器本身支持 SPI 加载
+ * 默认实现为 Lucene84Codec
  */
 public abstract class Codec implements NamedSPILoader.NamedSPI {
 

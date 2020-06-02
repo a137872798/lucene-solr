@@ -19,6 +19,9 @@ package org.apache.lucene.util;
 
 import java.util.Comparator;
 
+/**
+ * 该对象是一个bytesRef数组 同时有序存储内部的ref
+ */
 interface SortableBytesRefArray {
   /** Append a new value */
   int append(BytesRef bytes);

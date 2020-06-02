@@ -35,6 +35,7 @@ import org.apache.lucene.codecs.Codec;
  * directly.
  *
  * @lucene.internal
+ * 索引文件的名称工具类
  */
 
 public final class IndexFileNames {
@@ -43,9 +44,11 @@ public final class IndexFileNames {
   private IndexFileNames() {}
 
   /** Name of the index segment file */
+  // 每个片段文件都以 segments 作为前缀
   public static final String SEGMENTS = "segments";
   
   /** Name of pending index segment file */
+  // 处于等待状态的片段文件   一个片段应该指代不止一个 file
   public static final String PENDING_SEGMENTS = "pending_segments";
 
   /**
@@ -57,8 +60,9 @@ public final class IndexFileNames {
    * not an empty string.
    * 
    * @param base main part of the file name
-   * @param ext extension of the filename
+   * @param ext extension of the filename   文件拓展名
    * @param gen generation
+   *            通过基础信息生成一个文件名
    */
   public static String fileNameFromGeneration(String base, String ext, long gen) {
     if (gen == -1) {
@@ -114,6 +118,7 @@ public final class IndexFileNames {
   /**
    * Returns true if the given filename ends with the given extension. One
    * should provide a <i>pure</i> extension, without '.'.
+   * 判断给定的文件全限定名的后缀部分是否匹配
    */
   public static boolean matchesExtension(String filename, String ext) {
     // It doesn't make a difference whether we allocate a StringBuilder ourself
@@ -122,6 +127,7 @@ public final class IndexFileNames {
   }
 
   /** locates the boundary of the segment name, or -1 */
+  // 返回段名所在的下标
   private static int indexOfSegmentName(String filename) {
     // If it is a .del file, there's an '_' after the first character
     int idx = filename.indexOf('_', 1);
@@ -140,6 +146,7 @@ public final class IndexFileNames {
    * 
    * @return the filename with the segment name removed, or the given filename
    *         if it does not contain a '.' and '_'.
+   *         只获取片段名
    */
   public static String stripSegmentName(String filename) {
     int idx = indexOfSegmentName(filename);
@@ -159,6 +166,7 @@ public final class IndexFileNames {
     // segment_gen.ext
     // segment_codec_suffix.ext
     // segment_gen_codec_suffix.ext
+    // 只有  segment_gen.ext  segment_gen_codec_suffix.ext  这2种情况 有年代信息
     if (parts.length == 2 || parts.length == 4) {
       return Long.parseLong(parts[1], Character.MAX_RADIX);
     } else {

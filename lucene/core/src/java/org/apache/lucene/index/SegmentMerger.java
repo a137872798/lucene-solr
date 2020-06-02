@@ -39,12 +39,22 @@ import org.apache.lucene.util.Version;
  * segments.
  *
  * @see #merge
+ * 该对象负责将多个 segment 融合到一个中
  */
 final class SegmentMerger {
+  /**
+   * 这些segment 归属于哪个directory
+   */
   private final Directory directory;
 
+  /**
+   * 编解码器
+   */
   private final Codec codec;
-  
+
+  /**
+   * 记录一些上下文信息
+   */
   private final IOContext context;
   
   final MergeState mergeState;

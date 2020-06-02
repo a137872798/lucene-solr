@@ -49,6 +49,7 @@ import java.util.concurrent.Future; // javadoc
  * {@link Future#cancel(boolean)} you should use the legacy {@code RAFDirectory}
  * from the Lucene {@code misc} module in favor of {@link NIOFSDirectory}.
  * </p>
+ * 基于NIO 文件管道的目录对象  也就是需要将内核态数据 拷贝到用户态  多一次数据复制的开销
  */
 public class NIOFSDirectory extends FSDirectory {
 
@@ -84,6 +85,7 @@ public class NIOFSDirectory extends FSDirectory {
   
   /**
    * Reads bytes with {@link FileChannel#read(ByteBuffer, long)}
+   * 基于 NIO 文件系统的输入流
    */
   static final class NIOFSIndexInput extends BufferedIndexInput {
     /**
@@ -128,7 +130,15 @@ public class NIOFSDirectory extends FSDirectory {
       clone.isClone = true;
       return clone;
     }
-    
+
+    /**
+     * 创建分配对象 实际上就是传入了一个起始偏移量 和一个新的长度
+     * @param sliceDescription
+     * @param offset
+     * @param length
+     * @return
+     * @throws IOException
+     */
     @Override
     public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
       if (offset < 0 || length < 0 || offset + length > this.length()) {
@@ -142,6 +152,11 @@ public class NIOFSDirectory extends FSDirectory {
       return end - off;
     }
 
+    /**
+     * 将数据读取出来 并写入到 入参中
+     * @param b the buffer to read bytes into
+     * @throws IOException
+     */
     @Override
     protected void readInternal(ByteBuffer b) throws IOException {
       long pos = getFilePointer() + off;

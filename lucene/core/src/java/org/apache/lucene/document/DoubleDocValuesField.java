@@ -27,6 +27,7 @@ package org.apache.lucene.document;
  * <b>NOTE</b>: In most all cases this will be rather inefficient,
  * requiring eight bytes per document. Consider encoding double
  * values yourself with only as much precision as you require.
+ * 严格要求 field的类型是double 类型
  */
 public class DoubleDocValuesField extends NumericDocValuesField {
 

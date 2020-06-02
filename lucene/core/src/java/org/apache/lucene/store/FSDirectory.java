@@ -115,19 +115,24 @@ import org.apache.lucene.util.IOUtils;
  * passing in a custom {@link LockFactory} instance.
  *
  * @see Directory
- * 使用lucene的第一步是 打开一个directory
+ * 代表这个目录是基于文件系统的 File System 目录本身是一种抽象 意味着可以存储数据
  */
 public abstract class FSDirectory extends BaseDirectory {
 
+  /**
+   * 目录所在地址
+   */
   protected final Path directory; // The underlying filesystem directory
 
   /** Maps files that we are trying to delete (or we tried already but failed)
    *  before attempting to delete that key. */
+  // 正在尝试删除中的数据
   private final Set<String> pendingDeletes = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
 
   private final AtomicInteger opsSinceLastDelete = new AtomicInteger();
 
   /** Used to generate temp file names in {@link #createTempOutput}. */
+  // 生成临时文件的 唯一后缀
   private final AtomicLong nextTempFileCounter = new AtomicLong();
 
   /** Create a new FSDirectory for the named location (ctor for subclasses).
@@ -142,11 +147,13 @@ public abstract class FSDirectory extends BaseDirectory {
    * @param lockFactory the lock factory to use, or null for the default
    * ({@link NativeFSLockFactory});
    * @throws IOException if there is a low-level I/O error
+   * 通过一个文件路径进行初始化
    */
   protected FSDirectory(Path path, LockFactory lockFactory) throws IOException {
     super(lockFactory);
     // If only read access is permitted, createDirectories fails even if the directory already exists.
-    if (!Files.isDirectory(path)) {
+    // 尝试创建目录
+     if (!Files.isDirectory(path)) {
       Files.createDirectories(path);  // create directory, if it doesn't exist
     }
     directory = path.toRealPath();
@@ -184,9 +191,11 @@ public abstract class FSDirectory extends BaseDirectory {
   /** Just like {@link #open(Path)}, but allows you to
    *  also specify a custom {@link LockFactory}. */
   public static FSDirectory open(Path path, LockFactory lockFactory) throws IOException {
+    // 如果是64位系统 and 支持mmap
     if (Constants.JRE_IS_64BIT && MMapDirectory.UNMAP_SUPPORTED) {
       return new MMapDirectory(path, lockFactory);
     } else {
+      // 否则只能使用 NIO 目录对象
       return new NIOFSDirectory(path, lockFactory);
     }
   }
@@ -198,6 +207,13 @@ public abstract class FSDirectory extends BaseDirectory {
     return listAll(dir, null);
   }
 
+  /**
+   * 返回给定目录下所有的 文件
+   * @param dir
+   * @param skipNames
+   * @return
+   * @throws IOException
+   */
   private static String[] listAll(Path dir, Set<String> skipNames) throws IOException {
     List<String> entries = new ArrayList<>();
     
@@ -220,9 +236,16 @@ public abstract class FSDirectory extends BaseDirectory {
   @Override
   public String[] listAll() throws IOException {
     ensureOpen();
+    // 返回当前列表 当然要排除掉正在被删除的文件
     return listAll(directory, pendingDeletes);
   }
 
+  /**
+   * 找到某个文件的长度
+   * @param name the name of an existing file.
+   * @return
+   * @throws IOException
+   */
   @Override
   public long fileLength(String name) throws IOException {
     ensureOpen();
@@ -232,11 +255,20 @@ public abstract class FSDirectory extends BaseDirectory {
     return Files.size(directory.resolve(name));
   }
 
+  /**
+   * 基于某个文件创建一个 输出流 向文件写入数据
+   * @param name the name of the file to create.
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public IndexOutput createOutput(String name, IOContext context) throws IOException {
     ensureOpen();
+    // 尝试删除悬置中的文件
     maybeDeletePendingFiles();
     // If this file was pending delete, we are now bringing it back to life:
+    // 如果此文件当前处于待删除中 先删除
     if (pendingDeletes.remove(name)) {
       privateDeleteFile(name, true); // try again to delete it - this is best effort
       pendingDeletes.remove(name); // watch out - if the delete fails it put
@@ -244,6 +276,14 @@ public abstract class FSDirectory extends BaseDirectory {
     return new FSIndexOutput(name);
   }
 
+  /**
+   * 创建一个临时的输出文件
+   * @param prefix
+   * @param suffix
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
     ensureOpen();
@@ -268,6 +308,11 @@ public abstract class FSDirectory extends BaseDirectory {
     }
   }
 
+  /**
+   * 将一组文件的数据写入到磁盘  因为数据很可能在内存页中 还没有交换到磁盘
+   * @param names
+   * @throws IOException
+   */
   @Override
   public void sync(Collection<String> names) throws IOException {
     ensureOpen();
@@ -292,6 +337,10 @@ public abstract class FSDirectory extends BaseDirectory {
     Files.move(directory.resolve(source), directory.resolve(dest), StandardCopyOption.ATOMIC_MOVE);
   }
 
+  /**
+   * 将文件的元数据刷盘  属于操作系统的概念
+   * @throws IOException
+   */
   @Override
   public void syncMetaData() throws IOException {
     // TODO: to improve listCommits(), IndexFileDeleter could call this after deleting segments_Ns
@@ -344,9 +393,14 @@ public abstract class FSDirectory extends BaseDirectory {
     }
   }
 
+  /**
+   * 尝试删除悬置中的文件
+   * @throws IOException
+   */
   private void maybeDeletePendingFiles() throws IOException {
     if (pendingDeletes.isEmpty() == false) {
       // This is a silly heuristic to try to avoid O(N^2), where N = number of files pending deletion, behaviour on Windows:
+      // 每次调用该方法 都会计算一个累加值 一旦当该值超过  pendingDeletes的长度时  就将pending文件清空
       int count = opsSinceLastDelete.incrementAndGet();
       if (count >= pendingDeletes.size()) {
         opsSinceLastDelete.addAndGet(-count);
@@ -355,6 +409,12 @@ public abstract class FSDirectory extends BaseDirectory {
     }
   }
 
+  /**
+   * 尝试删除文件
+   * @param name
+   * @param isPendingDelete
+   * @throws IOException
+   */
   private void privateDeleteFile(String name, boolean isPendingDelete) throws IOException {
     try {
       Files.delete(directory.resolve(name));
@@ -370,10 +430,12 @@ public abstract class FSDirectory extends BaseDirectory {
       } else {
         throw e;
       }
+      // 当删除失败时 先将文件保存起来
     } catch (IOException ioe) {
       // On windows, a file delete can fail because there's still an open
       // file handle against it.  We record this in pendingDeletes and
       // try again later.
+      // 在window 中 某个文件可能无法被删除 (可能它此刻正在被使用)  那么先加入到待删除队列  在某个时机点判断能否删除
 
       // TODO: this is hacky/lenient (we don't know which IOException this is), and
       // it should only happen on filesystems that can do this, so really we should
@@ -385,6 +447,9 @@ public abstract class FSDirectory extends BaseDirectory {
     }
   }
 
+  /**
+   * 基于文件系统的 输出流
+   */
   final class FSIndexOutput extends OutputStreamIndexOutput {
     /**
      * The maximum chunk size is 8192 bytes, because file channel mallocs
@@ -399,9 +464,11 @@ public abstract class FSDirectory extends BaseDirectory {
     FSIndexOutput(String name, OpenOption... options) throws IOException {
       super("FSIndexOutput(path=\"" + directory.resolve(name) + "\")", name, new FilterOutputStream(Files.newOutputStream(directory.resolve(name), options)) {
         // This implementation ensures, that we never write more than CHUNK_SIZE bytes:
+        // 这里覆盖了父类的 write 方法
         @Override
         public void write(byte[] b, int offset, int length) throws IOException {
           while (length > 0) {
+            // 每次只能以 chunk大小写入  这也是BufferedOutputStream 的缓冲区大小
             final int chunk = Math.min(length, CHUNK_SIZE);
             out.write(b, offset, chunk);
             length -= chunk;

@@ -148,7 +148,7 @@ public abstract class Directory implements Closeable {
    * This method must throw either {@link NoSuchFileException} or {@link FileNotFoundException}
    * if {@code name} points to a non-existing file.
    *
-   * @param name the name of an existing file.
+   * @param name the name of an existing file.   定位资源位置
    * @throws IOException in case of I/O error
    * 打开一个用于读取数据的输入流
    */

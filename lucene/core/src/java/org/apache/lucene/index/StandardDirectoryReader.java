@@ -36,9 +36,16 @@ import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
 
 /** Default implementation of {@link DirectoryReader}. */
+// 默认实现
 public final class StandardDirectoryReader extends DirectoryReader {
 
+  /**
+   * 该对象负责往 目录下写入数据
+   */
   final IndexWriter writer;
+  /**
+   * 描述片段信息 doc应该是由多个片段构成的吧
+   */
   final SegmentInfos segmentInfos;
   private final boolean applyAllDeletes;
   private final boolean writeAllDeletes;
@@ -54,6 +61,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
   }
 
   /** called from DirectoryReader.open(...) methods */
+  // 通过一个指定的目录对象初始化
   static DirectoryReader open(final Directory directory, final IndexCommit commit) throws IOException {
     return new SegmentInfos.FindSegmentsFile<DirectoryReader>(directory) {
       @Override

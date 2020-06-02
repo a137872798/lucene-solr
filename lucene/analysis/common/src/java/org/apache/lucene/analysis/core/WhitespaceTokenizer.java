@@ -28,6 +28,8 @@ import org.apache.lucene.util.AttributeFactory;
  * Adjacent sequences of non-Whitespace characters form tokens.
  *
  * @see UnicodeWhitespaceTokenizer
+ * CharTokenizer 以char为单位 从token流中读取符合条件的char
+ * 确保传入的值不是空格
  */
 public final class WhitespaceTokenizer extends CharTokenizer {
   
@@ -74,6 +76,7 @@ public final class WhitespaceTokenizer extends CharTokenizer {
   
   /** Collects only characters which do not satisfy
    * {@link Character#isWhitespace(int)}.*/
+  // 该方法用于判断传入的值是否满足条件
   @Override
   protected boolean isTokenChar(int c) {
     return !Character.isWhitespace(c);

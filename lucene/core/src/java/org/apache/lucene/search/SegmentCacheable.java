@@ -33,6 +33,7 @@ import org.apache.lucene.index.LeafReaderContext;
  *
  * Objects that are not segment-immutable, such as those that rely on global statistics or scores,
  * should return {@code false}
+ * 判断某个上下文是否支持缓存
  */
 public interface SegmentCacheable {
 

@@ -41,9 +41,13 @@ import org.apache.lucene.util.Bits;
  synchronization, you should <b>not</b> synchronize on the
  <code>IndexReader</code> instance; use your own
  (non-Lucene) objects instead.
+ 代表一个叶子节点
 */
 public abstract class LeafReader extends IndexReader {
 
+  /**
+   * 每个reader对象会绑定一个context
+   */
   private final LeafReaderContext readerContext = new LeafReaderContext(this);
 
   /** Sole constructor. (For invocation by subclass
@@ -69,16 +73,25 @@ public abstract class LeafReader extends IndexReader {
    * for caching, which is typically the case for short-lived wrappers that
    * alter the content of the wrapped leaf reader.
    * @lucene.experimental
+   * 该对象负责缓存数据
    */
   public abstract CacheHelper getCoreCacheHelper();
 
+  /**
+   *
+   * @param term  该对象可以简单看作一个 byte[]
+   * @return
+   * @throws IOException
+   */
   @Override
   public final int docFreq(Term term) throws IOException {
+    // 定位到该词
     final Terms terms = terms(term.field());
     if (terms == null) {
       return 0;
     }
     final TermsEnum termsEnum = terms.iterator();
+    // 返回该词在文档中出现的频率
     if (termsEnum.seekExact(term.bytes())) {
       return termsEnum.docFreq();
     } else {
@@ -91,6 +104,7 @@ public abstract class LeafReader extends IndexReader {
    * field does not exists.  This method does not take into
    * account deleted documents that have not yet been merged
    * away. */
+  // 返回某个词出现的总次数
   @Override
   public final long totalTermFreq(Term term) throws IOException {
     final Terms terms = terms(term.field());
@@ -105,6 +119,7 @@ public abstract class LeafReader extends IndexReader {
     }
   }
 
+  // 核心思路都是通过 terms() 定位到 Terms 对象 之后调用该对象api返回结果
   @Override
   public final long getSumDocFreq(String field) throws IOException {
     final Terms terms = terms(field);

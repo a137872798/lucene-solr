@@ -22,14 +22,20 @@ import java.util.List;
 
 /**
  * {@link IndexReaderContext} for {@link LeafReader} instances.
+ * 代表一个基于 LeafReader的上下文对象
  */
 public final class LeafReaderContext extends IndexReaderContext {
   /** The reader's ord in the top-level's leaves array */
+  // 记录本节点的顺序
   public final int ord;
   /** The reader's absolute doc base */
+  // 对于doc的绝对顺序
   public final int docBase;
   
   private final LeafReader reader;
+  /**
+   * 该对象也可以有一组叶子节点
+   */
   private final List<LeafReaderContext> leaves;
   
   /**

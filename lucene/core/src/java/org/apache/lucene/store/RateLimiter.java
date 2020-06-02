@@ -32,6 +32,7 @@ public abstract class RateLimiter {
    * Sets an updated MB per second rate limit.
    * A subclass is allowed to perform dynamic updates of the rate limit
    * during use.
+   * 限制每秒更新的 MB 量
    */
   public abstract void setMBPerSec(double mbPerSec);
 
@@ -58,13 +59,23 @@ public abstract class RateLimiter {
 
   /**
    * Simple class to rate limit IO.
+   * 一个简单的限流实现类
    */
   public static class SimpleRateLimiter extends RateLimiter {
 
     private final static int MIN_PAUSE_CHECK_MSEC = 5;
 
+    /**
+     * 每秒允许操作多少 MB
+     */
     private volatile double mbPerSec;
+    /**
+     * 应该是有关每多少byte 触发一次检查
+     */
     private volatile long minPauseCheckBytes;
+    /**
+     * 记录上一次触发的纳秒
+     */
     private long lastNS;
 
     /** mbPerSec is the MB/sec max IO rate */
@@ -75,10 +86,14 @@ public abstract class RateLimiter {
 
     /**
      * Sets an updated mb per second rate limit.
+     * 计算当每秒写入的数据量超过多少byte 时 推荐触发 pause方法
      */
     @Override
     public void setMBPerSec(double mbPerSec) {
       this.mbPerSec = mbPerSec;
+      // mbPerSec * 1024 * 1024 换算一个byte值
+      // MIN_PAUSE_CHECK_MSEC 代表推荐每多少毫秒触发一次 pause
+      // MIN_PAUSE_CHECK_MSEC / 1000.0 相当于是换算成秒
       minPauseCheckBytes = (long) ((MIN_PAUSE_CHECK_MSEC / 1000.0) * mbPerSec * 1024 * 1024);
     }
 
@@ -100,12 +115,15 @@ public abstract class RateLimiter {
      *  this method when bytes &gt; {@link #getMinPauseCheckBytes},
      *  otherwise it will pause way too long!
      *
-     *  @return the pause time in nano seconds */  
+     *  @return the pause time in nano seconds */
+    // 通过暂停的方式 拒绝数据写入 达到限流的目的
     @Override
     public long pause(long bytes) {
 
+      // 记录当前时间
       long startNS = System.nanoTime();
 
+      // 将byte 先换算成mb  然后根据  每1mb等待多少时间 计算出等待时长
       double secondsToPause = (bytes/1024./1024.) / mbPerSec;
 
       long targetNS;
@@ -116,8 +134,10 @@ public abstract class RateLimiter {
         // Time we should sleep until; this is purely instantaneous
         // rate (just adds seconds onto the last time we had paused to);
         // maybe we should also offer decayed recent history one?
+        // 换算成纳秒后 计算一个sleep时间
         targetNS = lastNS + (long) (1000000000 * secondsToPause);
 
+        // 没有达到阈值  不需要被限流
         if (startNS >= targetNS) {
           // OK, current time is already beyond the target sleep time,
           // no pausing to do.
@@ -152,6 +172,7 @@ public abstract class RateLimiter {
               sleepMS = (int) (pauseNS/1000000);
               sleepNS = (int) (pauseNS % 1000000);
             }
+            // 这个api是精确到秒纳秒数
             Thread.sleep(sleepMS, sleepNS);
           } catch (InterruptedException ie) {
             throw new ThreadInterruptedException(ie);

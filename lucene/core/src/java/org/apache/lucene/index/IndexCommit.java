@@ -47,16 +47,19 @@ public abstract class IndexCommit implements Comparable<IndexCommit> {
   /**
    * Get the segments file (<code>segments_N</code>) associated 
    * with this commit point.
+   * 提交点对应的片段元数据文件
    */
   public abstract String getSegmentsFileName();
 
   /**
    * Returns all index files referenced by this commit point.
+   * 提交点相关的所有 索引文件名
    */
   public abstract Collection<String> getFileNames() throws IOException;
 
   /**
    * Returns the {@link Directory} for the index.
+   * 获取该提交点对应的索引所在的目录
    */
   public abstract Directory getDirectory();
   
@@ -71,15 +74,18 @@ public abstract class IndexCommit implements Comparable<IndexCommit> {
    * Decision that a commit-point should be deleted is taken by the {@link IndexDeletionPolicy} in effect
    * and therefore this should only be called by its {@link IndexDeletionPolicy#onInit onInit()} or 
    * {@link IndexDeletionPolicy#onCommit onCommit()} methods.
+   * 删除提交点
   */
   public abstract void delete();
 
   /** Returns true if this commit should be deleted; this is
    *  only used by {@link IndexWriter} after invoking the
    *  {@link IndexDeletionPolicy}. */
+  // 返回该提交点是否应该被删除
   public abstract boolean isDeleted();
 
   /** Returns number of segments referenced by this commit. */
+  // 获取片段总数
   public abstract int getSegmentCount();
 
   /** Sole constructor. (For invocation by subclass 

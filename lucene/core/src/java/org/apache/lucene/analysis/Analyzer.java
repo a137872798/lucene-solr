@@ -82,7 +82,6 @@ import org.apache.lucene.util.Version;
  *
  * @since 3.1
  *
- * 这是一个分析器对象
  */
 public abstract class Analyzer implements Closeable {
 
@@ -102,7 +101,7 @@ public abstract class Analyzer implements Closeable {
   /**
    * Create a new Analyzer, reusing the same set of components per-thread
    * across calls to {@link #tokenStream(String, Reader)}.
-   * 默认采用全局策略 也就是 一个 analyzer 对应一个 components
+   * GLOBAL_REUSE_STRATEGY  就是传入某个 analyzer 然后通过本地线程变量获取之前存入的 component
    */
   public Analyzer() {
     this(GLOBAL_REUSE_STRATEGY);
@@ -171,7 +170,7 @@ public abstract class Analyzer implements Closeable {
                                        final Reader reader) {
     // 先尝试获取之前缓存的component
     TokenStreamComponents components = reuseStrategy.getReusableComponents(this, fieldName);
-    // 利用field 初始化 reader 对象
+    // 对子类开放钩子 强化reader
     final Reader r = initReader(fieldName, reader);
     if (components == null) {
       // 基于 field创建一个 components
@@ -204,7 +203,6 @@ public abstract class Analyzer implements Closeable {
    * @return TokenStream for iterating the analyzed content of <code>reader</code>
    * @throws AlreadyClosedException if the Analyzer is closed.
    * @see #tokenStream(String, Reader)
-   * 通过 特殊字段和 一个文本来生成token 流
    */
   public final TokenStream tokenStream(final String fieldName, final String text) {
     TokenStreamComponents components = reuseStrategy.getReusableComponents(this, fieldName);
@@ -237,18 +235,19 @@ public abstract class Analyzer implements Closeable {
    * order to apply necessary character-level normalization and then
    * {@link #normalize(String, TokenStream)} in order to apply the normalizing
    * token filters.
-   * 使用特殊字段和文本生成 byte[]
+   * 基于某个文本创建
    */
   public final BytesRef normalize(final String fieldName, final String text) {
     try {
       // apply char filters
       final String filteredText;
       try (Reader reader = new StringReader(text)) {
-        // 加工reader 后将数据转移到 stringBuilder 中
+        // 对子类开放钩子  用于增强reader
         Reader filterReader = initReaderForNormalization(fieldName, reader);
         char[] buffer = new char[64];
         StringBuilder builder = new StringBuilder();
         for (;;) {
+          // 此时调用read 方法 获取数据时 已经经过过滤器处理了
           final int read = filterReader.read(buffer, 0, buffer.length);
           if (read == -1) {
             break;
@@ -385,12 +384,11 @@ public abstract class Analyzer implements Closeable {
    * instance of {@link TokenFilter} which also serves as the
    * {@link TokenStream} returned by
    * {@link Analyzer#tokenStream(String, Reader)}.
-   * 代表一个token的组件 多个token 能组成一个完整的语句
    */
   public static final class TokenStreamComponents {
     /**
      * Original source of the tokens.
-     * 该函数负责使用 java.io.Reader
+     * 该函数负责消费数据源  一般就是使用 tokenizerImpl 解析输入流
      */
     protected final Consumer<Reader> source;
     /**

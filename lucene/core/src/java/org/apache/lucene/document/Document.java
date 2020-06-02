@@ -37,7 +37,7 @@ import org.apache.lucene.util.BytesRef;
  * <i>not</i> available in documents retrieved from the index, e.g. with {@link
  * ScoreDoc#doc} or {@link IndexReader#document(int)}.
  */
-
+// 一个doc对象本身就是由多个 索引字段组成的
 public final class Document implements Iterable<IndexableField> {
 
   private final List<IndexableField> fields = new ArrayList<>();
@@ -59,6 +59,7 @@ public final class Document implements Iterable<IndexableField> {
    * be used to change the content of an existing index! In order to achieve this,
    * a document has to be deleted from an index and a new changed version of that
    * document has to be added.</p>
+   * 为当前doc 添加一个索引字段
    */
   public final void add(IndexableField field) {
     fields.add(field);
@@ -73,6 +74,7 @@ public final class Document implements Iterable<IndexableField> {
    * be used to change the content of an existing index! In order to achieve this,
    * a document has to be deleted from an index and a new changed version of that
    * document has to be added.</p>
+   * 通过匹配名字 从doc 中移除掉某个 field
    */
   public final void removeField(String name) {
     Iterator<IndexableField> it = fields.iterator();
@@ -113,6 +115,7 @@ public final class Document implements Iterable<IndexableField> {
   *
   * @param name the name of the field
   * @return a <code>BytesRef[]</code> of binary field values
+   * 通过 名字匹配对应的indexField 然后读取二进制数据
   */
   public final BytesRef[] getBinaryValues(String name) {
     final List<BytesRef> result = new ArrayList<>();
@@ -169,6 +172,7 @@ public final class Document implements Iterable<IndexableField> {
    *
    * @param name the name of the field
    * @return a <code>Field[]</code> array
+   * 通过name 匹配批量的 indexField
    */
   public IndexableField[] getFields(String name) {
     List<IndexableField> result = new ArrayList<>();
@@ -203,6 +207,7 @@ public final class Document implements Iterable<IndexableField> {
    * the actual numeric field instances back, use {@link #getFields}.
    * @param name the name of the field
    * @return a <code>String[]</code> of field values
+   * 将对应的值 以string 形式读取 并以数组形式接收
    */
   public final String[] getValues(String name) {
     List<String> result = new ArrayList<>();

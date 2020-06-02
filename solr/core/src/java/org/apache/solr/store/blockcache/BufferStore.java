@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @lucene.experimental
+ * 类似一个池对象
  */
 public class BufferStore implements Store {
 
@@ -39,6 +40,9 @@ public class BufferStore implements Store {
     }
   };
 
+  /**
+   * 全局共享 key 代表byte[] 的长度 也就是先通过size 定位到 store 然后在分配byte[]
+   */
   private final static ConcurrentMap<Integer, BufferStore> bufferStores = new ConcurrentHashMap<>(8192, 0.75f, 512);
 
   private final BlockingQueue<byte[]> buffers;
@@ -56,7 +60,12 @@ public class BufferStore implements Store {
   static void clearBufferStores() {
     bufferStores.clear();
   }
-  
+
+  /**
+   * 基于某种 byte[] 的大小 添加一组键值对
+   * @param bufferSize
+   * @param totalAmount   本次总共允许分配的内存大小
+   */
   public synchronized static void initNewBuffer(int bufferSize, long totalAmount) {
     initNewBuffer(bufferSize, totalAmount, null);
   }
@@ -67,6 +76,7 @@ public class BufferStore implements Store {
     }
     BufferStore bufferStore = bufferStores.get(bufferSize);
     if (bufferStore == null) {
+      // 计算要创建多少个byte[]
       long count = totalAmount / bufferSize;
       if (count > Integer.MAX_VALUE) {
         count = Integer.MAX_VALUE;

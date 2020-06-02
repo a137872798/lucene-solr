@@ -39,14 +39,19 @@ import org.apache.lucene.util.AttributeSource;
  * For example, given the stream 'a b/c:2 d e`, then with the base token at
  * 'a', incrementGraphToken() will produce the stream 'a b d e', and then
  * after calling incrementGraph() will produce the stream 'a c e'.
+ * 图过滤器
  */
 public abstract class GraphTokenFilter extends TokenFilter {
 
+  /**
+   * 对象池 可以从这里取出token 并通过reset进行初始化   就是为了减少GC开销
+   */
   private final Deque<Token> tokenPool = new ArrayDeque<>();
   private final List<Token> currentGraph = new ArrayList<>();
 
   /**
    * The maximum permitted number of routes through a graph
+   * 代表一个图链路中最多存在多少token
    */
   public static final int MAX_GRAPH_STACK_SIZE = 1000;
 
@@ -55,6 +60,9 @@ public abstract class GraphTokenFilter extends TokenFilter {
    */
   public static final int MAX_TOKEN_CACHE_SIZE = 100;
 
+  /**
+   * 起点
+   */
   private Token baseToken;
   private int graphDepth;
   private int graphPos;
@@ -80,18 +88,22 @@ public abstract class GraphTokenFilter extends TokenFilter {
    * Move the root of the graph to the next token in the wrapped TokenStream
    *
    * @return {@code false} if the underlying stream is exhausted
+   * 移动起点
    */
   protected final boolean incrementBaseToken() throws IOException {
     stackSize = 0;
     graphDepth = 0;
     graphPos = 0;
     Token oldBase = baseToken;
+    // 将baseToken 指向新的token
     baseToken = nextTokenInStream(baseToken);
     if (baseToken == null) {
       return false;
     }
+    // 将当前图清除后 重新将 root(baseToken) 添加到图中
     currentGraph.clear();
     currentGraph.add(baseToken);
+    // 将当前属性赋予到 baseToken.attr上
     baseToken.attSource.copyTo(this);
     recycleToken(oldBase);
     return true;
@@ -101,6 +113,7 @@ public abstract class GraphTokenFilter extends TokenFilter {
    * Move to the next token in the current route through the graph
    *
    * @return {@code false} if there are not more tokens in the current graph
+   * 从图结构中 获取token
    */
   protected final boolean incrementGraphToken() throws IOException {
     if (graphPos < graphDepth) {
@@ -108,6 +121,7 @@ public abstract class GraphTokenFilter extends TokenFilter {
       currentGraph.get(graphPos).attSource.copyTo(this);
       return true;
     }
+    // 获取图中的下一个token
     Token token = nextTokenInGraph(currentGraph.get(graphDepth));
     if (token == null) {
       return false;
@@ -130,6 +144,7 @@ public abstract class GraphTokenFilter extends TokenFilter {
     }
     graphPos = 0;
     for (int i = graphDepth; i >= 1; i--) {
+      // 从下往上不断读取图中保存的token
       if (lastInStack(currentGraph.get(i)) == false) {
         currentGraph.set(i, nextTokenInStream(currentGraph.get(i)));
         for (int j = i + 1; j < graphDepth; j++) {
@@ -199,6 +214,10 @@ public abstract class GraphTokenFilter extends TokenFilter {
     return token;
   }
 
+  /**
+   * 将给与的token 存入到池中
+   * @param token
+   */
   private void recycleToken(Token token) {
     if (token == null)
       return;
@@ -206,6 +225,12 @@ public abstract class GraphTokenFilter extends TokenFilter {
     tokenPool.add(token);
   }
 
+  /**
+   * 获取当前token构成的图中的下一个token
+   * @param token
+   * @return
+   * @throws IOException
+   */
   private Token nextTokenInGraph(Token token) throws IOException {
     int remaining = token.length();
     do {
@@ -245,11 +270,20 @@ public abstract class GraphTokenFilter extends TokenFilter {
     return token.nextToken;
   }
 
+  /**
+   * 代表一个token对象
+   */
   private static class Token {
 
+    /**
+     * 每个token 绑定一个 source 对象
+     */
     final AttributeSource attSource;
     final PositionIncrementAttribute posIncAtt;
     final PositionLengthAttribute lengthAtt;
+    /**
+     * token 本身构成一个链
+     */
     Token nextToken;
 
     Token(AttributeSource attSource) {

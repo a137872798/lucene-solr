@@ -28,6 +28,7 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
  * Allows recursion through a query tree
  *
  * @see Query#visit(QueryVisitor)
+ * 允许递归查询树   也就是 Query对象以一种特殊的结构使用
  */
 public abstract class QueryVisitor {
 

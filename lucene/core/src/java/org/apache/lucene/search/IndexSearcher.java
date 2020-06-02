@@ -86,6 +86,7 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
  * external synchronization, you should <b>not</b>
  * synchronize on the <code>IndexSearcher</code> instance;
  * use your own (non-Lucene) objects instead.</p>
+ * 该对象负责从索引中查询数据
  */
 public class IndexSearcher {
 

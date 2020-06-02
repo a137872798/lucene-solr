@@ -19,8 +19,14 @@ package org.apache.lucene.document;
 
 import org.apache.lucene.util.BytesRef;
 
+/**
+ * 代表 doc中某个二进制字段   看来DocValuesField 与 DocValues的概念不同
+ */
 abstract class BinaryRangeDocValuesField extends BinaryDocValuesField {
-  
+
+  /**
+   * 代表该字段的名称
+   */
   final String field;
   final byte[] packedValue;
   final int numDims;

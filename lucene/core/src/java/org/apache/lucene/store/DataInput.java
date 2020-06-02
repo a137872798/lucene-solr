@@ -40,7 +40,7 @@ import org.apache.lucene.util.BitUtil;
  * used in another thread. Subclasses must therefore implement {@link #clone()},
  * returning a new {@code DataInput} which operates on the same underlying
  * resource, but positioned independently.
- * 代表一个输入的数据
+ * 数据输入流的基类
  */
 public abstract class DataInput implements Cloneable {
 
@@ -99,6 +99,7 @@ public abstract class DataInput implements Cloneable {
 
   /** Reads four bytes and returns an int.
    * @see DataOutput#writeInt(int)
+   * 大端法
    */
   public int readInt() throws IOException {
     return ((readByte() & 0xFF) << 24) | ((readByte() & 0xFF) << 16)
@@ -112,6 +113,7 @@ public abstract class DataInput implements Cloneable {
    * The format is described further in {@link DataOutput#writeVInt(int)}.
    * 
    * @see DataOutput#writeVInt(int)
+   * VInt 是1~5 个VByte
    */
   public int readVInt() throws IOException {
     /* This is the original code of this method,
@@ -125,11 +127,17 @@ public abstract class DataInput implements Cloneable {
     }
     return i;
     */
+    // VInt 本身是一个变长类型 这里根据拆解byte 判断总长度
     byte b = readByte();
+    // 如果是正数 直接返回  也就是 第一位是0
     if (b >= 0) return b;
+    // 7F 是127
+    // 这里截取掉高1位的数据  也就是截取掉符号位
     int i = b & 0x7F;
     b = readByte();
+    // 只将2个 7位 拼接起来  也就是当前只是用了 14位
     i |= (b & 0x7F) << 7;
+    // 如果读取到的第二个byte 是正数 那么代表此 VInt 是由2个VByte 组成的
     if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7F) << 14;
@@ -139,7 +147,9 @@ public abstract class DataInput implements Cloneable {
     if (b >= 0) return i;
     b = readByte();
     // Warning: the next ands use 0x0F / 0xF0 - beware copy/paste errors:
+    // 这样子5个 VByte的最后一个 实际只能保存4位的数据
     i |= (b & 0x0F) << 28;
+    // 代表最后一个VByte 确实只有4位
     if ((b & 0xF0) == 0) return i;
     throw new IOException("Invalid vInt detected (too many bits)");
   }
@@ -157,6 +167,7 @@ public abstract class DataInput implements Cloneable {
    * @see DataOutput#writeLong(long)
    */
   public long readLong() throws IOException {
+    // 读取一个 int作为高位  在读取一个int作为低位
     return (((long)readInt()) << 32) | (readInt() & 0xFFFFFFFFL);
   }
 
@@ -173,6 +184,7 @@ public abstract class DataInput implements Cloneable {
    */
   // TODO: LUCENE-9047: Make the entire DataInput/DataOutput API little endian
   // Then this would just be `readLongs`?
+  // 以小端法读取数据
   public void readLELongs(long[] dst, int offset, int length) throws IOException {
     Objects.checkFromIndexSize(offset, length, dst.length);
     for (int i = 0; i < length; ++i) {
@@ -192,6 +204,12 @@ public abstract class DataInput implements Cloneable {
     return readVLong(false);
   }
 
+  /**
+   * 读取一个  变长Long 类型数据
+   * @param allowNegative   是否允许是负数
+   * @return
+   * @throws IOException
+   */
   private long readVLong(boolean allowNegative) throws IOException {
     /* This is the original code of this method,
      * but a Hotspot bug (see LUCENE-2975) corrupts the for-loop if
@@ -230,7 +248,10 @@ public abstract class DataInput implements Cloneable {
     if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 56;
+
+    // 上面的读取与 VInt 基本一致
     if (b >= 0) return i;
+    // 这里在判断最后一个byte 是否合法 也就是应该只有一位
     if (allowNegative) {
       b = readByte();
       i |= (b & 0x7FL) << 63;
@@ -255,6 +276,7 @@ public abstract class DataInput implements Cloneable {
    * @see DataOutput#writeString(String)
    */
   public String readString() throws IOException {
+    // 选读取一个VInt  该值代表后面要读取的字符串的长度
     int length = readVInt();
     final byte[] bytes = new byte[length];
     readBytes(bytes, 0, length);
@@ -305,6 +327,7 @@ public abstract class DataInput implements Cloneable {
    * Reads a Set&lt;String&gt; previously written
    * with {@link DataOutput#writeSetOfStrings(Set)}. 
    * @return An immutable set containing the written contents.
+   * 先读取一个长度 然后按长度 读取一组string 之后将结果设置到set中
    */
   public Set<String> readSetOfStrings() throws IOException {
     int count = readVInt();

@@ -22,6 +22,7 @@ import org.apache.lucene.search.Query;
 /**
  * DocValues field for DoubleRange. This is a single valued field i.e. can have only one
  * value per document due to being an extension of BinaryDocValuesField.
+ * 代表一个double范围  并且他是继承于 BinaryRange的
  */
 public class DoubleRangeDocValuesField extends BinaryRangeDocValuesField{
   final String field;

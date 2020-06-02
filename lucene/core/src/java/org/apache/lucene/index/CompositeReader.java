@@ -49,6 +49,7 @@ import org.apache.lucene.store.*;
  synchronization, you should <b>not</b> synchronize on the
  <code>IndexReader</code> instance; use your own
  (non-Lucene) objects instead.
+ 该对象可以关联一组 子reader对象 构成一个类似树的结构
 */
 public abstract class CompositeReader extends IndexReader {
 
@@ -91,6 +92,7 @@ public abstract class CompositeReader extends IndexReader {
    *  is no longer public, code that wants to get all {@link LeafReader}s
    *  this composite is composed of should use {@link IndexReader#leaves()}.
    * @see IndexReader#leaves()
+   * 顺序返回一组reader
    */
   protected abstract List<? extends IndexReader> getSequentialSubReaders();
 

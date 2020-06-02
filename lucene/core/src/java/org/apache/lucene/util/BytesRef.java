@@ -85,7 +85,8 @@ public final class BytesRef implements Comparable<BytesRef>, Cloneable {
    * unicode text, with no unpaired surrogates.
    */
   public BytesRef(CharSequence text) {
-    // 根据字符集 判断 该字符串一共需要多少byte  因为在不同字符集下每个 char对应的byte数量不同  这里是基于 UTF-8 计算byte数的
+    // 不太确定一个 utf-8 到底使用多少字节 下面2行的意思大概是 先按照utf8分配大小 然后将 text按照utf16的方式解码 并填充到utf8的容器中
+    // 如果text 本身不是使用utf16呢
     this(new byte[UnicodeUtil.maxUTF8Length(text.length())]);
     length = UnicodeUtil.UTF16toUTF8(text, 0, text.length(), bytes);
   }

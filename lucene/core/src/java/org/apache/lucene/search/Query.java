@@ -40,6 +40,7 @@ import org.apache.lucene.index.IndexReader;
     </ul>
     <p>See also the family of {@link org.apache.lucene.search.spans Span Queries}
        and additional queries available in the <a href="{@docRoot}/../queries/overview-summary.html">Queries module</a>
+ 用于从索引中查询数据的对象
 */
 public abstract class Query {
 
@@ -61,6 +62,7 @@ public abstract class Query {
    *
    * @param scoreMode     How the produced scorers will be consumed.
    * @param boost         The boost that is propagated by the parent queries.
+   *                      为该查询对象创建一个权重信息
    */
   public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
     throw new UnsupportedOperationException("Query " + this + " does not implement createWeight");
@@ -69,6 +71,7 @@ public abstract class Query {
   /** Expert: called to re-write queries into primitive queries. For example,
    * a PrefixQuery will be rewritten into a BooleanQuery that consists
    * of TermQuerys.
+   * 基于传入的 reader 重新构建查询对象
    */
   public Query rewrite(IndexReader reader) throws IOException {
     return this;
@@ -77,6 +80,7 @@ public abstract class Query {
   /**
    * Recurse through the query tree, visiting any child queries
    * @param visitor a QueryVisitor to be called by each query in the tree
+   *                Query对象本身会构成某种树结构  visitor 具备递归读取树的能力
    */
   public abstract void visit(QueryVisitor visitor);
 
@@ -110,6 +114,7 @@ public abstract class Query {
    * When this method is used in an implementation of {@link #equals(Object)},
    * consider using {@link #classHash()} in the implementation
    * of {@link #hashCode} to differentiate different class
+   * 判断与传入的参数类型是否一致
    */
   protected final boolean sameClassAs(Object other) {
     return other != null && getClass() == other.getClass();

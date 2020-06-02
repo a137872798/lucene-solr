@@ -212,6 +212,8 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * (files that were created since the last commit, but are no longer
  * referenced by the "front" of the index). For this, IndexFileDeleter
  * keeps track of the last non commit checkpoint.
+ * 该对象就是负责写入索引的核心类
+ * 实现了 二阶段提交接口
  */
 public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     MergePolicy.MergeContext {
@@ -221,13 +223,16 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   // We defensively subtract 128 to be well below the lowest
   // ArrayUtil.MAX_ARRAY_LENGTH on "typical" JVMs.  We don't just use
   // ArrayUtil.MAX_ARRAY_LENGTH here because this can vary across JVMs:
+  // 这里最多只允许创建 这么多doc
   public static final int MAX_DOCS = Integer.MAX_VALUE - 128;
 
   /** Maximum value of the token position in an indexed field. */
+  // position 代表当前指向哪个 doc
   public static final int MAX_POSITION = Integer.MAX_VALUE - 128;
 
   // Use package-private instance var to enforce the limit so testing
   // can use less electricity:
+  // 实际使用的doc 数量
   private static int actualMaxDocs = MAX_DOCS;
 
   /** Used only for testing. */
@@ -247,12 +252,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private final boolean enableTestPoints;
 
   private static final int UNBOUNDED_MAX_MERGE_SEGMENTS = -1;
-  
-  /**
-   * Name of the write lock in the index.
-   */
-  public static final String WRITE_LOCK_NAME = "write.lock";
 
+  // 一些常量字符串
+  /** Name of the write lock in the index. */
+  public static final String WRITE_LOCK_NAME = "write.lock";
   /** Key for the source of a segment in the {@link SegmentInfo#getDiagnostics() diagnostics}. */
   public static final String SOURCE = "source";
   /** Source of a segment which results from a merge of other segments. */
@@ -269,40 +272,83 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * <code>IllegalArgumentException</code>  is thrown
    * and a message is printed to infoStream, if set (see {@link
    * IndexWriterConfig#setInfoStream(InfoStream)}).
+   * 代表某个词的最大长度     超过的话 会通过 InfoStream打印日志
    */
   public final static int MAX_TERM_LENGTH = DocumentsWriterPerThread.MAX_TERM_LENGTH_UTF8;
 
   /**
    * Maximum length string for a stored field.
+   * 最多存储多少个排序的字段
    */
   public final static int MAX_STORED_STRING_LENGTH = ArrayUtil.MAX_ARRAY_LENGTH / UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR;
     
   // when unrecoverable disaster strikes, we populate this with the reason that we had to close IndexWriter
+  // 记录写入过程中出现的异常
   private final AtomicReference<Throwable> tragedy = new AtomicReference<>(null);
 
+  /**
+   * 代表本次要写入的原始目录
+   */
   private final Directory directoryOrig;       // original user directory
+  /**
+   * orig的包装对象
+   */
   private final Directory directory;           // wrapped with additional checks
 
+  /**
+   * 代表一个 change() 的计数器
+   */
   private final AtomicLong changeCount = new AtomicLong(); // increments every time a change is completed
+  /**
+   * 上次触发 commit 时写入多少数据
+   */
   private volatile long lastCommitChangeCount; // last changeCount that was committed
 
+  /**
+   * 当提交失败时 需要回滚哪些 segment
+   */
   private List<SegmentCommitInfo> rollbackSegments;      // list of segmentInfo we will fallback to if the commit fails
 
+  /**
+   * 内部包含一组segmentCommitInfo
+   * 当调用prepareCommit后 暂存到该队列 之后如果调用了commit 将会真正存储到directory中
+   */
   private volatile SegmentInfos pendingCommit;            // set when a commit is pending (after prepareCommit() & before commit())
   private volatile long pendingSeqNo;
   private volatile long pendingCommitChangeCount;
 
+  /**
+   * 代表需要提交的文件
+   */
   private Collection<String> filesToCommit;
 
   private final SegmentInfos segmentInfos;
+  /**
+   * 关键字信息
+   */
   final FieldNumbers globalFieldNumberMap;
 
+  /**
+   * 该对象负责向 doc写入数据
+   */
   final DocumentsWriter docWriter;
+  /**
+   * 事件队列对象 内部的event需要传入 writer
+   */
   private final EventQueue eventQueue = new EventQueue(this);
+  /**
+   * 本对象还会作为一个 提供merge对象的数据源  相关方法都会转发给该对象
+   */
   private final MergeScheduler.MergeSource mergeSource = new IndexWriterMergeSource(this);
 
+  /**
+   * 往doc写入数据时 需要通过锁做同步控制
+   */
   private final ReentrantLock writeDocValuesLock = new ReentrantLock();
 
+  /**
+   * 存储事件的队列
+   */
   static final class EventQueue implements Closeable {
     private volatile boolean closed;
     // we use a semaphore here instead of simply synced methods to allow
@@ -327,6 +373,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     boolean add(Event event) {
+      // 允许多线程并发添加事件到队列
       acquire();
       try {
         return queue.add(event);
@@ -344,10 +391,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       }
     }
 
+    /**
+     * 在当前线程中处理所有的事件
+     * @throws IOException
+     */
     private void processEventsInternal() throws IOException {
       assert Integer.MAX_VALUE - permits.availablePermits() > 0 : "must acquire a permit before processing events";
       Event event;
       while ((event = queue.poll()) != null) {
+        // 该方法支持并发
         event.process(writer);
       }
     }
@@ -357,6 +409,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       assert closed == false : "we should never close this twice";
       closed = true;
       // it's possible that we close this queue while we are in a processEvents call
+      // 如果当关闭任务队列时 writer已经出现了异常 那么事件将被抛弃
       if (writer.getTragicException() != null) {
         // we are already handling a tragic exception let's drop it all on the floor and return
         queue.clear();
@@ -368,6 +421,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
           throw new ThreadInterruptedException(e);
         }
         try {
+          // 当前线程会处理所有事件
           processEventsInternal();
         } finally {
           permits.release(Integer.MAX_VALUE);
@@ -376,12 +430,22 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
   }
 
+  /**
+   * 该对象负责删除索引数据
+   */
   private final IndexFileDeleter deleter;
 
   // used by forceMerge to note those needing merging
+  // 标记哪些段信息需要merge
   private final Map<SegmentCommitInfo,Boolean> segmentsToMerge = new HashMap<>();
+  /**
+   * 每次最多允许merge 多少segment
+   */
   private int mergeMaxNumSegments;
 
+  /**
+   * 这里还有个锁 与上面的 docValueLock 不一样
+   */
   private Lock writeLock;
 
   private volatile boolean closed;
@@ -392,11 +456,20 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private Iterable<Map.Entry<String,String>> commitUserData;
 
   // Holds all SegmentInfo instances currently involved in
-  // merges
+  // merges  存储当前正在merging的数据
   private final HashSet<SegmentCommitInfo> mergingSegments = new HashSet<>();
+  /**
+   * 该对象就是标记了 每隔多久触发一次merge  同时从 mergeSource中获取数据 并进行合并
+   */
   private final MergeScheduler mergeScheduler;
   private final Set<SegmentMerger> runningAddIndexesMerges = new HashSet<>();
+  /**
+   * 存储等待被merge的对象
+   */
   private final LinkedList<MergePolicy.OneMerge> pendingMerges = new LinkedList<>();
+  /**
+   * 正在merge中的对象
+   */
   private final Set<MergePolicy.OneMerge> runningMerges = new HashSet<>();
   private final List<MergePolicy.OneMerge> mergeExceptions = new ArrayList<>();
   private long mergeGen;
@@ -427,22 +500,45 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private final AtomicLong pendingNumDocs = new AtomicLong();
   private final boolean softDeletesEnabled;
 
+  /**
+   * 这里设置了一个 监听doc刷盘的对象
+   */
   private final DocumentsWriter.FlushNotifications flushNotifications = new DocumentsWriter.FlushNotifications() {
+
+    /**
+     * 当一组不再被使用的file 被删除时
+     * 使用writer 删除这组文件
+     * 看来是做异步化
+     * @param files
+     */
     @Override
     public void deleteUnusedFiles(Collection<String> files) {
       eventQueue.add(w -> w.deleteNewFiles(files));
     }
 
+    /**
+     * 同上 添加一个使用 writer处理任务的event 到事件队列中
+     * @param info
+     */
     @Override
     public void flushFailed(SegmentInfo info) {
       eventQueue.add(w -> w.flushFailed(info));
     }
 
+    /**
+     * 当某个segment 刷盘完成时  发布该segment
+     * @throws IOException
+     */
     @Override
     public void afterSegmentsFlushed() throws IOException {
       publishFlushedSegments(false);
     }
 
+    /**
+     * 转发到 writer
+     * @param event
+     * @param message
+     */
     @Override
     public void onTragicEvent(Throwable event, String message) {
       IndexWriter.this.onTragicEvent(event, message);
@@ -450,6 +546,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     @Override
     public void onDeletesApplied() {
+      // 添加一个异步事件 用于发布segment
       eventQueue.add(w -> {
           try {
             w.publishFlushedSegments(true);
@@ -527,6 +624,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * changes made so far by this IndexWriter instance
    *
    * @throws IOException If there is a low-level I/O error
+   * 返回一个近乎准实时的读取目录的对象
    */
   DirectoryReader getReader(boolean applyAllDeletes, boolean writeAllDeletes) throws IOException {
     ensureOpen();
@@ -2196,6 +2294,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * merge requested by the MergePolicy
    * 
    * @lucene.experimental
+   * 从writer中返回一个将要被merge的对象
    */
   private synchronized MergePolicy.OneMerge getNextMerge() {
     if (pendingMerges.size() == 0) {
@@ -5039,9 +5138,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * delete generation is always GlobalPacket_deleteGeneration + 1
    * @param forced if <code>true</code> this call will block on the ticket queue if the lock is held by another thread.
    *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.
-   *
+   * 当某个segment 刷盘后 通过该方法 进行发布
    */
   private void publishFlushedSegments(boolean forced) throws IOException {
+    // 转发给 docWriter
     docWriter.purgeFlushTickets(forced, ticket -> {
       DocumentsWriterPerThread.FlushedSegment newSegment = ticket.getFlushedSegment();
       FrozenBufferedUpdates bufferedUpdates = ticket.getFrozenUpdates();
@@ -5561,6 +5661,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
   }
 
+  /**
+   * 负责产生能被merge的对象 (oneMerge)  同时还包含了merge逻辑
+   */
   private static class IndexWriterMergeSource implements MergeScheduler.MergeSource {
     private final IndexWriter writer;
 
@@ -5570,8 +5673,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     @Override
     public MergePolicy.OneMerge getNextMerge() {
+      // 从 writer的等待队列中弹出一个元素
       MergePolicy.OneMerge nextMerge = writer.getNextMerge();
       if (nextMerge != null) {
+        // 如果允许打印日志
         if (writer.mergeScheduler.verbose()) {
           writer.mergeScheduler.message("  checked out merge " + writer.segString(nextMerge.segments));
         }
@@ -5579,6 +5684,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       return nextMerge;
     }
 
+    // 在这里相关实现都转发给了 writer对象
     @Override
     public void onMergeFinished(MergePolicy.OneMerge merge) {
       writer.mergeFinish(merge);

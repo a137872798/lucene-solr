@@ -26,9 +26,12 @@ import java.util.Objects;
  *  of this class are thread-safe for multiple readers, but only one thread can
  *  be adding documents at a time, with no other reader or writer threads
  *  accessing this object.
+ *  描述 field的信息
  **/
 
 public final class FieldInfo {
+
+  // 名字和编号
   /** Field's name */
   public final String name;
   /** Internal field number */

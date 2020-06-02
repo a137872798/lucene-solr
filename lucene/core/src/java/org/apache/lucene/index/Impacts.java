@@ -20,6 +20,7 @@ import java.util.List;
 
 /**
  * Information about upcoming impacts, ie. (freq, norm) pairs.
+ * 代表影响信息  (Impact本身代表某个词的频率 规范因子等)
  */
 public abstract class Impacts {
 
@@ -30,6 +31,7 @@ public abstract class Impacts {
    * Return the number of levels on which we have impacts.
    * The returned value is always greater than 0 and may not always be the
    * same, even on a single postings list, depending on the current doc ID.
+   * 返回影响的级别
    */
   public abstract int numLevels();
 
@@ -37,6 +39,7 @@ public abstract class Impacts {
    * Return the maximum inclusive doc ID until which the list of impacts
    * returned by {@link #getImpacts(int)} is valid. This is a non-decreasing
    * function of {@code level}.
+   * 返回最大的id
    */
   public abstract int getDocIdUpTo(int level);
 
@@ -48,6 +51,7 @@ public abstract class Impacts {
    * NOTE: There is no guarantee that these impacts actually appear in postings,
    * only that they trigger scores that are greater than or equal to the impacts
    * that actually appear in postings.
+   * 返回当前级别的所有影响对象
    */
   public abstract List<Impact> getImpacts(int level);
 

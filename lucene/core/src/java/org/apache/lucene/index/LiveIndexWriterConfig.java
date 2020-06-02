@@ -38,11 +38,23 @@ import org.apache.lucene.util.Version;
  * @since 4.0
  */
 public class LiveIndexWriterConfig {
-  
+
+  /**
+   * 该对象一般需要一个分析器初始化  分析器的作用就是从数据流中解析出token
+   */
   private final Analyzer analyzer;
-  
+
+  /**
+   * 最多允许缓存多少doc
+   */
   private volatile int maxBufferedDocs;
+  /**
+   * 最多允许占用多少内存
+   */
   private volatile double ramBufferSizeMB;
+  /**
+   * 该对象可以为 reader 暖机
+   */
   private volatile IndexReaderWarmer mergedSegmentWarmer;
 
   // modified by IndexWriterConfig
@@ -52,26 +64,33 @@ public class LiveIndexWriterConfig {
 
   /** {@link IndexCommit} that {@link IndexWriter} is
    *  opened on. */
+  // 记录该索引的提交点
   protected volatile IndexCommit commit;
 
   /** {@link OpenMode} that {@link IndexWriter} is opened
    *  with. */
+  // 代表某个索引的方式  新建 or 在现有所有基础上进行追加
   protected volatile OpenMode openMode;
 
   /** Compatibility version to use for this index. */
+  // 对应当前版本信息
   protected int createdVersionMajor = Version.LATEST.major;
 
   /** {@link Similarity} to use when encoding norms. */
+  // 有关相似度的信息
   protected volatile Similarity similarity;
 
   /** {@link MergeScheduler} to use for running merges. */
+  // 处理merge相关的工作
   protected volatile MergeScheduler mergeScheduler;
 
   /** {@link IndexingChain} that determines how documents are
    *  indexed. */
+  // 用于确定 doc 是如何被索引的
   protected volatile IndexingChain indexingChain;
 
   /** {@link Codec} used to write new segments. */
+  // 在写入新的 segment时 会使用该对象进行编码
   protected volatile Codec codec;
 
   /** {@link InfoStream} for debugging messages. */
@@ -81,26 +100,33 @@ public class LiveIndexWriterConfig {
   protected volatile MergePolicy mergePolicy;
 
   /** True if readers should be pooled. */
+  // reader对象是否应该被池化
   protected volatile boolean readerPooling;
 
   /** {@link FlushPolicy} to control when segments are
    *  flushed. */
+  // 控制刷盘策略
   protected volatile FlushPolicy flushPolicy;
 
   /** Sets the hard upper bound on RAM usage for a single
    *  segment, after which the segment is forced to flush. */
+  // 每个segment 只允许使用多少内存
   protected volatile int perThreadHardLimitMB;
 
   /** True if segment flushes should use compound file format */
+  // 是否使用复合文件格式
   protected volatile boolean useCompoundFile = IndexWriterConfig.DEFAULT_USE_COMPOUND_FILE_SYSTEM;
   
   /** True if calls to {@link IndexWriter#close()} should first do a commit. */
+  // 是否要在关闭时提交索引文件
   protected boolean commitOnClose = IndexWriterConfig.DEFAULT_COMMIT_ON_CLOSE;
 
   /** The sort order to use to write merged segments. */
+  // 以什么顺序来合成 segment
   protected Sort indexSort = null;
 
   /** The field names involved in the index sort */
+  // 被用于排序的字段
   protected Set<String> indexSortFields = Collections.emptySet();
 
   /** if an indexing thread should check for pending flushes on update in order to help out on a full flush*/
@@ -111,6 +137,7 @@ public class LiveIndexWriterConfig {
 
 
   // used by IndexWriterConfig
+  // 通过一个 analyzer 进行初始化  analyzer 就是负责解析文本流 并使用词法解析器解析出满足条件的token  比如 whitespaceTokenizer 就是排除掉空格
   LiveIndexWriterConfig(Analyzer analyzer) {
     this.analyzer = analyzer;
     ramBufferSizeMB = IndexWriterConfig.DEFAULT_RAM_BUFFER_SIZE_MB;
@@ -120,6 +147,7 @@ public class LiveIndexWriterConfig {
     commit = null;
     useCompoundFile = IndexWriterConfig.DEFAULT_USE_COMPOUND_FILE_SYSTEM;
     openMode = OpenMode.CREATE_OR_APPEND;
+    // 某种默认的相似度计算规则吧
     similarity = IndexSearcher.getDefaultSimilarity();
     mergeScheduler = new ConcurrentMergeScheduler();
     indexingChain = DocumentsWriterPerThread.defaultIndexingChain;
@@ -133,7 +161,9 @@ public class LiveIndexWriterConfig {
     readerPooling = IndexWriterConfig.DEFAULT_READER_POOLING;
     perThreadHardLimitMB = IndexWriterConfig.DEFAULT_RAM_PER_THREAD_HARD_LIMIT_MB;
   }
-  
+
+  // 下面就是一些 set/get 方法
+
   /** Returns the default analyzer to use for indexing documents. */
   public Analyzer getAnalyzer() {
     return analyzer;

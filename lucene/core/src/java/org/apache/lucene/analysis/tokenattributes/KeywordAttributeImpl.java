@@ -21,6 +21,7 @@ import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.AttributeReflector;
 
 /** Default implementation of {@link KeywordAttribute}. */
+// 标注某个token 是否是关键字
 public final class KeywordAttributeImpl extends AttributeImpl implements
     KeywordAttribute {
   private boolean keyword;

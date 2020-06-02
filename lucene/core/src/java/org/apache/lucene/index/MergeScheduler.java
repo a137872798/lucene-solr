@@ -30,6 +30,7 @@ import org.apache.lucene.util.InfoStream;
  *  selected by a {@link MergePolicy}.  The default
  *  MergeScheduler is {@link ConcurrentMergeScheduler}.</p>
  * @lucene.experimental
+ * 一个merge的定时器
 */
 public abstract class MergeScheduler implements Closeable {
 
@@ -89,21 +90,25 @@ public abstract class MergeScheduler implements Closeable {
   /**
    * Provides access to new merges and executes the actual merge
    * @lucene.experimental
+   * 将要被merge的数据源
    */
   public interface MergeSource {
     /**
      * The {@link MergeScheduler} calls this method to retrieve the next
      * merge requested by the MergePolicy
+     * 获取下一个要merge的对象
      */
     MergePolicy.OneMerge getNextMerge();
 
     /**
      * Does finishing for a merge.
+     * 当某个 merge动作完成时触发钩子函数
      */
     void onMergeFinished(MergePolicy.OneMerge merge);
 
     /**
      * Expert: returns true if there are merges waiting to be scheduled.
+     * 返回当前是否有正在等待的 merge任务
      */
     boolean hasPendingMerges();
 

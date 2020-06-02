@@ -20,9 +20,13 @@ package org.apache.lucene.store;
 import java.io.IOException;
 
 /** Corrupts on bit of a file after close */
+// 腐败的 output ???
 public class CorruptingIndexOutput extends IndexOutput {
+  // 也是基于代理模式
   protected final IndexOutput out;
+  // 每个indexOutput 主要都是为了向directory 写入数据
   final Directory dir;
+  // 当本对象要被关闭时 要让多少数据腐败
   final long byteToCorrupt;
   private boolean closed;
 
@@ -49,24 +53,33 @@ public class CorruptingIndexOutput extends IndexOutput {
     }
   }
 
+  /**
+   * 当关闭该输出流时  要将文件变成腐败的
+   * @throws IOException
+   */
   protected void corruptFile() throws IOException {
     // Now corrupt the specfied byte:
     String newTempName;
+    // 这里创建一个临时输入流和输出流
     try(IndexOutput tmpOut = dir.createTempOutput("tmp", "tmp", IOContext.DEFAULT);
         IndexInput in = dir.openInput(out.getName(), IOContext.DEFAULT)) {
       newTempName = tmpOut.getName();
 
+      // 腐败长度超过预期值
       if (byteToCorrupt >= in.length()) {
         throw new IllegalArgumentException("byteToCorrupt=" + byteToCorrupt + " but file \"" + out.getName() + "\" is only length=" + in.length());
       }
 
+      // 将in内部的数据转移到tmpOut中
       tmpOut.copyBytes(in, byteToCorrupt);
-      // Flip the 0th bit:
+      // Flip the 0th bit:  // 写入一个特殊标识后
       tmpOut.writeByte((byte) (in.readByte() ^ 1));
+      // 写入剩余的数据
       tmpOut.copyBytes(in, in.length()-byteToCorrupt-1);
     }
 
     // Delete original and copy corrupt version back:
+    // 删除当前文件 将 临时文件的数据重新拷贝到当前文件中后 删除临时文件
     dir.deleteFile(out.getName());
     dir.copyFrom(dir, newTempName, out.getName(), IOContext.DEFAULT);
     dir.deleteFile(newTempName);

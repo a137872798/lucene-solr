@@ -44,11 +44,15 @@ import org.apache.lucene.search.TermRangeQuery;
  * <code>long</code> using {@link Date#getTime} or {@link Calendar#getTimeInMillis} and
  * index this as a numeric value with {@link LongPoint}
  * and use {@link org.apache.lucene.search.PointRangeQuery} to query it.
+ * 负责时间转换
  */
 public class DateTools {
   
   final static TimeZone GMT = TimeZone.getTimeZone("GMT");
 
+  /**
+   * 每个线程单独维护一个日历对象
+   */
   private static final ThreadLocal<Calendar> TL_CAL = new ThreadLocal<Calendar>() {
     @Override
     protected Calendar initialValue() {
@@ -57,6 +61,7 @@ public class DateTools {
   };
 
   //indexed by format length
+  // 这里存储了 各种时间格式对象 节省内存开销
   private static final ThreadLocal<SimpleDateFormat[]> TL_FORMATS = new ThreadLocal<SimpleDateFormat[]>() {
     @Override
     protected SimpleDateFormat[] initialValue() {
@@ -94,6 +99,7 @@ public class DateTools {
    *  depending on <code>resolution</code>; using GMT as timezone
    */
   public static String timeToString(long time, Resolution resolution) {
+    // 根据时间格式裁剪时间 比如 精确到分 那么删除秒及更低单位的数据
     final Date date = new Date(round(time, resolution));
     return TL_FORMATS.get()[resolution.formatLen].format(date);
   }
@@ -106,7 +112,8 @@ public class DateTools {
    * @param dateString the date string to be converted
    * @return the number of milliseconds since January 1, 1970, 00:00:00 GMT
    * @throws ParseException if <code>dateString</code> is not in the 
-   *  expected format 
+   *  expected format
+   *  根据长度匹配对应的 format 然后转换成时间
    */
   public static long stringToTime(String dateString) throws ParseException {
     return stringToDate(dateString).getTime();
@@ -182,6 +189,7 @@ public class DateTools {
   }
 
   /** Specifies the time granularity. */
+  // 这里存放了各种日期格式
   public static enum Resolution {
     
     /** Limit a date's resolution to year granularity. */

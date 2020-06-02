@@ -20,7 +20,7 @@ import java.io.Reader;
 
 
 /** Internal class to enable reuse of the string reader by {@link Analyzer#tokenStream(String,String)} */
-// 代表一个可重用的 reader
+// 将一个string 包装成reader
 final class ReusableStringReader extends Reader {
   private int pos = 0, size = 0;
   private String s = null;

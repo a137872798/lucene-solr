@@ -24,6 +24,7 @@ import org.apache.lucene.util.BytesRef;
  * <b>WARNING:</b> This class omits most low-level checks,
  * so be sure to test heavily with assertions enabled.
  * @lucene.experimental
+ * 基于一个 byte[] 来存储数据
  */
 public class ByteArrayDataOutput extends DataOutput {
   private byte[] bytes;

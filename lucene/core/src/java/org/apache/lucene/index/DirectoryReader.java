@@ -48,16 +48,19 @@ import org.apache.lucene.store.Directory;
  synchronization, you should <b>not</b> synchronize on the
  <code>IndexReader</code> instance; use your own
  (non-Lucene) objects instead.
+ 该对象用于从 目录中读取数据  拓展了骨架compositeReader  通过泛型中的 LeafReader可以看出 Composite负责组合子类的数据 LeafReader 才是实际干活的对象
 */
 public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
 
   /** The index directory. */
+  // 被读取的目标目录  下面的doc将会分配给leafReader
   protected final Directory directory;
   
   /** Returns a IndexReader reading the index in the given
    *  Directory
    * @param directory the index directory
    * @throws IOException if there is a low-level IO error
+   * 开启某个目录 并返回一个reader对象
    */
   public static DirectoryReader open(final Directory directory) throws IOException {
     return StandardDirectoryReader.open(directory, null);
@@ -74,6 +77,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
    * @see #openIfChanged(DirectoryReader,IndexWriter,boolean)
    *
    * @lucene.experimental
+   * 通过一个 writer对象进行初始化
    */
   public static DirectoryReader open(final IndexWriter writer) throws IOException {
     return open(writer, true, false);
@@ -252,20 +256,26 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
    *  
    *  @return a sorted list of {@link IndexCommit}s, from oldest 
    *  to latest. */
+  // 返回目标目录下所有 提交点
   public static List<IndexCommit> listCommits(Directory dir) throws IOException {
+    // 获取所有文件
     final String[] files = dir.listAll();
 
     List<IndexCommit> commits = new ArrayList<>();
 
+    // 返回最近的一次提交对应的 片段信息
     SegmentInfos latest = SegmentInfos.readLatestCommit(dir);
+    // 生成该片段所在的 代
     final long currentGen = latest.getGeneration();
 
+    // 包装成一个 ReaderCommit 对象
     commits.add(new StandardDirectoryReader.ReaderCommit(null, latest, dir));
 
     for(int i=0;i<files.length;i++) {
 
       final String fileName = files[i];
 
+      // 遍历所有之前提交的文件
       if (fileName.startsWith(IndexFileNames.SEGMENTS) &&
           SegmentInfos.generationFromSegmentsFileName(fileName) < currentGen) {
 
@@ -273,6 +283,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
         try {
           // IOException allowed to throw there, in case
           // segments_N is corrupt
+          // 读取之前的提交数据
           sis = SegmentInfos.readCommit(dir, fileName);
         } catch (FileNotFoundException | NoSuchFileException fnfe) {
           // LUCENE-948: on NFS (and maybe others), if
@@ -284,6 +295,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
           // as if the file does not exist
         }
 
+        // 读取到数据的情况下 存入到list中
         if (sis != null) {
           commits.add(new StandardDirectoryReader.ReaderCommit(null, sis, dir));
         }
@@ -302,6 +314,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
    * exists, or if an index in the process of committing 
    * @param  directory the directory to check for an index
    * @return <code>true</code> if an index exists; <code>false</code> otherwise
+   * 判断目标目录下索引是否存在
    */
   public static boolean indexExists(Directory directory) throws IOException {
     // LUCENE-2812, LUCENE-2727, LUCENE-4738: this logic will
@@ -319,6 +332,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
     // resolve the situation manually:
     String[] files = directory.listAll();
 
+    // 只要存在 segments_ + 年代  的文件 就是存在索引文件
     String prefix = IndexFileNames.SEGMENTS + "_";
     for(String file : files) {
       if (file.startsWith(prefix)) {
@@ -336,6 +350,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
    * cloned and not protected for modification outside of this reader.
    * Subclasses of {@code DirectoryReader} should take care to not allow
    * modification of this internal array, e.g. {@link #doOpenIfChanged()}.
+   *                       使用一组子reader 和一个目录对象进行初始化
    */
   protected DirectoryReader(Directory directory, LeafReader[] segmentReaders) throws IOException {
     super(segmentReaders);

@@ -26,12 +26,22 @@ import java.util.zip.Checksum;
 
 /**
  * An {@link IndexOutput} writing to a {@link ByteBuffersDataOutput}.
+ * 在  ByteBuffersDataOutput的基础上增加了 校验和
  */
 public final class ByteBuffersIndexOutput extends IndexOutput {
+  /**
+   * 该对象用于释放 代理对象
+   */
   private final Consumer<ByteBuffersDataOutput> onClose;
   
   private final Checksum checksum;
+  /**
+   * 上次计算的时候指针在的位置
+   */
   private long lastChecksumPosition;
+  /**
+   * 上次计算的校验和的值
+   */
   private long lastChecksum;
 
   private ByteBuffersDataOutput delegate;
@@ -78,6 +88,7 @@ public final class ByteBuffersIndexOutput extends IndexOutput {
     // This way we can override more methods and pass them directly to the delegate for efficiency of writing,
     // while allowing the checksum to be correctly computed on the current content of the output buffer (IndexOutput
     // is per-thread, so no concurrent changes).
+    // 代表需要重新计算校验和
     if (lastChecksumPosition != delegate.size()) {
       lastChecksumPosition = delegate.size();
       checksum.reset();

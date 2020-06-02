@@ -18,6 +18,7 @@ package org.apache.solr.store.blockcache;
 
 /**
  * @lucene.experimental
+ * 该对象可以根据需要存储 buffer 或者获取buffer 就像一个pool
  */
 public interface Store {
 

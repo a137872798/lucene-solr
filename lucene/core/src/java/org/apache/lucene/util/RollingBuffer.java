@@ -21,6 +21,7 @@ package org.apache.lucene.util;
  *  circular buffer to reuse instances of T.
  * 
  *  @lucene.internal */
+// 应该是一个轮状的存储容器   这就是环形缓冲区啊
 public abstract class RollingBuffer<T extends RollingBuffer.Resettable> {
 
   /**
@@ -30,16 +31,19 @@ public abstract class RollingBuffer<T extends RollingBuffer.Resettable> {
     public void reset();
   }
 
+  /**
+   *
+   */
   @SuppressWarnings("unchecked") private T[] buffer = (T[]) new RollingBuffer.Resettable[8];
 
-  // Next array index to write to:
+  // Next array index to write to:  这是一个逻辑偏移量  也就是每到轮底 会重置成0
   private int nextWrite;
 
-  // Next position to write:
+  // Next position to write:  这是一个物理偏移量  该指针不会重置 会不断增加
   private int nextPos;
 
   // How many valid Position are held in the
-  // array:
+  // array:  记录当前数组内的元素
   private int count;
 
   public RollingBuffer() {
@@ -50,6 +54,9 @@ public abstract class RollingBuffer<T extends RollingBuffer.Resettable> {
 
   protected abstract T newInstance();
 
+  /**
+   * 重置环形缓冲区内所有元素
+   */
   public void reset() {
     nextWrite--;
     while (count > 0) {
@@ -80,14 +87,19 @@ public abstract class RollingBuffer<T extends RollingBuffer.Resettable> {
   /** Get T instance for this absolute position;
    *  this is allowed to be arbitrarily far "in the
    *  future" but cannot be before the last freeBefore. */
+  // 获取指定下标对应的元素
   public T get(int pos) {
     //System.out.println("RA.get pos=" + pos + " nextPos=" + nextPos + " nextWrite=" + nextWrite + " count=" + count);
     while (pos >= nextPos) {
+      // 代表当前数量已经满了
       if (count == buffer.length) {
+        // 进行扩容
         @SuppressWarnings("unchecked") T[] newBuffer = (T[]) new Resettable[ArrayUtil.oversize(1+count, RamUsageEstimator.NUM_BYTES_OBJECT_REF)];
         //System.out.println("  grow length=" + newBuffer.length);
+        // 这里先写入的是 buffer.length-nextWrite 的部分   后写入之前的部分
         System.arraycopy(buffer, nextWrite, newBuffer, 0, buffer.length-nextWrite);
         System.arraycopy(buffer, 0, newBuffer, buffer.length-nextWrite, nextWrite);
+        // 为扩容出来的部分 创建新对象填充空间
         for(int i=buffer.length;i<newBuffer.length;i++) {
           newBuffer[i] = newInstance();
         }

@@ -32,6 +32,7 @@ import org.apache.lucene.util.IOUtils;
  * 
  * @see IOUtils to obtain {@link Reader} instances
  * @lucene.internal
+ * 工具类  包含了从reader中找到停词的功能
  */
 public class WordlistLoader {
   
@@ -49,13 +50,16 @@ public class WordlistLoader {
    * @param reader Reader containing the wordlist
    * @param result the {@link CharArraySet} to fill with the readers words
    * @return the given {@link CharArraySet} with the reader's words
+   * 从输入流中找到停词 并设置到 set中
    */
   public static CharArraySet getWordSet(Reader reader, CharArraySet result) throws IOException {
     BufferedReader br = null;
     try {
+      // 将输入流包装成 BufferedReader
       br = getBufferedReader(reader);
       String word = null;
       while ((word = br.readLine()) != null) {
+        // 按行加入到 set中
         result.add(word.trim());
       }
     }

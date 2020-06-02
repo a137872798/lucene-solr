@@ -39,7 +39,7 @@ import org.apache.lucene.document.DocumentStoredFieldVisitor;
  * used by {@link IndexReader#document(int)}.
  *
  * @lucene.experimental */
-
+// 封装访问doc的api
 public abstract class StoredFieldVisitor {
 
   /** Sole constructor. (For invocation by subclass 

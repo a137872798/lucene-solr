@@ -23,6 +23,7 @@ import org.apache.lucene.analysis.Analyzer;
  * An Analyzer that uses {@link WhitespaceTokenizer}.
  *
  * @since 3.1
+ * 一个空格分析器
  **/
 public final class WhitespaceAnalyzer extends Analyzer {
 
@@ -42,7 +43,14 @@ public final class WhitespaceAnalyzer extends Analyzer {
   public WhitespaceAnalyzer(int maxTokenLength) {
     this.maxTokenLength = maxTokenLength;
   }
-  
+
+  /**
+   * 使用一个分词器创建 tokenStream组件对象
+   * @param fieldName
+   *          the name of the fields content passed to the
+   *          {@link TokenStreamComponents} sink as a reader
+   * @return
+   */
   @Override
   protected TokenStreamComponents createComponents(final String fieldName) {
     return new TokenStreamComponents(new WhitespaceTokenizer(maxTokenLength));

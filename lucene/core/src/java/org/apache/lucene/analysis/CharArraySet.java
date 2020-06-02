@@ -39,6 +39,7 @@ import java.util.Set;
  * {@link Object#toString} and store the result using a {@code char[]}
  * buffer. The same behavior have the {@code contains()} methods.
  * The {@link #iterator()} returns an {@code Iterator<char[]>}.
+ * 用于存储停词的容器
  */
 public class CharArraySet extends AbstractSet<Object> {
 

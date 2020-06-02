@@ -36,13 +36,28 @@ import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
 
+/**
+ * 代表一个范围查询对象
+ */
 abstract class BinaryRangeFieldRangeQuery extends Query {
   private final String field;
   private byte[] queryPackedValue;
+  // 几个维护以及每个维度多少byte
   private final int numBytesPerDimension;
   private final int numDims;
+  /**
+   * 代表查询的类型
+   */
   private final RangeFieldQuery.QueryType queryType;
 
+  /**
+   * 初始化时 传入一个字段名
+   * @param field
+   * @param queryPackedValue
+   * @param numBytesPerDimension
+   * @param numDims
+   * @param queryType
+   */
   BinaryRangeFieldRangeQuery(String field, byte[] queryPackedValue, int numBytesPerDimension, int numDims,
                              RangeFieldQuery.QueryType queryType) {
     this.field = field;
@@ -50,6 +65,7 @@ abstract class BinaryRangeFieldRangeQuery extends Query {
     this.numBytesPerDimension = numBytesPerDimension;
     this.numDims = numDims;
 
+    // 返回查询只支持交集
     if (!(queryType == RangeFieldQuery.QueryType.INTERSECTS)) {
       throw new UnsupportedOperationException("INTERSECTS is the only query type supported for this field type right now");
     }
@@ -77,7 +93,9 @@ abstract class BinaryRangeFieldRangeQuery extends Query {
 
   @Override
   public void visit(QueryVisitor visitor) {
+    // visitor 能否处理该field
     if (visitor.acceptField(field)) {
+      // visitor 会自动递归本对象
       visitor.visitLeaf(this);
     }
   }
@@ -90,6 +108,7 @@ abstract class BinaryRangeFieldRangeQuery extends Query {
   private BinaryRangeDocValues getValues(LeafReader reader, String field) throws IOException {
     BinaryDocValues binaryDocValues = reader.getBinaryDocValues(field);
 
+    // 使用reader读取值 之后包装成一个范围对象
     return new BinaryRangeDocValues(binaryDocValues, numDims, numBytesPerDimension);
   }
 

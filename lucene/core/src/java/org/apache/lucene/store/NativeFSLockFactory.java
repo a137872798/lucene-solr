@@ -70,6 +70,8 @@ import org.apache.lucene.util.IOUtils;
  * <p>This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
+ * 本地文件锁工厂
+ * SimpleFSLockFactory 只是简单创建一个文件就好
  */
 
 public final class NativeFSLockFactory extends FSLockFactory {
@@ -79,10 +81,20 @@ public final class NativeFSLockFactory extends FSLockFactory {
    */
   public static final NativeFSLockFactory INSTANCE = new NativeFSLockFactory();
 
+  /**
+   * 记录当前哪些 path 被锁定
+   */
   private static final Set<String> LOCK_HELD = Collections.synchronizedSet(new HashSet<String>());
 
   private NativeFSLockFactory() {}
 
+  /**
+   * 根据将要被上锁的目录 以及锁的名字 创建一个锁对象
+   * @param dir
+   * @param lockName
+   * @return
+   * @throws IOException
+   */
   @Override
   protected Lock obtainFSLock(FSDirectory dir, String lockName) throws IOException {
     Path lockDir = dir.getDirectory();
@@ -117,11 +129,13 @@ public final class NativeFSLockFactory extends FSLockFactory {
     
     // used as a best-effort check, to see if the underlying file has changed
     final FileTime creationTime = Files.readAttributes(realPath, BasicFileAttributes.class).creationTime();
-    
+
+    // 这里相比 SimpleFSLockFactory 复杂些
     if (LOCK_HELD.add(realPath.toString())) {
       FileChannel channel = null;
       FileLock lock = null;
       try {
+        // 通过文件channel 创建锁  这个锁是由内核来创建的  所以又叫 nativeFSLock
         channel = FileChannel.open(realPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         lock = channel.tryLock();
         if (lock != null) {
@@ -139,7 +153,12 @@ public final class NativeFSLockFactory extends FSLockFactory {
       throw new LockObtainFailedException("Lock held by this virtual machine: " + realPath);
     }
   }
-  
+
+  /**
+   * 释放锁
+   * @param path
+   * @throws IOException
+   */
   private static final void clearLockHeld(Path path) throws IOException {
     boolean remove = LOCK_HELD.remove(path.toString());
     if (remove == false) {
@@ -164,6 +183,10 @@ public final class NativeFSLockFactory extends FSLockFactory {
       this.creationTime = creationTime;
     }
 
+    /**
+     * 确保当前锁是否可用
+     * @throws IOException
+     */
     @Override
     public void ensureValid() throws IOException {
       if (closed) {

@@ -32,15 +32,24 @@ import java.util.Set;
  * etc.  It is designed to be quick to retrieve items
  * by char[] keys without the necessity of converting
  * to a String first.
- * 该对象的key是一个 char[]
+ * key 是一个char[]
  */
 public class CharArrayMap<V> extends AbstractMap<Object,V> {
   // private only because missing generics
   private static final CharArrayMap<?> EMPTY_MAP = new EmptyCharArrayMap<>();
 
+  /**
+   * 初始大小
+   */
   private final static int INIT_SIZE = 8;
+  /**
+   * 是否忽略大小写
+   */
   private boolean ignoreCase;  
   private int count;
+  // key 实际上是一个string  也就是应该是   string[] keys
+  // 不过这里将string 也拆分成了数组  就变成了 char[][]
+  // 第一维 用于匹配slot 第二维才真正存储了数据
   char[][] keys; // package private because used in CharArraySet's non Set-conform CharArraySetIterator
   /**
    * 用于存储 value
@@ -61,6 +70,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   public CharArrayMap(int startSize, boolean ignoreCase) {
     this.ignoreCase = ignoreCase;
     int size = INIT_SIZE;
+    // 初始大小 为传入值的 1.5倍
     while(startSize + (startSize>>2) > size)
       size <<= 1;
     keys = new char[size][];
@@ -99,7 +109,6 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
 
   /** true if the <code>len</code> chars of <code>text</code> starting at <code>off</code>
    * are in the {@link #keySet()} */
-  // 因为该对象的key 是一个 char[] 所以这通过 char[] 去匹配key
   public boolean containsKey(char[] text, int off, int len) {
     return keys[getSlot(text, off, len)] != null;
   }
@@ -120,6 +129,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
 
   /** returns the value of the mapping of <code>len</code> chars of <code>text</code>
    * starting at <code>off</code> */
+  // 通过getSlot 能够定位到keys 的下标 而该下标在values查询出来的值 也就是 key 对应的value 值
   public V get(char[] text, int off, int len) {
     return values[getSlot(text, off, len)];
   }
@@ -139,22 +149,24 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   }
 
   /**
-   * 通过从text 截取的匹配key 返回对应的slot
+   * 使用off 和 len 从text 中获取真正需要判断的部分 然后判断当前  keys:char[][] 中是否有匹配的key
    * @param text
    * @param off
    * @param len
    * @return
    */
   private int getSlot(char[] text, int off, int len) {
+    // 基于部分 char 计算出hash值
     int code = getHashCode(text, off, len);
+    // 定位到一维数组的某个下标
     int pos = code & (keys.length-1);
     // 通过hashCode 找到key所在的槽后
     char[] text2 = keys[pos];
     // 对比 key是否相同
     if (text2 != null && !equals(text, off, len, text2)) {
+      // 不相同的情况下 计算一个偏移量 这个还要看put是怎么做的   这个实际上是一种线性探测法吧
       final int inc = ((code>>8)+code)|1;
       do {
-        // 这里 添加一个偏移量后 重新计算 keys的下标 之后判断key是否相同
         code += inc;
         pos = code & (keys.length-1);
         text2 = keys[pos];
@@ -208,7 +220,9 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     if (ignoreCase) {
       CharacterUtils.toLowerCase(text, 0, text.length);
     }
-    // 找到key 要存放的 slot
+    // 通过 散列函数 计算出hash值   然后通过线性探测法 解决冲突  只会出现2种情况
+    // 1.找到相同key的下标
+    // 2.找到一个空的slot
     int slot = getSlot(text, 0, text.length);
     if (keys[slot] != null) {
       // 找到相同下标的slot 并替换数据
@@ -221,7 +235,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     values[slot] = value;
     count++;
 
-    // 当总数的1.5  倍超过了 keys时 重新计算hash
+    // 必须确保始终有空的 slot可用
     if (count + (count>>2) > keys.length) {
       rehash();
     }
@@ -229,6 +243,9 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     return null;
   }
 
+  /**
+   * 扩容
+   */
   @SuppressWarnings("unchecked")
   private void rehash() {
     assert keys.length == values.length;
@@ -248,8 +265,17 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
       }
     }
   }
-  
+
+  /**
+   *
+   * @param text1  需要查找的key
+   * @param off
+   * @param len
+   * @param text2   当前map中存在的key
+   * @return
+   */
   private boolean equals(char[] text1, int off, int len, char[] text2) {
+    // 长度不匹配必然不相同
     if (len != text2.length)
       return false;
     final int limit = off+len;
@@ -310,6 +336,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
         i += Character.charCount(codePointAt);
       }
     } else {
+      // 简单来看就是 取指定返回的数据 并计算hashCode
       for (int i=offset; i<stop; i++) {
         code = code*31 + text[i];
       }
@@ -317,6 +344,11 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     return code;
   }
 
+  /**
+   * 使用整个 char流生成hashCode
+   * @param text
+   * @return
+   */
   private int getHashCode(CharSequence text) {
     if (text == null)
       throw new NullPointerException();
@@ -357,8 +389,15 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   }
 
   private EntrySet entrySet = null;
+  /**
+   * keySet() 对应的值
+   */
   private CharArraySet keySet = null;
-  
+
+  /**
+   * 创建 键值对  并且默认允许通过 该对象修改 map的数据
+   * @return
+   */
   EntrySet createEntrySet() {
     return new EntrySet(true);
   }
@@ -405,6 +444,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   }
 
   /** public iterator class so efficient methods are exposed to users */
+  // 生成迭代器对象
   public class EntryIterator implements Iterator<Map.Entry<Object,V>> {
     private int pos=-1;
     private int lastPos;
@@ -418,6 +458,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     private void goNext() {
       lastPos = pos;
       pos++;
+      // 因为线性探测法 导致有些 slot是空的 这里要跳过这些空的slot
       while (pos < keys.length && keys[pos] == null) pos++;
     }
 
@@ -503,6 +544,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   }
 
   /** public EntrySet class so efficient methods are exposed to users */
+  // 该map 作为entry的职能
   public final class EntrySet extends AbstractSet<Map.Entry<Object,V>> {
     private final boolean allowModify;
     

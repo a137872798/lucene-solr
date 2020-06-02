@@ -20,6 +20,7 @@ package org.apache.lucene.index;
 /**
  * Controls how much information is stored in the postings lists.
  * @lucene.experimental
+ * 代表索引中应该存储什么信息
  */
 
 public enum IndexOptions { 
@@ -32,18 +33,21 @@ public enum IndexOptions {
    * Only documents are indexed: term frequencies and positions are omitted.
    * Phrase and other positional queries on the field will throw an exception, and scoring
    * will behave as if any term in the document appears only once.
+   * 索引中只存储文档信息
    */
   DOCS,
   /** 
    * Only documents and term frequencies are indexed: positions are omitted. 
    * This enables normal scoring, except Phrase and other positional queries
    * will throw an exception.
+   * 文档和词的频率都将被索引
    */  
   DOCS_AND_FREQS,
   /** 
    * Indexes documents, frequencies and positions.
    * This is a typical default for full-text search: full scoring is enabled
    * and positional queries are supported.
+   * 文档/频率/pos都将被存储   这是一个典型的全文本查询
    */
   DOCS_AND_FREQS_AND_POSITIONS,
   /** 

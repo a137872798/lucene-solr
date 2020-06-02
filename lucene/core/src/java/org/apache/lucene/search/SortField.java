@@ -31,11 +31,13 @@ import org.apache.lucene.util.BytesRef;
  *
  * @since   lucene 1.4
  * @see Sort
+ * 用于排序的字段
  */
 public class SortField {
 
   /**
    * Specifies the type of the terms to be sorted, or special types such as CUSTOM
+   * 字段类型
    */
   public static enum Type {
 
@@ -45,10 +47,12 @@ public class SortField {
 
     /** Sort by document number (index order).  Sort values are Integer and lower
      * values are at the front. */
+    // 基于doc 的序号进行排序
     DOC,
 
     /** Sort using term values as Strings.  Sort values are String and lower
      * values are at the front. */
+    // 使用某个string类型的词排序
     STRING,
 
     /** Sort using term values as encoded Integers.  Sort values are Integer and
@@ -69,6 +73,7 @@ public class SortField {
 
     /** Sort using a custom Comparator.  Sort values are any Comparable and
      * sorting is done according to natural order. */
+    // 使用自定义的方式 对结果进行排序
     CUSTOM,
 
     /** Sort using term values as Strings, but comparing by
@@ -79,23 +84,32 @@ public class SortField {
 
     /** Force rewriting of SortField using {@link SortField#rewrite(IndexSearcher)}
      * before it can be used for sorting */
+    // 每当排序前 强制进行重写
     REWRITEABLE
   }
 
   /** Represents sorting by document score (relevance). */
+  // 代表基于 相关度得分进行排序
   public static final SortField FIELD_SCORE = new SortField(null, Type.SCORE);
 
   /** Represents sorting by document number (index order). */
+  // 基于 所有满足条件的doc的下标排序
   public static final SortField FIELD_DOC = new SortField(null, Type.DOC);
+
 
   private String field;
   private Type type;  // defaults to determining type dynamically
+  /**
+   * 按照此字段正序 / 倒序排列
+   */
   boolean reverse = false;  // defaults to natural order
 
   // Used for CUSTOM sort
+  // 该对象用于提供排序函数
   private FieldComparatorSource comparatorSource;
 
   // Used for 'sortMissingFirst/Last'
+  // 如果排序字段没有值的时候 (也就是默认值)
   protected Object missingValue = null;
 
   /** Creates a sort by terms in the given field with the type of term
@@ -103,6 +117,7 @@ public class SortField {
    * @param field  Name of field to sort by.  Can be <code>null</code> if
    *               <code>type</code> is SCORE or DOC.
    * @param type   Type of values in the terms.
+   *               使用排序字段 以及对应的类型进行初始化
    */
   public SortField(String field, Type type) {
     initFieldType(field, type);
@@ -150,6 +165,7 @@ public class SortField {
       if (missingValue != STRING_FIRST && missingValue != STRING_LAST) {
         throw new IllegalArgumentException("For STRING type, missing value must be either STRING_FIRST or STRING_LAST");
       }
+      // 默认值必须符合对应的类型
     } else if (type == Type.INT) {
       if (missingValue != null && missingValue.getClass() != Integer.class)
         throw new IllegalArgumentException("Missing values for Type.INT can only be of type java.lang.Integer, but got " + missingValue.getClass());
@@ -171,6 +187,7 @@ public class SortField {
   /** Creates a sort with a custom comparison function.
    * @param field Name of field to sort by; cannot be <code>null</code>.
    * @param comparator Returns a comparator for sorting hits.
+   *                   如果传入了 比较源 代表此排序字段是自定义类型
    */
   public SortField(String field, FieldComparatorSource comparator) {
     initFieldType(field, Type.CUSTOM);
@@ -313,6 +330,9 @@ public class SortField {
     return Objects.hash(field, type, reverse, comparatorSource, missingValue);
   }
 
+  /**
+   * 按照自然顺序排序
+   */
   private Comparator<BytesRef> bytesComparator = Comparator.naturalOrder();
 
   public void setBytesComparator(Comparator<BytesRef> b) {
@@ -334,6 +354,7 @@ public class SortField {
    *   secondary if sortPos==1, etc.  Some comparators can
    *   optimize themselves when they are the primary sort.
    * @return {@link FieldComparator} to use when sorting
+   * 根据 sortField的类型 会返回不同的 Comparator
    */
   public FieldComparator<?> getComparator(final int numHits, final int sortPos) {
 

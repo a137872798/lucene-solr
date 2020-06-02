@@ -22,6 +22,8 @@ import org.apache.lucene.store.IndexOutput;
 
 /**
  * @lucene.experimental
+ * IndexOutput 主要是向 Directory 写入数据的
+ * 这个是 solr的 忽略
  */
 public abstract class ReusedBufferedIndexOutput extends IndexOutput {
   

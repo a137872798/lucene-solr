@@ -103,12 +103,21 @@ import org.apache.lucene.util.InfoStream;
 final class DocumentsWriter implements Closeable, Accountable {
   private final AtomicLong pendingNumDocs;
 
+  /**
+   * 一个监听器对象
+   */
   private final FlushNotifications flushNotifications;
 
   private volatile boolean closed;
 
+  /**
+   * 用于输出日志
+   */
   private final InfoStream infoStream;
 
+  /**
+   * 配置对象
+   */
   private final LiveIndexWriterConfig config;
 
   private final AtomicInteger numDocsInRAM = new AtomicInteger(0);
@@ -560,6 +569,9 @@ final class DocumentsWriter implements Closeable, Accountable {
     deleteQueue = newQueue;
   }
 
+  /**
+   * 类似一个监听器   该对象负责监听 docWriter的刷盘动作
+   */
   interface FlushNotifications { // TODO maybe we find a better name for this?
 
     /**

@@ -23,6 +23,7 @@ import org.apache.lucene.util.BytesRef;
 /** A field whose value is stored so that {@link
  *  IndexSearcher#doc} and {@link IndexReader#document IndexReader.document()} will
  *  return the field and its value. */
+// 该字段被标注成 已经排序过
 public class StoredField extends Field {
 
   /**

@@ -23,11 +23,14 @@ import java.io.IOException;
  * Base class for file system based locking implementation.
  * This class is explicitly checking that the passed {@link Directory}
  * is an {@link FSDirectory}.
+ * 通过指定一个目录和 锁名 会返回一个锁对象
+ * 这里专门返回针对文件系统的锁
  */
 public abstract class FSLockFactory extends LockFactory {
   
   /** Returns the default locking implementation for this platform.
    * This method currently returns always {@link NativeFSLockFactory}.
+   * 返回一个锁工厂的默认实现
    */
   public static final FSLockFactory getDefault() {
     return NativeFSLockFactory.INSTANCE;

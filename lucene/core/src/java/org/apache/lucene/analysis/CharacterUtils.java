@@ -138,6 +138,7 @@ public final class CharacterUtils {
    * @return <code>false</code> if and only if reader.read returned -1 while trying to fill the buffer
    * @throws IOException
    *           if the reader throws an {@link IOException}.
+   *           从 reader读取numChars个数据 并填充到buffer中
    */
   public static boolean fill(CharacterBuffer buffer, Reader reader, int numChars) throws IOException {
     assert buffer.buffer.length >= 2;
@@ -193,6 +194,7 @@ public final class CharacterUtils {
   /**
    * A simple IO buffer to use with
    * {@link CharacterUtils#fill(CharacterBuffer, Reader)}.
+   * 用于存放一个 char[]
    */
   public static final class CharacterBuffer {
     

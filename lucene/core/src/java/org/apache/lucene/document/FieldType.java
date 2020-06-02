@@ -28,17 +28,33 @@ import org.apache.lucene.index.PointValues;
 
 /**
  * Describes the properties of a field.
+ * 描述某个字段的信息  就是一个简单的bean对象
  */
 public class FieldType implements IndexableFieldType  {
 
+  /**
+   * 是否需要被排序
+   */
   private boolean stored;
+  /**
+   * 默认情况认为该字段已经被解析
+   */
   private boolean tokenized = true;
+  /**
+   * 除了存储doc 以外是否还存储了 向量/offset/pos/payload 等
+   */
   private boolean storeTermVectors;
   private boolean storeTermVectorOffsets;
   private boolean storeTermVectorPositions;
   private boolean storeTermVectorPayloads;
+  /**
+   * 是否忽略规范化
+   */
   private boolean omitNorms;
   private IndexOptions indexOptions = IndexOptions.NONE;
+  /**
+   * 是否被冻结
+   */
   private boolean frozen;
   private DocValuesType docValuesType = DocValuesType.NONE;
   private int dimensionCount;
@@ -286,6 +302,8 @@ public class FieldType implements IndexableFieldType  {
 
   /**
    * Enables points indexing.
+   * @param dimensionCount 一共有多少维度
+   * @param dimensionNumBytes 每个维度多少byte
    */
   public void setDimensions(int dimensionCount, int dimensionNumBytes) {
     this.setDimensions(dimensionCount, dimensionCount, dimensionNumBytes);

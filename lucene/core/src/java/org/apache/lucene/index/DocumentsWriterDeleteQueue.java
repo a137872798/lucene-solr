@@ -68,7 +68,7 @@ import org.apache.lucene.util.InfoStream;
  * updated its delete slice which ensures the consistency of the update. If the
  * update fails before the DeleteSlice could have been updated the deleteTerm
  * will also not be added to its private deletes neither to the global deletes.
- * 
+ * 存放已经被删除的元素
  */
 final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
@@ -323,8 +323,12 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
   }
 
+  /**
+   * 一个删除的分片对象
+   */
   static class DeleteSlice {
     // No need to be volatile, slices are thread captive (only accessed by one thread)!
+    // 维护了 头尾节点 它们之间的节点也 已经被删除
     Node<?> sliceHead; // we don't apply this one
     Node<?> sliceTail;
 
@@ -399,6 +403,10 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
   }
 
+  /**
+   * 节点对象 以链表形式连接
+   * @param <T>
+   */
   static class Node<T> {
     volatile Node<?> next;
     final T item;

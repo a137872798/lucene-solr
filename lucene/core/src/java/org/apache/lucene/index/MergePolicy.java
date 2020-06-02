@@ -65,6 +65,7 @@ import org.apache.lucene.util.InfoStream;
  * TieredMergePolicy}.</p>
  *
  * @lucene.experimental
+ * 用于定义 2个 index 如何融合
  */
 public abstract class MergePolicy {
 
@@ -76,6 +77,7 @@ public abstract class MergePolicy {
    * @lucene.experimental */
   public static class OneMergeProgress {
     /** Reason for pausing the merge thread. */
+    // 这里有一个 暂停融合的原因枚举
     public static enum PauseReason {
       /** Stopped (because of throughput rate set to 0, typically). */
       STOPPED,
@@ -90,15 +92,20 @@ public abstract class MergePolicy {
 
     /**
      * Pause times (in nanoseconds) for each {@link PauseReason}.
+     * value 用于累加基于各种原因导致的 merge暂停时间
      */
     private final EnumMap<PauseReason, AtomicLong> pauseTimesNS;
-    
+
+    /**
+     * 是否已经禁止融合
+     */
     private volatile boolean aborted;
 
     /**
      * This field is for sanity-check purposes only. Only the same thread that invoked
      * {@link OneMerge#mergeInit()} is permitted to be calling 
-     * {@link #pauseNanos}. This is always verified at runtime. 
+     * {@link #pauseNanos}. This is always verified at runtime.
+     * 代表用于执行 merge 的线程
      */
     private Thread owner;
 
@@ -114,6 +121,7 @@ public abstract class MergePolicy {
     /**
      * Abort the merge this progress tracks at the next 
      * possible moment.
+     * 禁止融合 同时唤醒被阻塞的线程
      */
     public void abort() {
       aborted = true;
@@ -139,9 +147,11 @@ public abstract class MergePolicy {
      * @param condition The pause condition that should return false if immediate return from this
      *      method is needed. Other threads can wake up any sleeping thread by calling 
      *      {@link #wakeup}, but it'd fall to sleep for the remainder of the requested time if this
-     *      condition 
+     *      condition     为true 时 才需要阻塞
+     *                  基于某种原因 暂停融合动作  (一般是被 MergeRateLimiter限流)
      */
     public void pauseNanos(long pauseNanos, PauseReason reason, BooleanSupplier condition) throws InterruptedException {
+      // 避免在外部线程调用该方法
       if (Thread.currentThread() != owner) {
         throw new RuntimeException("Only the merge owner thread can call pauseNanos(). This thread: "
             + Thread.currentThread().getName() + ", owner thread: "
@@ -149,6 +159,7 @@ public abstract class MergePolicy {
       }
 
       long start = System.nanoTime();
+      // 获取暂停时间
       AtomicLong timeUpdate = pauseTimesNS.get(reason);
       pauseLock.lock();
       try {
@@ -182,6 +193,10 @@ public abstract class MergePolicy {
               (e) -> e.getValue().get()));
     }
 
+    /**
+     * 指定执行merge的线程
+     * @param owner
+     */
     final void setMergeThread(Thread owner) {
       assert this.owner == null;
       this.owner = owner;
@@ -195,7 +210,9 @@ public abstract class MergePolicy {
    *  new segment should use the compound file format.
    *
    * @lucene.experimental */
+  // 该对象负责与某个 SegmentInfos 内部的数据结合
   public static class OneMerge {
+    // 该片段相关的提交信息 (单个segment)
     SegmentCommitInfo info;         // used by IndexWriter
     boolean registerDone;           // used by IndexWriter
     long mergeGen;                  // used by IndexWriter
@@ -203,19 +220,26 @@ public abstract class MergePolicy {
     int maxNumSegments = -1;        // used by IndexWriter
 
     /** Estimated size in bytes of the merged segment. */
+    // 预计会融合多少byte
     public volatile long estimatedMergeBytes;       // used by IndexWriter
 
     // Sum of sizeInBytes of all SegmentInfos; set by IW.mergeInit
+    // 代表总的融合数
     volatile long totalMergeBytes;
 
+    /**
+     * 这里还存放着一组 用于读取 segment的reader
+     */
     List<SegmentReader> readers;        // used by IndexWriter
     List<Bits> hardLiveDocs;        // used by IndexWriter
 
     /** Segments to be merged. */
+    // 这里是一组将要被merger的segment 信息
     public final List<SegmentCommitInfo> segments;
 
     /**
-     * Control used to pause/stop/resume the merge thread. 
+     * Control used to pause/stop/resume the merge thread.
+     * 用于控制 merge线程的状态
      */
     private final OneMergeProgress mergeProgress;
 
@@ -667,6 +691,7 @@ public abstract class MergePolicy {
    * how many deletes a segment would claim back if merged. This context might be stateful
    * and change during the execution of a merge policy's selection processes.
    * @lucene.experimental
+   * 记录当前融合信息
    */
   public interface MergeContext {
 

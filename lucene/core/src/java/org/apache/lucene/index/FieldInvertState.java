@@ -30,6 +30,7 @@ import org.apache.lucene.util.AttributeSource;
  * also used to calculate the normalization factor for a field.
  * 
  * @lucene.experimental
+ * 一个简单的bean对象 记录各种信息
  */
 public final class FieldInvertState {
   final int indexCreatedVersionMajor;

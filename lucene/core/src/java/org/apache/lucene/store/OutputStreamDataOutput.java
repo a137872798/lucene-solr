@@ -21,6 +21,7 @@ import java.io.*;
 
 /**
  * A {@link DataOutput} wrapping a plain {@link OutputStream}.
+ * 最基础的基于输出流的包装
  */
 public class OutputStreamDataOutput extends DataOutput implements Closeable {
   private final OutputStream os;

@@ -23,6 +23,7 @@ import org.apache.lucene.util.BytesRef;
 
 /**
  * A per-document numeric value.
+ * 代表每个doc 都是数字
  */
 public abstract class BinaryDocValues extends DocValuesIterator {
   

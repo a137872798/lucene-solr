@@ -38,18 +38,31 @@ public class MergeRateLimiter extends RateLimiter {
   private final static long MIN_PAUSE_NS = TimeUnit.MILLISECONDS.toNanos(2);
   private final static long MAX_PAUSE_NS = TimeUnit.MILLISECONDS.toNanos(250);
 
+  /**
+   * 限定每秒处理多少 mb数据
+   */
   private volatile double mbPerSec;
+  /**
+   * 每写入多少数据检测是否需要调用 pause
+   */
   private volatile long minPauseCheckBytes;
 
   private long lastNS;
 
+  /**
+   * 记录一共写入了多少数据
+   */
   private AtomicLong totalBytesWritten = new AtomicLong();
 
+  /**
+   * 该对象负责融合索引
+   */
   private final OneMergeProgress mergeProgress;
 
   /** Sole constructor. */
   public MergeRateLimiter(OneMergeProgress mergeProgress) {
     // Initially no IO limit; use setter here so minPauseCheckBytes is set:
+    // 这里 InFinity 代表不做限制
     this.mergeProgress = mergeProgress;
     setMBPerSec(Double.POSITIVE_INFINITY);
   }
@@ -69,6 +82,7 @@ public class MergeRateLimiter extends RateLimiter {
       assert minPauseCheckBytes >= 0;
     }
 
+    // 唤醒被阻塞的所有线程
     mergeProgress.wakeup();
   }
 
@@ -82,8 +96,15 @@ public class MergeRateLimiter extends RateLimiter {
     return totalBytesWritten.get();
   }
 
+  /**
+   * 就是正常的写入操作 不过如果超过了 阈值 在内部会被阻塞一段时间
+   * @param bytes
+   * @return
+   * @throws MergePolicy.MergeAbortedException
+   */
   @Override
   public long pause(long bytes) throws MergePolicy.MergeAbortedException {
+    // 每次写入时 增加写入总量
     totalBytesWritten.addAndGet(bytes);
 
     // While loop because we may wake up and check again when our rate limit
@@ -111,7 +132,8 @@ public class MergeRateLimiter extends RateLimiter {
   /** 
    * Returns the number of nanoseconds spent in a paused state or <code>-1</code>
    * if no pause was applied. If the thread needs pausing, this method delegates 
-   * to the linked {@link OneMergeProgress}. 
+   * to the linked {@link OneMergeProgress}.
+   * 检测本次写入数据是否要被阻塞
    */
   private long maybePause(long bytes, long curNS) throws MergePolicy.MergeAbortedException {
     // Now is a good time to abort the merge:
@@ -120,6 +142,7 @@ public class MergeRateLimiter extends RateLimiter {
     }
 
     double rate = mbPerSec; // read from volatile rate once.
+    // 换算成等待时长
     double secondsToPause = (bytes/1024./1024.) / rate;
 
     // Time we should sleep until; this is purely instantaneous
@@ -145,6 +168,7 @@ public class MergeRateLimiter extends RateLimiter {
 
     long start = System.nanoTime();
     try {
+      // 通知 merge线程 暂停处理数据
       mergeProgress.pauseNanos(
           curPauseNS, 
           rate == 0.0 ? PauseReason.STOPPED : PauseReason.PAUSED,

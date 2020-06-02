@@ -37,17 +37,20 @@ import org.apache.lucene.util.packed.PackedLongValues;
 import static org.apache.lucene.index.IndexWriter.isCongruentSort;
 
 /** Holds common state used during segment merging.
+ * 在融合过程中 维护一些公共状态
  *
  * @lucene.experimental */
 public class MergeState {
 
   /** Maps document IDs from old segments to document IDs in the new segment */
+  // DocMap 就是可以通过 docId 映射到某个 doc
   public final DocMap[] docMaps;
 
   // Only used by IW when it must remap deletes that arrived against the merging segments while a merge was running:
   final DocMap[] leafDocMaps;
 
   /** {@link SegmentInfo} of the newly merged segment. */
+  // 描述某个段的信息
   public final SegmentInfo segmentInfo;
 
   /** {@link FieldInfos} of the newly merged segment. */
@@ -240,6 +243,7 @@ public class MergeState {
   }
 
   /** A map of doc IDs. */
+  // 代表 doc 的映射对象  可以通过id 快捷的检索到某个 doc
   public static abstract class DocMap {
     /** Sole constructor */
     public DocMap() {

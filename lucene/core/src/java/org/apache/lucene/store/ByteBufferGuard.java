@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * This code tries to hopefully flush any CPU caches using a store-store barrier. It also yields the
  * current thread to give other threads a chance to finish in-flight requests...
+ * 警卫
  */
 final class ByteBufferGuard {
   
@@ -42,12 +43,17 @@ final class ByteBufferGuard {
   }
   
   private final String resourceDescription;
+  /**
+   * 该对象负责回收mmap
+   */
   private final BufferCleaner cleaner;
   
   /** Not volatile; see comments on visibility below! */
+  // 代表当前是否有效
   private boolean invalidated = false;
   
   /** Used as a store-store barrier; see comments below! */
+  // 应该是这样的  AtomicInteger 底层使用的是 cas指令 也就是x86指令集中某个指令 可能在底层的实现会涉及到 内存屏障
   private final AtomicInteger barrier = new AtomicInteger();
   
   /**
@@ -61,6 +67,7 @@ final class ByteBufferGuard {
   
   /**
    * Invalidates this guard and unmaps (if supported).
+   * 为一组 buffer 解除映射
    */
   public void invalidateAndUnmap(ByteBuffer... bufs) throws IOException {
     if (cleaner != null) {
@@ -72,8 +79,10 @@ final class ByteBufferGuard {
       // caches are in sync after this call. This isn't entirely "fool-proof" 
       // (see LUCENE-7409 discussion), but it has been shown to work in practice
       // and we count on this behavior.
+      // 强制触发一次写屏障 使得缓存数据无效      实际上还没有被证实这样一定有效
       barrier.lazySet(0);
       // we give other threads a bit of time to finish reads on their ByteBuffer...:
+      // 看来其他线程在执行任务时 会时不时的检测 invalidated 一旦发现是 false 立即释放byteBuffer 方便这里进行清理
       Thread.yield();
       // finally unmap the ByteBuffers:
       for (ByteBuffer b : bufs) {
@@ -88,7 +97,8 @@ final class ByteBufferGuard {
       throw new NullPointerException();
     }
   }
-  
+
+  // 执行任何操作前都要检测  invalidated 标识
   public void getBytes(ByteBuffer receiver, byte[] dst, int offset, int length) {
     ensureValid();
     receiver.get(dst, offset, length);

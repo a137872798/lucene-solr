@@ -30,6 +30,7 @@ import java.util.function.IntBinaryOperator;
  * 
  * @lucene.internal
  * @lucene.experimental
+ * 内部存放一组有顺序的 ref
  */
 public final class BytesRefArray implements SortableBytesRefArray {
   private final ByteBlockPool pool;

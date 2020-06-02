@@ -28,7 +28,8 @@ import java.io.Closeable;
  * NOTE: Enabling infostreams may cause performance degradation
  * in some components.
  * 
- * @lucene.internal 
+ * @lucene.internal
+ * 一个日志对象  可以先忽略
  */
 public abstract class InfoStream implements Closeable {
 

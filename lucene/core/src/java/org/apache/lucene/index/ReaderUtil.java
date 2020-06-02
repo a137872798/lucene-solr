@@ -41,6 +41,7 @@ public final class ReaderUtil {
   /**
    * Returns index of the searcher/reader for document <code>n</code> in the
    * array used to construct this searcher/reader.
+   * 通过id 从目标数组中找到匹配的下标
    */
   public static int subIndex(int n, int[] docStarts) { // find
     // searcher/reader for doc n:

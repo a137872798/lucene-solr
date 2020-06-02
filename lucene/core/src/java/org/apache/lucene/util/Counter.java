@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 
  * @lucene.internal
  * @lucene.experimental
+ * 一个简单的计数器
  */
 public abstract class Counter {
 

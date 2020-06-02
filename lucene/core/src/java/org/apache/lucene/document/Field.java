@@ -58,26 +58,31 @@ import org.apache.lucene.util.BytesRef;
  * to the state of the IndexableFieldType will impact any
  * Field it is used in.  It is strongly recommended that no
  * changes be made after Field instantiation.
+ * IndexableField 代表索引中的一个字段
  */
 public class Field implements IndexableField {
 
   /**
    * Field's type
+   * 该字段的类型
    */
   protected final IndexableFieldType type;
 
   /**
    * Field's name
+   * 字段名
    */
   protected final String name;
 
   /** Field's value */
+  // 字段对应的数据内容
   protected Object fieldsData;
 
   /** Pre-analyzed tokenStream for indexed fields; this is
    * separate from fieldsData because you are allowed to
    * have both; eg maybe field has a String value but you
    * customize how it's tokenized */
+  // field 要么以fieldsData 作为数据体 要么以tokenStream 作为数据体
   protected TokenStream tokenStream;
 
   /**
@@ -87,6 +92,7 @@ public class Field implements IndexableField {
    * @param type field type
    * @throws IllegalArgumentException if either the name or type
    *         is null.
+   *         通过一个字段名 和 字段类型来初始化
    */
   protected Field(String name, IndexableFieldType type) {
     if (name == null) {
@@ -108,6 +114,7 @@ public class Field implements IndexableField {
    *         is null, or if the field's type is stored(), or
    *         if tokenized() is false.
    * @throws NullPointerException if the reader is null
+   * 代表着该字段的值从reader中获取
    */
   public Field(String name, Reader reader, IndexableFieldType type) {
     if (name == null) {
@@ -203,6 +210,7 @@ public class Field implements IndexableField {
    * @param type field type
    * @throws IllegalArgumentException if the field name, bytes or type
    *         is null, or the field's type is indexed().
+   *         BytesRef 就是一个 byte[]
    */
   public Field(String name, BytesRef bytes, IndexableFieldType type) {
     if (name == null) {
@@ -476,6 +484,17 @@ public class Field implements IndexableField {
     return type;
   }
 
+  /**
+   * 返回一个token流对象
+   * @param analyzer Analyzer that should be used to create the TokenStreams from
+   * @param reuse TokenStream for a previous instance of this field <b>name</b>. This allows
+   *              custom field types (like StringField and NumericField) that do not use
+   *              the analyzer to still have good performance. Note: the passed-in type
+   *              may be inappropriate, for example if you mix up different types of Fields
+   *              for the same field name. So it's the responsibility of the implementation to
+   *              check.
+   * @return
+   */
   @Override
   public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
     if (fieldType().indexOptions() == IndexOptions.NONE) {
@@ -483,7 +502,9 @@ public class Field implements IndexableField {
       return null;
     }
 
+    // 代表token流不需要被分析
     if (!fieldType().tokenized()) {
+      // 直接返回二进制流或者 string流
       if (stringValue() != null) {
         if (!(reuse instanceof StringTokenStream)) {
           // lazy init the TokenStream as it is heavy to instantiate
@@ -507,6 +528,7 @@ public class Field implements IndexableField {
 
     if (tokenStream != null) {
       return tokenStream;
+    // 选择将该field 包装成 tokenStream
     } else if (readerValue() != null) {
       return analyzer.tokenStream(name(), readerValue());
     } else if (stringValue() != null) {

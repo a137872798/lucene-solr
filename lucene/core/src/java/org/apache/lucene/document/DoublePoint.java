@@ -51,9 +51,11 @@ public final class DoublePoint extends Field {
    * the argument is {@code -0d}.
    */
   public static double nextUp(double d) {
+    // 代表最大的 double 在往上 避免溢出 返回0
     if (Double.doubleToLongBits(d) == 0x8000_0000_0000_0000L) { // -0d
       return +0d;
     }
+    // 返回该略大于该double的值
     return Math.nextUp(d);
   }
 
@@ -70,8 +72,13 @@ public final class DoublePoint extends Field {
     return Math.nextDown(d);
   }
 
+  /**
+   * @param numDims
+   * @return
+   */
   private static FieldType getType(int numDims) {
     FieldType type = new FieldType();
+    // 第二个参数代表每个维度占用 8个 byte
     type.setDimensions(numDims, Double.BYTES);
     type.freeze();
     return type;
@@ -83,6 +90,7 @@ public final class DoublePoint extends Field {
   }
 
   /** Change the values of this field */
+  // 只能为该 point 设置与维度同等长度的 数值
   public void setDoubleValues(double... point) {
     if (type.pointDimensionCount() != point.length) {
       throw new IllegalArgumentException("this field (name=" + name + ") uses " + type.pointDimensionCount() + " dimensions; cannot change to (incoming) " + point.length + " dimensions");
@@ -95,6 +103,10 @@ public final class DoublePoint extends Field {
     throw new IllegalArgumentException("cannot change value type from double to BytesRef");
   }
 
+  /**
+   * 将内部的数据 以number形式返回
+   * @return
+   */
   @Override
   public Number numericValue() {
     if (type.pointDimensionCount() != 1) {
@@ -102,6 +114,7 @@ public final class DoublePoint extends Field {
     }
     BytesRef bytes = (BytesRef) fieldsData;
     assert bytes.length == Double.BYTES;
+    // 按照 bytes 当前的偏移量 读取8个byte 作为一个double 返回
     return decodeDimension(bytes.bytes, bytes.offset);
   }
 
@@ -110,6 +123,7 @@ public final class DoublePoint extends Field {
    *
    * @param point double[] value
    * @throws IllegalArgumentException is the value is null or of zero length
+   * 将数据 转换成 byte[]
    */
   public static BytesRef pack(double... point) {
     if (point == null) {
@@ -121,6 +135,7 @@ public final class DoublePoint extends Field {
     byte[] packed = new byte[point.length * Double.BYTES];
     
     for (int dim = 0; dim < point.length ; dim++) {
+      // 将double 先转换成 long 然后再转换成 8个 byte
       encodeDimension(point[dim], packed, dim * Double.BYTES);
     }
 
@@ -135,6 +150,7 @@ public final class DoublePoint extends Field {
    *  @throws IllegalArgumentException if the field name or value is null.
    */
   public DoublePoint(String name, double... point) {
+    // pack() 将一组 double压缩成一个 byte[] 后返回
     super(name, pack(point), getType(point.length));
   }
   

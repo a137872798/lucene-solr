@@ -18,6 +18,7 @@ package org.apache.lucene.search;
 
 /**
  * Different modes of search.
+ * 代表计算得分的公式
  */
 public enum ScoreMode {
   

@@ -41,6 +41,7 @@ import org.apache.lucene.util.IOUtils;
  * Instances pointing to the same segment (but with different deletes, etc)
  * may share the same core data.
  * @lucene.experimental
+ * 负责从 segment 中读取数据
  */
 public final class SegmentReader extends CodecReader {
        

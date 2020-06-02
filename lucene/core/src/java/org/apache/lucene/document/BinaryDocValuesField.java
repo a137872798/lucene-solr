@@ -37,6 +37,7 @@ import org.apache.lucene.util.BytesRef;
  * separate {@link StoredField} instance.
  * 
  * @see BinaryDocValues
+ * 二进制字段
  * */
 public class BinaryDocValuesField extends Field {
   
@@ -45,7 +46,9 @@ public class BinaryDocValuesField extends Field {
    */
   public static final FieldType TYPE = new FieldType();
   static {
+    // 标明该字段类型为 二进制
     TYPE.setDocValuesType(DocValuesType.BINARY);
+    // 冻结该属性 无法再被修改
     TYPE.freeze();
   }
   

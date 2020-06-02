@@ -75,10 +75,14 @@ import org.apache.lucene.util.Bits;  // javadocs
  synchronization, you should <b>not</b> synchronize on the
  <code>IndexReader</code> instance; use your own
  (non-Lucene) objects instead.
+ 该对象负责从索引中读取数据
 */
 public abstract class IndexReader implements Closeable {
   
   private boolean closed = false;
+  /**
+   * 是否由子节点进行关闭
+   */
   private boolean closedByChild = false;
   private final AtomicInteger refCount = new AtomicInteger(1);
 
@@ -91,6 +95,7 @@ public abstract class IndexReader implements Closeable {
    * A utility class that gives hooks in order to help build a cache based on
    * the data that is contained in this index. 
    * @lucene.experimental
+   * 获取当前资源的缓存键  已经为该资源设置监听器
    */
   public static interface CacheHelper {
 
@@ -111,6 +116,7 @@ public abstract class IndexReader implements Closeable {
   }
 
   /** A cache key identifying a resource that is being cached on. */
+  // 某个缓存对象的唯一标识
   public static final class CacheKey {
     CacheKey() {} // only instantiable by core impls
   }
@@ -118,6 +124,7 @@ public abstract class IndexReader implements Closeable {
   /**
    * A listener that is called when a resource gets closed.
    * @lucene.experimental
+   * 当某个资源被关闭时 触发监听器
    */
   @FunctionalInterface
   public static interface ClosedListener {
@@ -135,6 +142,7 @@ public abstract class IndexReader implements Closeable {
    * it will mark all registered parents as closed, too. The references to parent readers
    * are weak only, so they can be GCed once they are no longer in use.
    * @lucene.experimental */
+  // 为该对象添加父级 reader
   public final void registerParentReader(IndexReader reader) {
     ensureOpen();
     parentReaders.add(reader);
@@ -145,19 +153,26 @@ public abstract class IndexReader implements Closeable {
     // nothing to notify in the base impl
   }
 
+  /**
+   * 该对象被关闭 同时影响到所有父对象 一起关闭
+   * @throws IOException
+   */
   private void reportCloseToParentReaders() throws IOException {
     synchronized (parentReaders) {
       for (IndexReader parent : parentReaders) {
         parent.closedByChild = true;
         // cross memory barrier by a fake write:
+        // 重置引用计数
         parent.refCount.addAndGet(0);
         // recurse:
+        // 递归关闭上游对象
         parent.reportCloseToParentReaders();
       }
     }
   }
 
   /** Expert: returns the current refCount for this reader */
+  // 获取当前reader的引用计数
   public final int getRefCount() {
     // NOTE: don't ensureOpen, so that callers can see
     // refCount is 0 (reader is closed)
@@ -180,6 +195,7 @@ public abstract class IndexReader implements Closeable {
    * @see #tryIncRef
    */
   public final void incRef() {
+    // 当引用计数回归0的时候 返回false 也代表着本对象被关闭了
     if (!tryIncRef()) {
       ensureOpen();
     }
@@ -227,6 +243,7 @@ public abstract class IndexReader implements Closeable {
    * @throws IOException in case an IOException occurs in  doClose()
    *
    * @see #incRef
+   * 减少引用计数
    */
   @SuppressWarnings("try")
   public final void decRef() throws IOException {
@@ -237,6 +254,7 @@ public abstract class IndexReader implements Closeable {
     }
     
     final int rc = refCount.decrementAndGet();
+    // 归0时进行关闭
     if (rc == 0) {
       closed = true;
       try (Closeable finalizer = this::reportCloseToParentReaders;
@@ -292,6 +310,7 @@ public abstract class IndexReader implements Closeable {
    *  null if term vectors were not indexed.  The returned
    *  Fields instance acts like a single-document inverted
    *  index (the docID will be 0). */
+  // 先通过 docId 定位到fields 之后精准匹配terms
   public final Terms getTermVector(int docID, String field)
     throws IOException {
     Fields vectors = getTermVectors(docID);
@@ -309,11 +328,13 @@ public abstract class IndexReader implements Closeable {
   /** Returns one greater than the largest possible document number.
    * This may be used to, e.g., determine how big to allocate an array which
    * will have an element for every document number in an index.
+   * 返回该reader 会处理的一个最大的docNo
    */
   public abstract int maxDoc();
 
   /** Returns the number of deleted documents.
    *  <p><b>NOTE</b>: This operation may run in O(maxDoc). */
+  // 返回已经删除的文档数
   public final int numDeletedDocs() {
     return maxDoc() - numDocs();
   }
@@ -323,6 +344,7 @@ public abstract class IndexReader implements Closeable {
    *  simply want to load all fields, use {@link
    *  #document(int)}.  If you want to load a subset, use
    *  {@link DocumentStoredFieldVisitor}.  */
+  // 通过docId 找到文档 并使用visitor访问文档
   public abstract void document(int docID, StoredFieldVisitor visitor) throws IOException;
   
   /**
@@ -348,7 +370,9 @@ public abstract class IndexReader implements Closeable {
   // Document returned here contains that class not
   // IndexableField
   public final Document document(int docID) throws IOException {
+    // 该对象内部维护一个doc  调用相关api时 field 会被写入到doc中
     final DocumentStoredFieldVisitor visitor = new DocumentStoredFieldVisitor();
+    // 应该是将文档的数据转移到 doc中了
     document(docID, visitor);
     return visitor.getDocument();
   }
@@ -357,6 +381,7 @@ public abstract class IndexReader implements Closeable {
    * Like {@link #document(int)} but only loads the specified
    * fields.  Note that this is simply sugar for {@link
    * DocumentStoredFieldVisitor#DocumentStoredFieldVisitor(Set)}.
+   * 在初始化 visitor前包含一组默认的field
    */
   public final Document document(int docID, Set<String> fieldsToLoad)
       throws IOException {
@@ -378,6 +403,7 @@ public abstract class IndexReader implements Closeable {
    * Also saves any new deletions to disk.
    * No other methods should be called after this has been called.
    * @throws IOException if there is a low-level IO error
+   * 每次调用close时 只是减少一个引用  直到引用归零才会真正关闭该对象
    */
   @Override
   public final synchronized void close() throws IOException {
@@ -437,6 +463,7 @@ public abstract class IndexReader implements Closeable {
    * account deleted documents that have not yet been merged
    * away. 
    * @see TermsEnum#docFreq()
+   * 获取该词在 doc出现的频率
    */
   public abstract int docFreq(Term term) throws IOException;
   

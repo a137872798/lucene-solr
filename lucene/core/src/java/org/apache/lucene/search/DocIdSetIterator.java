@@ -25,12 +25,17 @@ import java.io.IOException;
  * {@link #NO_MORE_DOCS} is set to {@value #NO_MORE_DOCS} in order to be used as
  * a sentinel object. Implementations of this class are expected to consider
  * {@link Integer#MAX_VALUE} as an invalid value.
+ * 用于存储 doc的id 容器
  */
 public abstract class DocIdSetIterator {
   
   /** An empty {@code DocIdSetIterator} instance */
+  // 这是个空对象 总是返回无id 可用
   public static final DocIdSetIterator empty() {
     return new DocIdSetIterator() {
+      /**
+       * 是否读取到末尾
+       */
       boolean exhausted = false;
       
       @Override
@@ -60,7 +65,7 @@ public abstract class DocIdSetIterator {
   }
 
   /** A {@link DocIdSetIterator} that matches all documents up to
-   *  {@code maxDoc - 1}. */
+   *  {@code maxDoc - 1}. */  // 迭代方式就是不断递增id
   public static final DocIdSetIterator all(int maxDoc) {
     return new DocIdSetIterator() {
       int doc = -1;
@@ -93,6 +98,7 @@ public abstract class DocIdSetIterator {
 
   /** A {@link DocIdSetIterator} that matches a range documents from
    *  minDocID (inclusive) to maxDocID (exclusive). */
+  // 代表一组 doc  这里通过传入 minDocID 和maxDocID 找到范围内的数据
   public static final DocIdSetIterator range(int minDoc, int maxDoc) {
     if (minDoc >= maxDoc) {
         throw new IllegalArgumentException("minDoc must be < maxDoc but got minDoc=" + minDoc + " maxDoc=" + maxDoc);
@@ -149,6 +155,7 @@ public abstract class DocIdSetIterator {
    * <p>
    * 
    * @since 2.9
+   * 返回当前doc的id
    */
   public abstract int docID();
 
@@ -161,6 +168,7 @@ public abstract class DocIdSetIterator {
    * method, as it may result in unpredicted behavior.
    * 
    * @since 2.9
+   * 返回下一个doc
    */
   public abstract int nextDoc() throws IOException;
 
@@ -199,6 +207,7 @@ public abstract class DocIdSetIterator {
 
   /** Slow (linear) implementation of {@link #advance} relying on
    *  {@link #nextDoc()} to advance beyond the target position. */
+  // 这里多次触发nextDoc 直到当前指针达到 target的位置
   protected final int slowAdvance(int target) throws IOException {
     assert docID() < target;
     int doc;

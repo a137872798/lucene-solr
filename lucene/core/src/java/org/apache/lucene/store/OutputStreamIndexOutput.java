@@ -24,9 +24,16 @@ import java.util.zip.CRC32;
 import java.util.zip.CheckedOutputStream;
 
 /** Implementation class for buffered {@link IndexOutput} that writes to an {@link OutputStream}. */
+// 一个简单的代理对象
 public class OutputStreamIndexOutput extends IndexOutput {
 
+  /**
+   * 用于计算校验和的东西
+   */
   private final CRC32 crc = new CRC32();
+  /**
+   * java.io 的缓冲输出流
+   */
   private final BufferedOutputStream os;
   
   private long bytesWritten = 0L;

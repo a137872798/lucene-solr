@@ -73,6 +73,7 @@ import org.apache.lucene.util.BytesRefBuilder;
  *
  * @see LeafFieldComparator
  * @lucene.experimental
+ * 有关查询结果排序 是依赖于 FieldComparator 的
  */
 public abstract class FieldComparator<T> {
 
@@ -163,6 +164,7 @@ public abstract class FieldComparator<T> {
 
   /** Parses field's values as double (using {@link
    *  org.apache.lucene.index.LeafReader#getNumericDocValues} and sorts by ascending value */
+  // 基于 double的一个比较函数
   public static class DoubleComparator extends NumericComparator<Double> {
     private final double[] values;
     private double bottom;
@@ -174,6 +176,7 @@ public abstract class FieldComparator<T> {
      */
     public DoubleComparator(int numHits, String field, Double missingValue) {
       super(field, missingValue != null ? missingValue : 0.0);
+      // 这里只是初始化数组 还没有赋值
       values = new double[numHits];
     }
 

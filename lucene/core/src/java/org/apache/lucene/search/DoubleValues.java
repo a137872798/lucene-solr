@@ -21,6 +21,7 @@ import java.io.IOException;
 
 /**
  * Per-segment, per-document double values, which can be calculated at search-time
+ * 内部好像就是一个double
  */
 public abstract class DoubleValues {
 
@@ -32,11 +33,13 @@ public abstract class DoubleValues {
   /**
    * Advance this instance to the given document id
    * @return true if there is a value for this document
+   * 将实例移动到某个doc???
    */
   public abstract boolean advanceExact(int doc) throws IOException;
 
   /**
    * Wrap a DoubleValues instance, returning a default if the wrapped instance has no value
+   * 返回某个 DoubleValues的包装对象 如果不存在 就使用默认值
    */
   public static DoubleValues withDefault(DoubleValues in, double missingValue) {
     return new DoubleValues() {

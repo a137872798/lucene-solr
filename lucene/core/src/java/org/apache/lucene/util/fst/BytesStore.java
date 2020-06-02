@@ -35,13 +35,32 @@ class BytesStore extends DataOutput implements Accountable {
         RamUsageEstimator.shallowSizeOfInstance(BytesStore.class)
       + RamUsageEstimator.shallowSizeOfInstance(ArrayList.class);
 
+  /**
+   * 内部就是一个 byte[] 列表
+   */
   private final List<byte[]> blocks = new ArrayList<>();
 
+  /**
+   * 相当于2的 blockBits 次
+   */
   private final int blockSize;
+  /**
+   * 看来应该是 8的倍数 也就是每个 block 都是由一个 或多个byte 组成的
+   */
   private final int blockBits;
+  /**
+   * 根据 size 计算出来的掩码
+   */
   private final int blockMask;
 
+  /**
+   * 当前数到 list的哪个block
+   */
   private byte[] current;
+  /**
+   * 正常情况下写入的下一个值对应的起点
+   * 如果 == blockSize 那么代表下次写入需要创建一个新的block
+   */
   private int nextWrite;
 
   public BytesStore(int blockBits) {
@@ -52,9 +71,11 @@ class BytesStore extends DataOutput implements Accountable {
   }
 
   /** Pulls bytes from the provided IndexInput.  */
+  // 通过一个输入流来初始化store 对象
   public BytesStore(DataInput in, long numBytes, int maxBlockSize) throws IOException {
     int blockSize = 2;
     int blockBits = 1;
+    // 每次 bit 增加一位 同时 blockSize 翻一倍
     while(blockSize < numBytes && blockSize < maxBlockSize) {
       blockSize *= 2;
       blockBits++;
@@ -66,6 +87,7 @@ class BytesStore extends DataOutput implements Accountable {
     while(left > 0) {
       final int chunk = (int) Math.min(blockSize, left);
       byte[] block = new byte[chunk];
+      // 从输入流中读取数据
       in.readBytes(block, 0, block.length);
       blocks.add(block);
       left -= chunk;
@@ -77,6 +99,7 @@ class BytesStore extends DataOutput implements Accountable {
 
   /** Absolute write byte; you must ensure dest is &lt; max
    *  position written so far. */
+  // dest 需要通过位运算 换算成目标 block的下标
   public void writeByte(long dest, byte b) {
     int blockIndex = (int) (dest >> blockBits);
     byte[] block = blocks.get(blockIndex);
@@ -85,6 +108,7 @@ class BytesStore extends DataOutput implements Accountable {
 
   @Override
   public void writeByte(byte b) {
+    // 如果当前指针已经指向末尾了 就创建一个新的 block 继续写入数据
     if (nextWrite == blockSize) {
       current = new byte[blockSize];
       blocks.add(current);
@@ -96,6 +120,7 @@ class BytesStore extends DataOutput implements Accountable {
   @Override
   public void writeBytes(byte[] b, int offset, int len) {
     while (len > 0) {
+      //代表当前block还有多少空间可用
       int chunk = blockSize - nextWrite;
       if (len <= chunk) {
         assert b != null;
@@ -104,6 +129,7 @@ class BytesStore extends DataOutput implements Accountable {
         nextWrite += len;
         break;
       } else {
+        // 代表该block空间不够 还需要创建一个新的
         if (chunk > 0) {
           System.arraycopy(b, offset, current, nextWrite, chunk);
           offset += chunk;
@@ -154,6 +180,7 @@ class BytesStore extends DataOutput implements Accountable {
     */
 
     final long end = dest + len;
+    // 同样 先换算block的下标 然后根据 掩码计算偏移量
     int blockIndex = (int) (end >> blockBits);
     int downTo = (int) (end & blockMask);
     if (downTo == 0) {
@@ -182,6 +209,7 @@ class BytesStore extends DataOutput implements Accountable {
   /** Absolute copy bytes self to self, without changing the
    *  position. Note: this cannot "grow" the bytes, so must
    *  only call it on already written parts. */
+  // 这里好像是在 覆盖  从src 开始读取 len的长度的数据 覆盖到从dest开始 len的位置
   public void copyBytes(long src, long dest, int len) {
     //System.out.println("BS.copyBytes src=" + src + " dest=" + dest + " len=" + len);
     assert src < dest;
@@ -214,6 +242,7 @@ class BytesStore extends DataOutput implements Accountable {
 
     long end = src + len;
 
+    // 这里是定位终点在哪个block
     int blockIndex = (int) (end >> blockBits);
     int downTo = (int) (end & blockMask);
     if (downTo == 0) {
@@ -224,6 +253,7 @@ class BytesStore extends DataOutput implements Accountable {
 
     while (len > 0) {
       //System.out.println("  cycle downTo=" + downTo);
+      // 没有跨越block 可以直接读取数据
       if (len <= downTo) {
         //System.out.println("    finish");
         writeBytes(dest, block, downTo-len, len);
@@ -240,6 +270,7 @@ class BytesStore extends DataOutput implements Accountable {
   }
 
   /** Copies bytes from this store to a target byte array. */
+  // 从当前block[] 中拷贝数据到目标数组
   public void copyBytes(long src, byte[] dest, int offset, int len) {
     int blockIndex = (int) (src >> blockBits);
     int upto = (int) (src & blockMask);
@@ -262,14 +293,19 @@ class BytesStore extends DataOutput implements Accountable {
 
   /** Writes an int at the absolute position without
    *  changing the current pointer. */
+  // 在指定的位置写入一个int值
   public void writeInt(long pos, int value) {
     int blockIndex = (int) (pos >> blockBits);
     int upto = (int) (pos & blockMask);
     byte[] block = blocks.get(blockIndex);
+    // 好像 blockBits 总是8的倍数 所以可以放心的每次 右移8位
     int shift = 24;
+    // 将 intValue 拆解成4个byte 写入
     for(int i=0;i<4;i++) {
+      // 从高位写入
       block[upto++] = (byte) (value >> shift);
       shift -= 8;
+      // 代表这个block写满了 切换到下一个
       if (upto == blockSize) {
         upto = 0;
         blockIndex++;
@@ -279,6 +315,7 @@ class BytesStore extends DataOutput implements Accountable {
   }
 
   /** Reverse from srcPos, inclusive, to destPos, inclusive. */
+  // 将 src 到 dest 的数据反转
   public void reverse(long srcPos, long destPos) {
     assert srcPos < destPos;
     assert destPos < getPosition();
@@ -293,12 +330,15 @@ class BytesStore extends DataOutput implements Accountable {
     byte[] destBlock = blocks.get(destBlockIndex);
     //System.out.println("  srcBlock=" + srcBlockIndex + " destBlock=" + destBlockIndex);
 
+    // 向上取整
     int limit = (int) (destPos - srcPos + 1)/2;
     for(int i=0;i<limit;i++) {
       //System.out.println("  cycle src=" + src + " dest=" + dest);
+      // 很基础的一个交换函数
       byte b = srcBlock[src];
       srcBlock[src] = destBlock[dest];
       destBlock[dest] = b;
+
       src++;
       if (src == blockSize) {
         srcBlockIndex++;
@@ -324,6 +364,7 @@ class BytesStore extends DataOutput implements Accountable {
         nextWrite += len;
         break;
       } else {
+        // 要跳过的长度 超过了当前block的可用长度 构建一个新的 block 并添加到列表中
         len -= chunk;
         current = new byte[blockSize];
         blocks.add(current);
@@ -338,6 +379,7 @@ class BytesStore extends DataOutput implements Accountable {
 
   /** Pos must be less than the max position written so far!
    *  Ie, you cannot "grow" the file with this! */
+  // 截取超过该长度的部分
   public void truncate(long newLen) {
     assert newLen <= getPosition();
     assert newLen >= 0;
@@ -347,6 +389,7 @@ class BytesStore extends DataOutput implements Accountable {
       blockIndex--;
       nextWrite = blockSize;
     }
+    // 将起点后面所有的block 截去
     blocks.subList(blockIndex+1, blocks.size()).clear();
     if (newLen == 0) {
       current = null;
@@ -358,20 +401,27 @@ class BytesStore extends DataOutput implements Accountable {
 
   public void finish() {
     if (current != null) {
+      // 将当前数据 拷贝到一个新的byte[] 中
       byte[] lastBuffer = new byte[nextWrite];
       System.arraycopy(current, 0, lastBuffer, 0, nextWrite);
+      // 将block 添加到 blocks 中 并置空 current
       blocks.set(blocks.size()-1, lastBuffer);
       current = null;
     }
   }
 
   /** Writes all of our bytes to the target {@link DataOutput}. */
+  // 将仓库中的数据 转移到 output 中
   public void writeTo(DataOutput out) throws IOException {
     for(byte[] block : blocks) {
       out.writeBytes(block, 0, block.length);
     }
   }
 
+  /**
+   * TODO 这里有关 FST的先跳过
+   * @return
+   */
   public FST.BytesReader getForwardReader() {
     if (blocks.size() == 1) {
       return new ForwardBytesReader(blocks.get(0));

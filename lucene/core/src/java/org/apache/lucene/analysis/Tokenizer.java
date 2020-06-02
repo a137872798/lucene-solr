@@ -34,7 +34,7 @@ import org.apache.lucene.util.AttributeSource;
  */
 public abstract class Tokenizer extends TokenStream {  
   /** The text source for this Tokenizer. */
-  // 内部存储一个不可用的 reader
+  // 待解析的数据文本 默认情况下为空
   protected Reader input = ILLEGAL_STATE_READER;
   
   /** Pending reader: not actually assigned to input until reset() */

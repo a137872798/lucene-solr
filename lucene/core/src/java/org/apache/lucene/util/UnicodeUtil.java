@@ -237,16 +237,20 @@ public final class UnicodeUtil {
    * Calculates the number of UTF8 bytes necessary to write a UTF16 string.
    *
    * @return the number of bytes written
+   * 将 char序列以UTF16的方式还原成byte 后 再以UTF8的方式进行编码
    */
   public static int calcUTF16toUTF8Length(final CharSequence s, final int offset, final int len) {
     final int end = offset + len;
 
     int res = 0;
     for (int i = offset; i < end; i++) {
+      // 这里有一个潜规则 也就是默认 UTF16 使用4个byte
       final int code = (int) s.charAt(i);
 
+      // 代表 < 127 也就是使用7位  当作一个byte
       if (code < 0x80)
         res++;
+      // 2的11次 也就是 11位
       else if (code < 0x800) {
         res += 2;
       } else if (code < 0xD800 || code > 0xDFFF) {

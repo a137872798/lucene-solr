@@ -24,10 +24,20 @@ import java.util.List;
 
 /**
  * {@link IndexReaderContext} for {@link CompositeReader} instance.
+ * 内部包含了一组上下文对象
  */
 public final class CompositeReaderContext extends IndexReaderContext {
+  /**
+   * 内部组合的一组上下文对象
+   */
   private final List<IndexReaderContext> children;
+  /**
+   * 叶子节点
+   */
   private final List<LeafReaderContext> leaves;
+  /**
+   * 该对象代表内部维护了一组reader
+   */
   private final CompositeReader reader;
   
   static CompositeReaderContext create(CompositeReader reader) {
@@ -37,6 +47,7 @@ public final class CompositeReaderContext extends IndexReaderContext {
   /**
    * Creates a {@link CompositeReaderContext} for intermediate readers that aren't
    * not top-level readers in the current context
+   * 通过传入上下级节点初始化
    */
   CompositeReaderContext(CompositeReaderContext parent, CompositeReader reader,
       int ordInParent, int docbaseInParent, List<IndexReaderContext> children) {
@@ -49,7 +60,16 @@ public final class CompositeReaderContext extends IndexReaderContext {
   CompositeReaderContext(CompositeReader reader, List<IndexReaderContext> children, List<LeafReaderContext> leaves) {
     this(null, reader, 0, 0, children, leaves);
   }
-  
+
+  /**
+   * 每个节点上挂了一组 leaf节点 同时每个composite下还有一组composite节点(child)
+   * @param parent 作为该对象的父节点
+   * @param reader reader会被包装成本对象
+   * @param ordInParent
+   * @param docbaseInParent
+   * @param children
+   * @param leaves
+   */
   private CompositeReaderContext(CompositeReaderContext parent, CompositeReader reader,
       int ordInParent, int docbaseInParent, List<IndexReaderContext> children,
       List<LeafReaderContext> leaves) {
@@ -92,6 +112,7 @@ public final class CompositeReaderContext extends IndexReaderContext {
     }
     
     private IndexReaderContext build(CompositeReaderContext parent, IndexReader reader, int ord, int docBase) {
+      // 如果传入的是一个叶子reader
       if (reader instanceof LeafReader) {
         final LeafReader ar = (LeafReader) reader;
         final LeafReaderContext atomic = new LeafReaderContext(parent, ar, ord, docBase, leaves.size(), leafDocBase);

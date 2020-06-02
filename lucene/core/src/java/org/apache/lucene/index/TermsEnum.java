@@ -40,6 +40,7 @@ import org.apache.lucene.util.BytesRefIterator;
  * of the <code>seek</code> methods.
  *
  * @lucene.experimental */
+// 该对象提供api可以遍历内部的term
 public abstract class TermsEnum implements BytesRefIterator {
 
   /** Sole constructor. (For invocation by subclass 
@@ -48,9 +49,11 @@ public abstract class TermsEnum implements BytesRefIterator {
   }
 
   /** Returns the related attributes. */
+  // 每组词对象 还挂载了一个 attr对象  attr本身也是链表结构
   public abstract AttributeSource attributes();
   
   /** Represents returned result from {@link #seekCeil}. */
+  // 代表在遍历过程中的状态  是读取到末尾了 还是未找到/找到
   public enum SeekStatus {
     /** The term was not found, and the end of iteration was hit. */
     END,
@@ -67,6 +70,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    * 
    *
    * @return true if the term is found; return false if the enum is unpositioned.
+   * 从一组term中找到与text匹配的词
    */
   public abstract boolean seekExact(BytesRef text) throws IOException;
 
@@ -76,12 +80,14 @@ public abstract class TermsEnum implements BytesRefIterator {
    *  term was found, or EOF was hit.  The target term may
    *  be before or after the current term.  If this returns
    *  SeekStatus.END, the enum is unpositioned. */
+  // 返回text的下一个词
   public abstract SeekStatus seekCeil(BytesRef text) throws IOException;
 
   /** Seeks to the specified term by ordinal (position) as
    *  previously returned by {@link #ord}.  The target ord
    *  may be before or after the current ord, and must be
    *  within bounds. */
+  // 通过传入的偏移量定位到 terms中某个term
   public abstract void seekExact(long ord) throws IOException;
 
   /**
@@ -109,17 +115,20 @@ public abstract class TermsEnum implements BytesRefIterator {
 
   /** Returns current term. Do not call this when the enum
    *  is unpositioned. */
+  // 返回当前的 term
   public abstract BytesRef term() throws IOException;
 
   /** Returns ordinal position for current term.  This is an
    *  optional method (the codec may throw {@link
    *  UnsupportedOperationException}).  Do not call this
    *  when the enum is unpositioned. */
+  // 返回当前 term的order
   public abstract long ord() throws IOException;
 
   /** Returns the number of documents containing the current
    *  term.  Do not call this when the enum is unpositioned.
    *  {@link SeekStatus#END}.*/
+  // 返回当前文档中该term出现的次数
   public abstract int docFreq() throws IOException;
 
   /** Returns the total number of occurrences of this term
@@ -127,6 +136,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    *  doc that has this term). Note that, like
    *  other term measures, this measure does not take
    *  deleted documents into account. */
+  // 计算每个文档中该词出现的次数总和
   public abstract long totalTermFreq() throws IOException;
 
   /** Get {@link PostingsEnum} for the current term.  Do not
@@ -159,6 +169,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    * @param reuse pass a prior PostingsEnum for possible reuse
    * @param flags specifies which optional per-document values
    *        you require; see {@link PostingsEnum#FREQS}
+   *              获取当前词的一个描述信息  有关频率 偏移量 负荷等
    */
   public abstract PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException;
 
@@ -178,6 +189,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    * 
    * @see TermState
    * @see #seekExact(BytesRef, TermState)
+   * 返回当前词的状态
    */
   public abstract TermState termState() throws IOException;
 
@@ -187,6 +199,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    * but it is currently possible to add Attributes to it.
    * This should not be a problem, as the enum is always empty and
    * the existence of unused Attributes does not matter.
+   * 空对象 默认方法都是抛出异常
    */
   public static final TermsEnum EMPTY = new BaseTermsEnum() {
     @Override

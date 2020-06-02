@@ -62,6 +62,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
  *  disk for backwards compatibility.  To enable default
  *  settings for spinning or solid state disks for such
  *  operating systems, use {@link #setDefaultMaxMergesAndThreads(boolean)}.
+ *  并发merge 对象
  */ 
 public class ConcurrentMergeScheduler extends MergeScheduler {
 

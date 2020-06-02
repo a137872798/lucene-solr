@@ -21,10 +21,12 @@ import java.util.List;
 
 /**
  * A struct like class that represents a hierarchical relationship between
- * {@link IndexReader} instances. 
+ * {@link IndexReader} instances.
+ * 代表读取索引时的一个上下文对象   (具有分层的概念)
  */
 public abstract class IndexReaderContext {
   /** The reader context for this reader's immediate parent, or null if none */
+  // 对应该节点的父级 如果为null 代表本节点就是 top
   public final CompositeReaderContext parent;
   /** <code>true</code> if this context struct represents the top level reader within the hierarchical context */
   public final boolean isTopLevel;
@@ -39,6 +41,7 @@ public abstract class IndexReaderContext {
   final Object identity = new Object();
 
   IndexReaderContext(CompositeReaderContext parent, int ordInParent, int docBaseInParent) {
+    // 要求上下文 必须是 Composite或者 Leaf
     if (!(this instanceof CompositeReaderContext || this instanceof LeafReaderContext))
       throw new Error("This class should never be extended by custom code!");
     this.parent = parent;

@@ -23,6 +23,7 @@ import java.io.IOException;
  * Random Access Index API.
  * Unlike {@link IndexInput}, this has no concept of file position, all reads
  * are absolute. However, like IndexInput, it is only intended for use by a single thread.
+ * 可以通过指定偏移量 读取数据
  */
 public interface RandomAccessInput {
   

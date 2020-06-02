@@ -31,12 +31,22 @@ import org.apache.lucene.util.RamUsageEstimator;
 /**
  * A {@link DataInput} implementing {@link RandomAccessInput} and reading data from a
  * list of {@link ByteBuffer}s.
+ * 基于BB 的输入流对象
  */
 public final class ByteBuffersDataInput extends DataInput implements Accountable, RandomAccessInput {
+  /**
+   * 一个 BB 数组   内部是只读对象
+   */
   private final ByteBuffer[] blocks;
+  /**
+   * 代表每个 block 会占用多少bit
+   */
   private final int blockBits;
   private final int blockMask;
   private final long size;
+  /**
+   * 偏移量  就是拷贝BB 时 slice相关的
+   */
   private final long offset;
 
   private long pos;
@@ -47,6 +57,7 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
    * buffer can be of an arbitrary remaining length.
    */
   public ByteBuffersDataInput(List<ByteBuffer> buffers) {
+    // 进行参数校验
     ensureAssumptions(buffers);
 
     this.blocks = buffers.stream().map(buf -> buf.asReadOnlyBuffer()).toArray(ByteBuffer[]::new);
@@ -55,11 +66,16 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
       this.blockBits = 32;
       this.blockMask = ~0;
     } else {
+      // 代表一个 block 由多少个 byte组成
       final int blockBytes = determineBlockPage(buffers);
+      // 比如一个 byteBuffer 对象由 8个byte 组成 那么 每个 blockBits 为 3  (2^3 = 8)
+      // 当寻找下标时 将pos / 2^3  刚好就代表 / 8byte
+      // 也就是 pos >>> blockBits
       this.blockBits = Integer.numberOfTrailingZeros(blockBytes);
       this.blockMask = (1 << blockBits) - 1;
     }
 
+    // 计算以 byte  为单位总长度
     this.size = Arrays.stream(blocks).mapToLong(block -> block.remaining()).sum();
 
     // The initial "position" of this stream is shifted by the position of the first block.
@@ -100,11 +116,13 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
    * enough remaining limit.
    * 
    * If there are fewer than {@code len} bytes in the input, {@link EOFException} 
-   * is thrown. 
+   * is thrown.
+   * 将数据读取出来并写入到 给与的 BB 中
    */
   public void readBytes(ByteBuffer buffer, int len) throws EOFException {
     try {
       while (len > 0) {
+        // 常见副本对象
         ByteBuffer block = blocks[blockIndex(pos)].duplicate();
         int blockOffset = blockOffset(pos);
         block.position(blockOffset);
@@ -166,9 +184,11 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
   public short readShort(long pos) {
     long absPos = offset + pos;
     int blockOffset = blockOffset(absPos);
+    // 代表可以直接在该block中读取所有数据
     if (blockOffset + Short.BYTES <= blockMask) {
       return blocks[blockIndex(absPos)].getShort(blockOffset);
     } else {
+      // 将当前block 的数据作为高位  下一个block的数据作为低位
       return (short) ((readByte(pos    ) & 0xFF) << 8 | 
                       (readByte(pos + 1) & 0xFF));
     }
@@ -232,10 +252,20 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
         offset == 0 ? "" : String.format(Locale.ROOT, " [offset: %,d]", offset));
   }
 
+  /**
+   * 根据pos 计算block的下标
+   * @param pos
+   * @return
+   */
   private final int blockIndex(long pos) {
     return Math.toIntExact(pos >> blockBits);
-  }  
+  }
 
+  /**
+   * 对应 每个block下 byte的偏移量
+   * @param pos
+   * @return
+   */
   private final int blockOffset(long pos) {
     return (int) pos & blockMask;
   }  
@@ -248,6 +278,10 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
     return (v & (v - 1)) == 0;
   }
 
+  /**
+   * 校验数据是否合法
+   * @param buffers
+   */
   private static void ensureAssumptions(List<ByteBuffer> buffers) {
     if (buffers.isEmpty()) {
       throw new IllegalArgumentException("Buffer list must not be empty.");
@@ -256,6 +290,7 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
     if (buffers.size() == 1) {
       // Special case of just a single buffer, conditions don't apply.
     } else {
+      // 根据 BB 的容量 获取block的大小
       final int blockPage = determineBlockPage(buffers);
       
       // First buffer decides on block page length.
@@ -270,6 +305,7 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
         if (buffer.position() != 0) {
           throw new IllegalArgumentException("All buffers except for the first one must have position() == 0: " + buffer);
         }
+        // 最后一个 BB 允许不写满
         if (i != last && buffer.remaining() != blockPage) {
           throw new IllegalArgumentException("Intermediate buffers must share an identical remaining() power-of-two block size: 0x" 
               + Integer.toHexString(blockPage));
@@ -278,12 +314,24 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
     }
   }
 
+  /**
+   * 根据  BB 的容量 获取每个block的容量
+   * @param buffers
+   * @return
+   */
   static int determineBlockPage(List<ByteBuffer> buffers) {
     ByteBuffer first = buffers.get(0);
     final int blockPage = Math.toIntExact((long) first.position() + first.remaining());
     return blockPage;
   }
 
+  /**
+   * 创建一个分片
+   * @param buffers
+   * @param offset 使用给定的偏移量 然后分片对象会以该值作为 起点   + pos 才会得到 absPos(绝对偏移量)
+   * @param length
+   * @return
+   */
   private static List<ByteBuffer> sliceBufferList(List<ByteBuffer> buffers, long offset, long length) {
     ensureAssumptions(buffers);
 

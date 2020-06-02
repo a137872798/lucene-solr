@@ -34,11 +34,15 @@ import org.apache.lucene.util.AttributeFactory;
  * <p>Many applications have specific tokenizer needs.  If this tokenizer does
  * not suit your application, please consider copying this source code
  * directory to your project and maintaining your own grammar-based tokenizer.
+ * 这是一个标准的词法解析器
  */
 
 public final class StandardTokenizer extends Tokenizer {
   /** A private instance of the JFlex-constructed scanner */
+  // 该对象负责扫描文本
   private StandardTokenizerImpl scanner;
+
+  // 代表是什么语言类型  对应 scanner 通过dfa扫描出来的类型  scanner本身可以简易的理解成一个正则表达式 然后每种字符都必然要符合某种规则
 
   /** Alpha/numeric token type */
   public static final int ALPHANUM = 0;
@@ -116,46 +120,62 @@ public final class StandardTokenizer extends Tokenizer {
   }
 
   /**
-   * Creates a new StandardTokenizer with a given {@link org.apache.lucene.util.AttributeFactory} 
+   * Creates a new StandardTokenizer with a given {@link org.apache.lucene.util.AttributeFactory}
+   * 这里指定了 使用的 attrFactory
+   * 在没有指定 factory的情况下 会使用一个 DefaultAttributeFactory
    */
   public StandardTokenizer(AttributeFactory factory) {
     super(factory);
     init();
   }
 
+  /**
+   * 基于传入的文本资源初始化 词法解析器
+   */
   private void init() {
     this.scanner = new StandardTokenizerImpl(input);
   }
 
   // this tokenizer generates three attributes:
   // term offset, positionIncrement and type
+  // 通过 attr工厂创建 attr 对象
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
   private final OffsetAttribute offsetAtt = addAttribute(OffsetAttribute.class);
   private final PositionIncrementAttribute posIncrAtt = addAttribute(PositionIncrementAttribute.class);
   private final TypeAttribute typeAtt = addAttribute(TypeAttribute.class);
 
+
+  // 下面的一些方法是用来协调 StandardTokenizerImpl的
   /*
    * (non-Javadoc)
    *
    * @see org.apache.lucene.analysis.TokenStream#next()
+   * 代表需要读取下一个token
    */
   @Override
   public final boolean incrementToken() throws IOException {
+    // 每当读取一个新的token时 需要重置state上所有的 attr
     clearAttributes();
     skippedPositions = 0;
 
     while(true) {
+      // 根据token类型走不同的逻辑
       int tokenType = scanner.getNextToken();
 
+      // 代表读取到末尾了
       if (tokenType == StandardTokenizerImpl.YYEOF) {
         return false;
       }
 
+      // 这里代表批处理
       if (scanner.yylength() <= maxTokenLength) {
         posIncrAtt.setPositionIncrement(skippedPositions+1);
+        // 将数据拷贝到 一个临时数组中 待满足条件后批量处理
         scanner.getText(termAtt);
         final int start = scanner.yychar();
+        // 记录偏移量
         offsetAtt.setOffset(correctOffset(start), correctOffset(start+termAtt.length()));
+        // 找到本次的token类型
         typeAtt.setType(StandardTokenizer.TOKEN_TYPES[tokenType]);
         return true;
       } else
@@ -167,9 +187,11 @@ public final class StandardTokenizer extends Tokenizer {
   
   @Override
   public final void end() throws IOException {
+    // 代表某个token的处理结束了 触发每个 attr的 end()
     super.end();
     // set final offset
     int finalOffset = correctOffset(scanner.yychar() + scanner.yylength());
+    // 更新偏移量
     offsetAtt.setOffset(finalOffset, finalOffset);
     // adjust any skipped tokens
     posIncrAtt.setPositionIncrement(posIncrAtt.getPositionIncrement()+skippedPositions);

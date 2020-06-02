@@ -39,8 +39,7 @@ import org.apache.lucene.util.UnicodeUtil;
 /**
  * A {@link DataOutput} storing data in a list of {@link ByteBuffer}s.
  * 通过 byteBuffer 来存储数据
- * 而 DataOutput抽象的含义是普通的数据输出流    IndexOutput 代表数据本身有一个偏移量的概念 和 filePoint()
- * 所以一般都是针对 文件 才使用 IndexOutput
+ * 而 DataOutput抽象的含义是普通的数据输出流    IndexOutput 代表是 lucene的索引输出流
  */
 public final class ByteBuffersDataOutput extends DataOutput implements Accountable {
   private final static ByteBuffer EMPTY = ByteBuffer.allocate(0);
@@ -182,6 +181,12 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
     currentBlock.put(b);
   }
 
+  /**
+   * 将 src内部的数据写入到 BB 中
+   * @param src
+   * @param offset the offset in the byte array
+   * @param length the number of bytes to write
+   */
   @Override
   public void writeBytes(byte[] src, int offset, int length) {
     assert length >= 0;
@@ -190,6 +195,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
         appendBlock();
       }
 
+      // 因为单次写入的长度 可能直接超过了某个block的大小 所以可能要创建多个block
       int chunk = Math.min(currentBlock.remaining(), length);
       currentBlock.put(src, offset, chunk);
       length -= chunk;
@@ -219,9 +225,9 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
         appendBlock();
       }
 
-      // 如果 buffer 内部的数据长度 超过了一个block 那么可能还要继续创建 block 所以是一个循环
       int chunk = Math.min(currentBlock.remaining(), length);
       buffer.limit(buffer.position() + chunk);
+      // 调用put方法的同时 就是将BB 中的数据转移到 block中
       currentBlock.put(buffer);
 
       length -= chunk;
@@ -235,9 +241,11 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
   public ArrayList<ByteBuffer> toBufferList() {
     ArrayList<ByteBuffer> result = new ArrayList<>(Math.max(blocks.size(), 1));
     if (blocks.isEmpty()) {
+      // 此时还没有创建任何一个block被创建的时候  添加一个默认的BB
       result.add(EMPTY);
     } else {
       for (ByteBuffer bb : blocks) {
+        // 返回只读byte (也是一个视图对象 共享同一份BB 同时在添加到list之前会通过flip重置指针)
         bb = bb.asReadOnlyBuffer().flip();
         result.add(bb);
       }
@@ -256,7 +264,6 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
    * The difference between {@link #toBufferList()} and {@link #toWriteableBufferList()} is that
    * read-only view of source buffers will always return {@code false} from {@link ByteBuffer#hasArray()}
    * (which sometimes may be required to avoid double copying).
-   * 创建一份拷贝对象 它们共享同一个 bytBuffer
    */
   public ArrayList<ByteBuffer> toWriteableBufferList() {
     ArrayList<ByteBuffer> result = new ArrayList<>(Math.max(blocks.size(), 1));
@@ -264,6 +271,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
       result.add(EMPTY);
     } else {
       for (ByteBuffer bb : blocks) {
+        // 这里创建的是 duplicate 该视图是可以执行put操作的 此时就会修改被共享的那个BB 数据
         bb = bb.duplicate().flip();
         result.add(bb);
       }
@@ -272,7 +280,8 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
   }
 
   /**
-   * Return a {@link ByteBuffersDataInput} for the set of current buffers ({@link #toBufferList()}). 
+   * Return a {@link ByteBuffersDataInput} for the set of current buffers ({@link #toBufferList()}).
+   * 通过内部数据生成一个inputStream 用于读取该对象写入的数据
    */
   public ByteBuffersDataInput toDataInput() {
     return new ByteBuffersDataInput(toBufferList());
@@ -410,11 +419,19 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
       final int MAX_CHARS_PER_WINDOW = 1024;
       // 代表本次写入长度小于一个窗口
       if (v.length() <= MAX_CHARS_PER_WINDOW) {
+        // 该对象就是将 string 按照UTF-8 格式存储在一个 byte[] 中
         final BytesRef utf8 = new BytesRef(v);
+        // 只要能玩转位运算 就可以按照自己的规则自定义数据类型了  在 lucene中自定义了VByte 和 VInt ...\
+        // 其中 VByte使用7位来表示  虽说表示一个int 最大可能会使用到35位 也就是5个 VByte 但是大多数场景 一个int值只是用了低位
+        // 这样就可以起到节省内存开销的功能
+        // 这里是先向 BB 内写入一个长度信息
         writeVInt(utf8.length);
+        // 这里才是将 v内部的数据 拷贝到内部的 BB列表
         writeBytes(utf8.bytes, utf8.offset, utf8.length);
       } else {
+        // 下面还没理解
         writeVInt(UnicodeUtil.calcUTF16toUTF8Length(v, 0, v.length()));
+
         final byte [] buf = new byte [UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR * MAX_CHARS_PER_WINDOW];
         UTF16toUTF8(v, 0, v.length(), buf, (len) -> {
           writeBytes(buf, 0, len);
@@ -428,6 +445,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
   @Override
   public void writeMapOfStrings(Map<String, String> map) {
     try {
+      // 先写入 map.size()  之后再挨个将键值对写入
       super.writeMapOfStrings(map);
     } catch (IOException e) {
       throw new UncheckedIOException(e);
@@ -443,6 +461,10 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
     }      
   }
 
+  /**
+   * 预估当前使用了多少 byte
+   * @return
+   */
   @Override
   public long ramBytesUsed() {
     // Return a rough estimation for allocated blocks. Note that we do not make
@@ -460,6 +482,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
    * lead to hard-to-debug issues, use with great care.
    */
   public void reset() {
+    // 代表如果使用了指定的 reuse 函数 那么就尝试重用
     if (blockReuse != NO_REUSE) {
       blocks.forEach(blockReuse);
     }
@@ -472,6 +495,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
    */
   // TODO: perhaps we can move it out to an utility class (as a supplier of preconfigured instances?) 
   public static ByteBuffersDataOutput newResettableInstance() {
+    // 这里传入了一个具备reuse功能的回收对象
     ByteBuffersDataOutput.ByteBufferRecycler reuser = new ByteBuffersDataOutput.ByteBufferRecycler(
         ByteBuffersDataOutput.ALLOCATE_BB_ON_HEAP); 
     return new ByteBuffersDataOutput(
@@ -489,7 +513,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
    * 创建一个新的 block
    */
   private void appendBlock() {
-    // 当block数量已经超过一个阈值时 先判断 还有没有空闲的 位可以写入
+    // 首先判断当前的block 是否超过了某个阈值   如果超过的话 那么就优先尝试将之前已经存在的block扩容 具体做法就是 将位数 + 1
     if (blocks.size() >= MAX_BLOCKS_BEFORE_BLOCK_EXPANSION && blockBits < maxBitsPerBlock) {
       rewriteToBlockSize(blockBits + 1);
       if (blocks.getLast().hasRemaining()) {
@@ -497,8 +521,9 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
       }
     }
 
-    // 这里是正常情况  创建一个新的block  实际上是没有block数量限制的
+    // 按照当前blockBits 创建新的 block   如果当前每个block的大小都达到 maxBitsPerBlock的话 那么就无限制的创建新的block
     final int requiredBlockSize = 1 << blockBits;
+    //
     currentBlock = blockAllocate.apply(requiredBlockSize);
     assert currentBlock.capacity() == requiredBlockSize;
     blocks.add(currentBlock);
@@ -517,7 +542,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
     // 以一个新的位数大小来创建 输出流
     ByteBuffersDataOutput cloned = new ByteBuffersDataOutput(targetBlockBits, targetBlockBits, blockAllocate, NO_REUSE);
     ByteBuffer block;
-    // 将当前所有 block的数据 都转移到 cloned 中
+    // 将当前所有 block的数据 都转移到 cloned 中   因为新的dataOutput容量更大 所以一般情况能够容纳数据
     while ((block = blocks.pollFirst()) != null) {
       block.flip();
       cloned.writeBytes(block);
@@ -526,6 +551,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
       }
     }
 
+    // 将该对象的内部指针指向新的对象  原来的空间就会被GC回收
     assert blocks.isEmpty();
     this.blockBits = targetBlockBits;
     blocks.addAll(cloned.blocks);
@@ -537,11 +563,12 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
    * @return
    */
   private static int computeBlockSizeBitsFor(long bytes) {
+    // 预估每个block 会用到多少bit  具体的计算方式是这样 假设本次填入的值 会直接使用到 100个block  那么此时 每个block 应该使用多少bit呢
     long powerOfTwo = BitUtil.nextHighestPowerOfTwo(bytes / MAX_BLOCKS_BEFORE_BLOCK_EXPANSION);
     if (powerOfTwo == 0) {
       return DEFAULT_MIN_BITS_PER_BLOCK;
     }
-    
+
     int blockBits = Long.numberOfTrailingZeros(powerOfTwo);
     blockBits = Math.min(blockBits, DEFAULT_MAX_BITS_PER_BLOCK);
     blockBits = Math.max(blockBits, DEFAULT_MIN_BITS_PER_BLOCK);

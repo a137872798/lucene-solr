@@ -184,12 +184,19 @@ public abstract class DataOutput {
    * supported, but should be avoided.
    * @throws IOException If there is an I/O error writing to the underlying medium.
    * @see DataInput#readVInt()
+   * VByte 最大7位  也就是一个8位的byte数实际上需要2个 VByte
+   * 然后 VInt 是基于 VByte 的 每次写入 7 位 换算下来 使用 2~5个VByte
    */
   public final void writeVInt(int i) throws IOException {
+    // 一个byte 的大小是256 而0x7F 是127 换算成位 就是 7位  也就是该int值每次都是按7位来取的
     while ((i & ~0x7F) != 0) {
+      // TODO 这里会在最高位第8位补上 1  应该是一种特殊的策略  比如一个占位符  比如说查看某个VByte值时 发现高位是1 代表这块内存本身存储的不一样是一个byte
+      // 就需要在往高位读取 直到发现某个 VByte的高位为0
       writeByte((byte)((i & 0x7F) | 0x80));
       i >>>= 7;
     }
+
+    // 最后的7位 按照byte 直接写入 最高位没有用1占位
     writeByte((byte)i);
   }
 
@@ -268,6 +275,7 @@ public abstract class DataOutput {
   public void copyBytes(DataInput input, long numBytes) throws IOException {
     assert numBytes >= 0: "numBytes=" + numBytes;
     long left = numBytes;
+    // 最多只允许拷贝多少长度
     if (copyBuffer == null)
       copyBuffer = new byte[COPY_BUFFER_SIZE];
     while(left > 0) {

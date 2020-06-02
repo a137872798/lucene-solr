@@ -23,10 +23,10 @@ import org.apache.lucene.util.Attribute;
 /** Sets the custom term frequency of a term within one document.  If this attribute
  *  is present in your analysis chain for a given field, that field must be indexed with
  *  {@link IndexOptions#DOCS_AND_FREQS}. */
+// 标注某个doc 某个词的频率
 public interface TermFrequencyAttribute extends Attribute {
 
   /** Set the custom term frequency of the current term within one document. */
-  // 设置字典频率???
   public void setTermFrequency(int termFrequency);
 
   /** Returns the custom term frequency. */

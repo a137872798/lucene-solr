@@ -22,10 +22,17 @@ import java.io.IOException;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.util.BytesRef;
 
+/**
+ * 代表一个范围内所有的doc
+ */
 class BinaryRangeDocValues extends BinaryDocValues {
+  // 对应某个doc的值
   private final BinaryDocValues in;
+  // 存放数据
   private byte[] packedValue;
+  // 代表有几个维度
   private final int numDims;
+  // 每个维度多少byte
   private final int numBytesPerDimension;
   private int docID = -1;
 
@@ -33,6 +40,7 @@ class BinaryRangeDocValues extends BinaryDocValues {
     this.in = in;
     this.numBytesPerDimension = numBytesPerDimension;
     this.numDims = numDims;
+    // 多开辟了一倍的空间
     this.packedValue = new byte[2 * numDims * numBytesPerDimension];
   }
 
@@ -41,6 +49,7 @@ class BinaryRangeDocValues extends BinaryDocValues {
     docID = in.nextDoc();
 
     if (docID != NO_MORE_DOCS) {
+      // 将in中的数据 读取到 packedValue 中
       decodeRanges();
     }
 

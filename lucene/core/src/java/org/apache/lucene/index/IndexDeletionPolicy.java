@@ -48,6 +48,7 @@ import java.io.IOException;
  * target="top"
  * href="http://issues.apache.org/jira/browse/LUCENE-710">LUCENE-710</a>
  * for details.</p>
+ * 索引的删除策略
  */
 
 public abstract class IndexDeletionPolicy {

@@ -46,6 +46,11 @@ import org.apache.lucene.util.BytesRef;
  */
 public final class BinaryPoint extends Field {
 
+  /**
+   * 二维数组中 第一维代表 几个维度 第二维代表每个维度多长的byte[]
+   * @param point
+   * @return
+   */
   private static FieldType getType(byte[][] point) {
     if (point == null) {
       throw new IllegalArgumentException("point must not be null");
@@ -53,6 +58,7 @@ public final class BinaryPoint extends Field {
     if (point.length == 0) {
       throw new IllegalArgumentException("point must not be 0 dimensions");
     }
+    // 校验 确保每个 byte[]长度一致
     int bytesPerDim = -1;
     for(int i=0;i<point.length;i++) {
       byte[] oneDim = point[i];
@@ -71,6 +77,12 @@ public final class BinaryPoint extends Field {
     return getType(point.length, bytesPerDim);
   }
 
+  /**
+   * 返回一个记录有关维度的type
+   * @param numDims
+   * @param bytesPerDim
+   * @return
+   */
   private static FieldType getType(int numDims, int bytesPerDim) {
     FieldType type = new FieldType();
     type.setDimensions(numDims, bytesPerDim);
@@ -78,6 +90,11 @@ public final class BinaryPoint extends Field {
     return type;
   }
 
+  /**
+   * 将一组维度(byte[])打包成一个 BytesRef
+   * @param point
+   * @return
+   */
   private static BytesRef pack(byte[]... point) {
     if (point == null) {
       throw new IllegalArgumentException("point must not be null");
@@ -88,6 +105,7 @@ public final class BinaryPoint extends Field {
     if (point.length == 1) {
       return new BytesRef(point[0]);
     }
+    // 所有数组的长度必须一致
     int bytesPerDim = -1;
     for(byte[] dim : point) {
       if (dim == null) {
@@ -102,6 +120,7 @@ public final class BinaryPoint extends Field {
         throw new IllegalArgumentException("all dimensions must have same bytes length; got " + bytesPerDim + " and " + dim.length);
       }
     }
+    // 将所有byte[] 整合到一个数组中
     byte[] packed = new byte[bytesPerDim*point.length];
     for(int i=0;i<point.length;i++) {
       System.arraycopy(point[i], 0, packed, i*bytesPerDim, bytesPerDim);
@@ -115,6 +134,7 @@ public final class BinaryPoint extends Field {
    *  @param name field name
    *  @param point byte[][] value
    *  @throws IllegalArgumentException if the field name or value is null.
+   *  多维度二进制点
    */
   public BinaryPoint(String name, byte[]... point) {
     super(name, pack(point), getType(point));
@@ -140,6 +160,7 @@ public final class BinaryPoint extends Field {
    * @param value binary value
    * @throws IllegalArgumentException if {@code field} is null or {@code value} is null
    * @return a query matching documents with this exact value
+   * 构造一个查询对象
    */
   public static Query newExactQuery(String field, byte[] value) {
     return newRangeQuery(field, value, value);
@@ -157,6 +178,7 @@ public final class BinaryPoint extends Field {
    * @throws IllegalArgumentException if {@code field} is null, if {@code lowerValue} is null,
    *                                  or if {@code upperValue} is null
    * @return a query matching documents within this range.
+   * 构建一个范围查询对象
    */
   public static Query newRangeQuery(String field, byte[] lowerValue, byte[] upperValue) {
     PointRangeQuery.checkArgs(field, lowerValue, upperValue);
@@ -172,6 +194,7 @@ public final class BinaryPoint extends Field {
    * @throws IllegalArgumentException if {@code field} is null, if {@code lowerValue} is null, if {@code upperValue} is null, 
    *                                  or if {@code lowerValue.length != upperValue.length}
    * @return a query matching documents within this range.
+   * 构建一个基于多维度的 二维查询
    */
   public static Query newRangeQuery(String field, byte[][] lowerValue, byte[][] upperValue) {
     return new PointRangeQuery(field, pack(lowerValue).bytes, pack(upperValue).bytes, lowerValue.length) {

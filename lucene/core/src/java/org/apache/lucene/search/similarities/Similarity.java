@@ -88,6 +88,7 @@ import org.apache.lucene.util.SmallFloat;
  * @see org.apache.lucene.index.IndexWriterConfig#setSimilarity(Similarity)
  * @see IndexSearcher#setSimilarity(Similarity)
  * @lucene.experimental
+ * 相似度对象  通过lucene的打分系统 计算相似度  相似度越高的结果在越上面
  */
 public abstract class Similarity {
   
@@ -119,6 +120,7 @@ public abstract class Similarity {
    * 
    * @param state current processing state for this field
    * @return computed norm value
+   * 通过这个记录field的状态对象 计算一个规范值
    */
   public abstract long computeNorm(FieldInvertState state);
 

@@ -35,8 +35,12 @@ import org.apache.lucene.index.StoredFieldVisitor;
  *  document.
  *
  * @lucene.experimental */
+// storedFieldVisitor 代表将field 存到doc上
 
 public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
+  /**
+   * 存储传入的 field
+   */
   private final Document doc = new Document();
   private final Set<String> fieldsToAdd;
 
@@ -61,13 +65,26 @@ public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
     this.fieldsToAdd = null;
   }
 
+  /**
+   * 添加一个二进制形式的field
+   * @param fieldInfo
+   * @param value newly allocated byte array with the binary contents.
+   * @throws IOException
+   */
   @Override
   public void binaryField(FieldInfo fieldInfo, byte[] value) throws IOException {
     doc.add(new StoredField(fieldInfo.name, value));
   }
 
+  /**
+   * 为 doc 增加一个 string 类型的 field
+   * @param fieldInfo
+   * @param value
+   * @throws IOException
+   */
   @Override
   public void stringField(FieldInfo fieldInfo, String value) throws IOException {
+    // 从fieldInfo 中剥离某些属性 转移到 fieldType上
     final FieldType ft = new FieldType(TextField.TYPE_STORED);
     ft.setStoreTermVectors(fieldInfo.hasVectors());
     ft.setOmitNorms(fieldInfo.omitsNorms());

@@ -43,6 +43,7 @@ import org.apache.lucene.index.NumericDocValues;
  * Scores may be used as a source for value calculations by wrapping a {@link Scorer} using
  * {@link #fromScorer(Scorable)} and passing the resulting DoubleValues to {@link #getValues(LeafReaderContext, DoubleValues)}.
  * The scores can then be accessed using the {@link #SCORES} DoubleValuesSource.
+ * 该对象负责产生 DoubleValues
  */
 public abstract class DoubleValuesSource implements SegmentCacheable {
 
@@ -86,12 +87,14 @@ public abstract class DoubleValuesSource implements SegmentCacheable {
    *
    * For the same reason, implementations that cache references to the IndexSearcher
    * should return a new object from this method.
+   * 通过一个 searcher对象 重写 doubleValue
    */
   public abstract DoubleValuesSource rewrite(IndexSearcher reader) throws IOException;
 
   /**
    * Create a sort field based on the value of this producer
-   * @param reverse true if the sort should be decreasing
+   * @param reverse true if the sort should be decreasing   正序/倒序
+   *                为该对象排序 生成一个新的值
    */
   public SortField getSortField(boolean reverse) {
     return new DoubleValuesSortField(this, reverse);
@@ -419,8 +422,14 @@ public abstract class DoubleValuesSource implements SegmentCacheable {
 
   }
 
+  /**
+   * 基于 Double类型的一个排序字段
+   */
   private static class DoubleValuesSortField extends SortField {
 
+    /**
+     * 该对象用于生成 double值
+     */
     final DoubleValuesSource producer;
 
     DoubleValuesSortField(DoubleValuesSource producer, boolean reverse) {
@@ -452,6 +461,12 @@ public abstract class DoubleValuesSource implements SegmentCacheable {
       return buffer.toString();
     }
 
+    /**
+     * 使用source 创建数据后 包装成 doubleValuesSortField 并返回
+     * @param searcher IndexSearcher to use during rewriting
+     * @return
+     * @throws IOException
+     */
     @Override
     public SortField rewrite(IndexSearcher searcher) throws IOException {
       DoubleValuesSortField rewritten = new DoubleValuesSortField(producer.rewrite(searcher), reverse);
@@ -467,6 +482,9 @@ public abstract class DoubleValuesSource implements SegmentCacheable {
     DoubleValues values;
   }
 
+  /**
+   * 用于提供比较函数
+   */
   private static class DoubleValuesComparatorSource extends FieldComparatorSource {
     private final DoubleValuesSource producer;
     private double missingValue;
@@ -480,6 +498,15 @@ public abstract class DoubleValuesSource implements SegmentCacheable {
       this.missingValue = missingValue;
     }
 
+    /**
+     * 根据参数 生成一个比较函数对象
+     * @param fieldname
+     *          Name of the field to create comparator for.
+     * @param numHits
+     * @param sortPos
+     * @param reversed
+     * @return
+     */
     @Override
     public FieldComparator<Double> newComparator(String fieldname, int numHits,
                                                int sortPos, boolean reversed) {

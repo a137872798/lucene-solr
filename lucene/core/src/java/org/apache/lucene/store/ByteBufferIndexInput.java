@@ -34,6 +34,7 @@ import java.nio.LongBuffer;
  * <p>
  * For efficiency, this class requires that the buffers
  * are a power-of-two (<code>chunkSizePower</code>).
+ * 基于 BB 的输入流
  */
 public abstract class ByteBufferIndexInput extends IndexInput implements RandomAccessInput {
   private static final LongBuffer EMPTY_LONGBUFFER = LongBuffer.allocate(0);
@@ -41,11 +42,23 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
   protected final long length;
   protected final long chunkSizeMask;
   protected final int chunkSizePower;
+  /**
+   * 该对象负责回收 BB
+   */
   protected final ByteBufferGuard guard;
-  
+
+  /**
+   * 一组可用的 BB
+   */
   protected ByteBuffer[] buffers;
+  /**
+   * 当前指向数组的 哪个 BB
+   */
   protected int curBufIndex = -1;
   protected ByteBuffer curBuf; // redundant for speed: buffers[curBufIndex]
+  /**
+   * 对应 curBuf  的LongBuffer视图
+   */
   private LongBuffer[] curLongBufferViews;
 
   protected boolean isClone = false;
@@ -57,7 +70,15 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
       return new MultiBufferImpl(resourceDescription, buffers, 0, length, chunkSizePower, guard);
     }
   }
-  
+
+  /**
+   * 作为一个父类构造函数 包含一些基础属性的设置
+   * @param resourceDescription
+   * @param buffers
+   * @param length
+   * @param chunkSizePower
+   * @param guard
+   */
   ByteBufferIndexInput(String resourceDescription, ByteBuffer[] buffers, long length, int chunkSizePower, ByteBufferGuard guard) {
     super(resourceDescription);
     this.buffers = buffers;
@@ -78,6 +99,7 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
   public final byte readByte() throws IOException {
     try {
       return guard.getByte(curBuf);
+      // 当前buf无数据可读时 自动切换到下一个buffer
     } catch (BufferUnderflowException e) {
       do {
         curBufIndex++;
@@ -128,11 +150,13 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
       // views lazily so that other data-structures don't have to pay for the
       // associated initialization/memory overhead.
       curLongBufferViews = new LongBuffer[Long.BYTES];
+      // 通过duplicate 共享源数据
       for (int i = 0; i < Long.BYTES; ++i) {
         // Compute a view for each possible alignment. We cache these views
         // because #asLongBuffer() has some cost that we don't want to pay on
         // each invocation of #readLELongs.
         if (i < curBuf.limit()) {
+          // 每次从当前位置 读取8byte 包装成一个long 值
           curLongBufferViews[i] = curBuf.duplicate().position(i).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
         } else {
           curLongBufferViews[i] = EMPTY_LONGBUFFER;
@@ -141,6 +165,8 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
     }
     try {
       final int position = curBuf.position();
+      // 0x07 相当于 /8  这样就能换算成 LongBuffer的下标
+      // 后面的 >>>3 相当于是求余数
       guard.getLongs(curLongBufferViews[position & 0x07].position(position >>> 3), dst, offset, length);
       // if the above call succeeded, then we know the below sum cannot overflow
       curBuf.position(position + (length << 3));
@@ -193,6 +219,11 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
     }
   }
 
+  /**
+   * 将指针定位到某个位置
+   * @param pos
+   * @throws IOException
+   */
   @Override
   public void seek(long pos) throws IOException {
     // we use >> here to preserve negative, so we will catch AIOOBE,
@@ -313,6 +344,7 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
   }
 
   /** Builds the actual sliced IndexInput (may apply extra offset in subclasses). **/
+  // 这个方法是该类的核心
   protected ByteBufferIndexInput buildSlice(String sliceDescription, long offset, long length) {
     if (buffers == null) {
       throw new AlreadyClosedException("Already closed: " + this);
@@ -337,13 +369,16 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
       return new MultiBufferImpl(newResourceDescription, newBuffers, offset, length, chunkSizePower, guard);
     }
   }
-  
+
+  // 第一个buffer 分片允许多读取数据 不裁剪   最后一个 buffer需要裁剪多出的数据
   /** Returns a sliced view from a set of already-existing buffers: 
    *  the last buffer's limit() will be correct, but
    *  you must deal with offset separately (the first buffer will not be adjusted) */
+  // 为当前对象创建一个分片
   private ByteBuffer[] buildSlice(ByteBuffer[] buffers, long offset, long length) {
     final long sliceEnd = offset + length;
-    
+
+    // 分别找到起点和终点的数组下标
     final int startIndex = (int) (offset >>> chunkSizePower);
     final int endIndex = (int) (sliceEnd >>> chunkSizePower);
 
@@ -389,6 +424,12 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
   }
   
   /** Optimization of ByteBufferIndexInput for when there is only one buffer */
+  /**
+   * 代表内部只有一个 BB 的input对象
+   * 在访问 BB 的每个数据前 都先要通过 guard读取数据  而guard会先检测当前buffer是否已经被cleaner 清除
+   * 如果已经被清楚的清空  抛出 NullPoint
+   * 而该类 又捕获了空指针  发出一个被关闭的异常
+   */
   static final class SingleBufferImpl extends ByteBufferIndexInput {
 
     SingleBufferImpl(String resourceDescription, ByteBuffer buffer, long length, int chunkSizePower, ByteBufferGuard guard) {

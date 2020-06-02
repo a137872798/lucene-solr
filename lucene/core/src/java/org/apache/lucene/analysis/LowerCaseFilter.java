@@ -23,6 +23,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 
 /**
  * Normalizes token text to lower case.
+ * 该对象在处理数据前都会转换成小写
  */
 public class LowerCaseFilter extends TokenFilter {
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);

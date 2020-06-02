@@ -27,10 +27,20 @@ import org.apache.lucene.util.ByteBlockPool.Allocator;
  * Note: This class is not thread-safe
  * </p>
  * @lucene.internal
+ * 一个可循环利用的  block分配器对象
  */
 public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
+  /**
+   * 代表当前可用的所有 byte[]
+   */
   private byte[][] freeByteBlocks;
+  /**
+   * 标明最大可用的内存量
+   */
   private final int maxBufferedBlocks;
+  /**
+   * 当前剩余多少 block未分配
+   */
   private int freeBlocks = 0;
   private final Counter bytesUsed;
   public static final int DEFAULT_BUFFERED_BLOCKS = 64;
@@ -77,19 +87,29 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
 
   @Override
   public byte[] getByteBlock() {
+    // 当前没有空闲的 blocks 选择创建一个新的 数组
     if (freeBlocks == 0) {
       bytesUsed.addAndGet(blockSize);
       return new byte[blockSize];
     }
+    // 将空闲byte[] 分配出去 同时将该指针置空
     final byte[] b = freeByteBlocks[--freeBlocks];
     freeByteBlocks[freeBlocks] = null;
     return b;
   }
 
+  /**
+   * 回收之前使用的 byte[]
+   * @param blocks
+   * @param start   从第几个byte开始回收
+   * @param end   回收到第几个byte
+   */
   @Override
   public void recycleByteBlocks(byte[][] blocks, int start, int end) {
+    // 将会回收多少byte[]
     final int numBlocks = Math.min(maxBufferedBlocks - freeBlocks, end - start);
     final int size = freeBlocks + numBlocks;
+    // 回收后池的总大小变大了  进行扩容
     if (size >= freeByteBlocks.length) {
       final byte[][] newBlocks = new byte[ArrayUtil.oversize(size,
           RamUsageEstimator.NUM_BYTES_OBJECT_REF)][];
@@ -98,9 +118,11 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
     }
     final int stop = start + numBlocks;
     for (int i = start; i < stop; i++) {
+      // 池内剩余指针指向 block[i] 的内存块
       freeByteBlocks[freeBlocks++] = blocks[i];
       blocks[i] = null;
     }
+    // 无法被池回收的部分 就直接置空
     for (int i = stop; i < end; i++) {
       blocks[i] = null;
     }
@@ -135,6 +157,7 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
    * @param num
    *          the number of byte blocks to remove
    * @return the number of actually removed buffers
+   * 修改池内 可用block的大小
    */
   public int freeBlocks(int num) {
     assert num >= 0 : "free blocks must be >= 0 but was: "+ num;

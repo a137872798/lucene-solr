@@ -32,21 +32,25 @@ import org.apache.lucene.analysis.WordlistLoader;
  * {@link StopFilter}, using a configurable list of stop words.
  *
  * @since 3.1
+ * 代表一个标准的token 加工器  会找到内部的停词 以及统一成小写
  */
 public final class StandardAnalyzer extends StopwordAnalyzerBase {
   
   /** Default maximum allowed token length */
+  // 默认情况下 每个token 最大长度为 255
   public static final int DEFAULT_MAX_TOKEN_LENGTH = 255;
 
   private int maxTokenLength = DEFAULT_MAX_TOKEN_LENGTH;
 
   /** Builds an analyzer with the given stop words.
    * @param stopWords stop words */
+  // 使用一个指定的停词容器 这样在解析的时候就不会将这些词作为索引
   public StandardAnalyzer(CharArraySet stopWords) {
     super(stopWords);
   }
 
   /** Builds an analyzer with no stop words.
+   * 默认情况下不拦截任何停词
    */
   public StandardAnalyzer() {
     this(CharArraySet.EMPTY_SET);
@@ -55,6 +59,7 @@ public final class StandardAnalyzer extends StopwordAnalyzerBase {
   /** Builds an analyzer with the stop words from the given reader.
    * @see WordlistLoader#getWordSet(Reader)
    * @param stopwords Reader to read stop words from */
+  // 停词从 reader中获取
   public StandardAnalyzer(Reader stopwords) throws IOException {
     this(loadStopwordSet(stopwords));
   }
@@ -77,11 +82,21 @@ public final class StandardAnalyzer extends StopwordAnalyzerBase {
     return maxTokenLength;
   }
 
+  /**
+   * @param fieldName
+   *          the name of the fields content passed to the
+   *          {@link TokenStreamComponents} sink as a reader
+
+   * @return
+   */
   @Override
   protected TokenStreamComponents createComponents(final String fieldName) {
+    // 该对象通过读取输入流 解析内部的token
     final StandardTokenizer src = new StandardTokenizer();
     src.setMaxTokenLength(maxTokenLength);
+    // 包装成一个新的token流
     TokenStream tok = new LowerCaseFilter(src);
+    // 追加停词过滤器
     tok = new StopFilter(tok, stopwords);
     return new TokenStreamComponents(r -> {
       src.setMaxTokenLength(StandardAnalyzer.this.maxTokenLength);
@@ -89,6 +104,12 @@ public final class StandardAnalyzer extends StopwordAnalyzerBase {
     }, tok);
   }
 
+  /**
+   * 默认情况下 会追加忽略大小写的能力
+   * @param fieldName
+   * @param in
+   * @return
+   */
   @Override
   protected TokenStream normalize(String fieldName, TokenStream in) {
     return new LowerCaseFilter(in);

@@ -96,6 +96,7 @@ import java.util.Arrays;
  * <p>Created: Feb 12, 2004 10:53:57 AM
  *
  * @since   lucene 1.4
+ * 用于结果排序
  */
 public class Sort {
 
@@ -104,19 +105,23 @@ public class Sort {
    * the same results as calling
    * {@link IndexSearcher#search(Query,int) IndexSearcher#search()}without a sort criteria,
    * only with slightly more overhead.
+   * 基于相关性排序  也就是当输入某个关键字时 会将所有涉及到的数据全部查询出来
    */
   public static final Sort RELEVANCE = new Sort();
 
   /** Represents sorting by index order. */
+  // 根据索引下标来排序
   public static final Sort INDEXORDER = new Sort(SortField.FIELD_DOC);
 
   // internal representation of the sort criteria
+  // 用于排序的相关字段  就是通过这些字段来判断相关性的
   SortField[] fields;
 
   /**
    * Sorts by computed relevance. This is the same sort criteria as calling
    * {@link IndexSearcher#search(Query,int) IndexSearcher#search()}without a sort criteria,
    * only with slightly more overhead.
+   * 默认情况下 每个sort 就是基于SCORE  进行排序的  score 也就是相关度得分
    */
   public Sort() {
     this(SortField.FIELD_SCORE);
@@ -137,6 +142,7 @@ public class Sort {
   }
 
   /** Sets the sort to the given criteria. */
+  // 设置结果排序使用的字段
   public void setSort(SortField field) {
     this.fields = new SortField[] { field };
   }
@@ -170,6 +176,7 @@ public class Sort {
    *        is a change
    * @throws IOException Can be thrown by the rewriting
    * @lucene.experimental
+   * 代表排序相关的字段被改动 重新生成一个排序结果
    */
   public Sort rewrite(IndexSearcher searcher) throws IOException {
     boolean changed = false;
@@ -214,6 +221,7 @@ public class Sort {
   }
 
   /** Returns true if the relevance score is needed to sort documents. */
+  // 检测用于排序的关键字中是否包含需要打分的
   public boolean needsScores() {
     for (SortField sortField : fields) {
       if (sortField.needsScores()) {

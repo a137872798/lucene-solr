@@ -35,12 +35,19 @@ import org.apache.lucene.util.RamUsageEstimator;
 
   Note that terms may represent more than words from text fields, but also
   things like dates, email addresses, urls, etc.  */
+// 代表一个词对象  单位比token/field要小
 
 public final class Term implements Comparable<Term>, Accountable {
   private static final long BASE_RAM_BYTES = RamUsageEstimator.shallowSizeOfInstance(Term.class) +
       RamUsageEstimator.shallowSizeOfInstance(BytesRef.class);
 
+  /**
+   * 用于标识该词
+   */
   String field;
+  /**
+   * 该词内部的数据
+   */
   BytesRef bytes;
 
   /** Constructs a Term with the given field and bytes.

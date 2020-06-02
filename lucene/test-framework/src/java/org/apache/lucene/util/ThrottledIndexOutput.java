@@ -23,15 +23,26 @@ import org.apache.lucene.store.IndexOutput;
 
 /**
  * Intentionally slow IndexOutput for testing.
+ * 这个叫 阀门输出流 应该是可以调速
  */
 public class ThrottledIndexOutput extends IndexOutput {
   public static final int DEFAULT_MIN_WRITTEN_BYTES = 1024;
+  /**
+   * 每秒允许写入的 byte数
+   */
   private final int bytesPerSecond;
+  /**
+   * 内部真正干活的对象
+   */
   private IndexOutput delegate;
+  // 代表被延迟的时间
   private long flushDelayMillis;
   private long closeDelayMillis;
   private long seekDelayMillis;
   private long pendingBytes;
+  /**
+   * pendingBytes 不断累加直到 到达该值时 会将操作延时
+   */
   private long minBytesWritten;
   private long timeElapsed;
   private final byte[] bytes = new byte[1];
@@ -69,6 +80,10 @@ public class ThrottledIndexOutput extends IndexOutput {
     this.minBytesWritten = minBytesWritten;
   }
 
+  /**
+   * 尝试关闭前 会先等待一会儿
+   * @throws IOException
+   */
   @Override
   public void close() throws IOException {
     try {
@@ -97,10 +112,16 @@ public class ThrottledIndexOutput extends IndexOutput {
     // interrupt having only written not all bytes
     delegate.writeBytes(b, offset, length);
     timeElapsed += System.nanoTime() - before;
+    // 代表此时被延迟写入的byte数据量
     pendingBytes += length;
     sleep(getDelay(false));
   }
 
+  /**
+   * 根据是否是关闭操作 获取一个基础的延迟时间
+   * @param closing
+   * @return
+   */
   protected long getDelay(boolean closing) {
     if (pendingBytes > 0 && (closing || pendingBytes > minBytesWritten)) {
       long actualBps = (timeElapsed / pendingBytes) * 1000000000l; // nano to sec

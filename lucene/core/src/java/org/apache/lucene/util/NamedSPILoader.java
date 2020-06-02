@@ -28,10 +28,18 @@ import java.util.Set;
 /**
  * Helper class for loading named SPIs from classpath (e.g. Codec, PostingsFormat).
  * @lucene.internal
+ * 可以通过名称查找SPI 实现类   原本的话是通过 Interface 来定位SPI实现类的
  */
 public final class NamedSPILoader<S extends NamedSPILoader.NamedSPI> implements Iterable<S> {
 
+  /**
+   * 存储了 name 与 SPIImpl的映射关系
+   */
   private volatile Map<String,S> services = Collections.emptyMap();
+  /**
+   * 对应原生的SPI 基于该接口查找实现类
+   * 首先要求该接口是 NamedSPI 子接口
+   */
   private final Class<S> clazz;
 
   public NamedSPILoader(Class<S> clazz) {
@@ -45,6 +53,7 @@ public final class NamedSPILoader<S extends NamedSPILoader.NamedSPI> implements 
     if (classloader == null) {
       classloader = clazzClassloader;
     }
+    // 如果不归属双亲委派模型 那么就各自加载类
     if (clazzClassloader != null && !ClassLoaderUtils.isParentClassLoader(clazzClassloader, classloader)) {
       reload(clazzClassloader);
     }
@@ -65,6 +74,7 @@ public final class NamedSPILoader<S extends NamedSPILoader.NamedSPI> implements 
   public void reload(ClassLoader classloader) {
     Objects.requireNonNull(classloader, "classloader");
     final LinkedHashMap<String,S> services = new LinkedHashMap<>(this.services);
+    // 基于原生的 JDK SPI 机制 加载类  并将类名与实例的映射关系存储到容器中
     for (final S service : ServiceLoader.load(clazz, classloader)) {
       final String name = service.getName();
       // only add the first one for each name, later services will be ignored

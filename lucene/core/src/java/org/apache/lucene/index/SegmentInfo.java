@@ -40,38 +40,66 @@ import org.apache.lucene.util.Version;
  * to the segment.
  *
  * @lucene.experimental
+ * 用于描述一个段的信息
+ * 在 lucene 中抽象层的大小关系:   index -> segment -> doc -> field -> term
+ * 该对象类似一个普通的 javaBean
  */
 public final class SegmentInfo {
   
   // TODO: remove these from this class, for now this is the representation
   /** Used by some member fields to mean not present (e.g.,
    *  norms, deletions). */
+  // 代表无规范 也 无删除
   public static final int NO = -1;          // e.g. no norms; no deletes;
 
   /** Used by some member fields to mean present (e.g.,
    *  norms, deletions). */
+  // 代表有规范 有删除
   public static final int YES = 1;          // e.g. have norms; have deletes;
 
   /** Unique segment name in the directory. */
+  // 用于标识该 segment的名称
   public final String name;
 
+  /**
+   * 该段携带多少个 doc
+   */
   private int maxDoc;         // number of docs in seg
 
   /** Where this segment resides. */
+  // 该segment 属于哪个目录
   public final Directory dir;
 
+  /**
+   * 代表该段 是否属于混合文件
+   */
   private boolean isCompoundFile;
 
   /** Id that uniquely identifies this segment. */
+  // 每个段有自己的id
   private final byte[] id;
 
+  /**
+   * 该段对象使用的编解码器
+   */
   private Codec codec;
 
+  /**
+   * 诊断容器  那是啥
+   */
   private Map<String,String> diagnostics;
-  
+
+  /**
+   * 保存了属性
+   */
   private Map<String,String> attributes;
 
+  /**
+   * 代表本段所使用的排序规则  Sort内部有多个 SortField 用于确认排序规则
+   */
   private final Sort indexSort;
+
+  // 版本号信息 用于判断是否兼容
 
   // Tracks the Lucene version this segment was created with, since 3.1. Null
   // indicates an older than 3.0 index, and it's used to detect a too old index.
@@ -267,6 +295,7 @@ public final class SegmentInfo {
   private Set<String> setFiles;
 
   /** Sets the files written for this segment. */
+  // 代表该片段对应的文件数量   应该是这样 一个doc 对应一个文件 然后一个segment 对应多个file(doc)
   public void setFiles(Collection<String> files) {
     setFiles = new HashSet<>();
     addFiles(files);
@@ -277,6 +306,7 @@ public final class SegmentInfo {
   public void addFiles(Collection<String> files) {
     checkFileNames(files);
     for (String f : files) {
+      // 将当前segment的名称拼接上文件的名称后 添加到 setFiles 中
       setFiles.add(namedForThisSegment(f));
     }
   }
@@ -304,6 +334,7 @@ public final class SegmentInfo {
   /** 
    * strips any segment name from the file, naming it with this segment
    * this is because "segment names" can change, e.g. by addIndexes(Dir)
+   * 截取掉 segments 并替换成实际的 片段名
    */
   String namedForThisSegment(String file) {
     return name + IndexFileNames.stripSegmentName(file);

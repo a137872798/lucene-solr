@@ -21,31 +21,37 @@ package org.apache.lucene.index;
  * MergeTrigger is passed to
  * {@link MergePolicy#findMerges(MergeTrigger, SegmentInfos, MergePolicy.MergeContext)} to indicate the
  * event that triggered the merge.
+ * 触发merge的方式
  */
 public enum MergeTrigger {
   /**
    * Merge was triggered by a segment flush.
+   * 当某个 seg刷盘时 触发merge
    */
   SEGMENT_FLUSH,
 
   /**
    * Merge was triggered by a full flush. Full flushes
    * can be caused by a commit, NRT reader reopen or a close call on the index writer.
+   * 全量刷盘时 才进行merge
    */
   FULL_FLUSH,
 
   /**
    * Merge has been triggered explicitly by the user.
+   * 由用户指定merge的时机
    */
   EXPLICIT,
 
   /**
    * Merge was triggered by a successfully finished merge.
+   * 当某次merge成功时会自动触发下一次merge
    */
   MERGE_FINISHED,
 
   /**
    * Merge was triggered by a closing IndexWriter.
+   * 关闭索引对象时 会触发 merge
    */
   CLOSING
 }

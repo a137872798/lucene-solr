@@ -40,6 +40,7 @@ import org.apache.lucene.util.NumericUtils;
  *   <li>{@link #newWithinQuery newWithinQuery()} matches ranges that are within the defined search range.
  *   <li>{@link #newContainsQuery newContainsQuery()} matches ranges that contain the defined search range.
  * </ul>
+ * 通过一个上限和 一个下限 找到符合条件的一组double
  */
 public class DoubleRange extends Field {
   /** stores double values so number of bytes is 8 */
@@ -58,6 +59,7 @@ public class DoubleRange extends Field {
   }
 
   /** set the field type */
+  // 维度不能超过4 ???
   private static FieldType getType(int dimensions) {
     if (dimensions > 4) {
       throw new IllegalArgumentException("DoubleRange does not support greater than 4 dimensions");
@@ -65,6 +67,7 @@ public class DoubleRange extends Field {
 
     FieldType ft = new FieldType();
     // dimensions is set as 2*dimension size (min/max per dimension)
+    // 这里 最小值和最大值 各占了4个维度
     ft.setDimensions(dimensions*2, BYTES);
     ft.freeze();
     return ft;
@@ -75,6 +78,7 @@ public class DoubleRange extends Field {
    * @param min array of min values. (accepts {@code Double.NEGATIVE_INFINITY})
    * @param max array of max values. (accepts {@code Double.POSITIVE_INFINITY})
    * @throws IllegalArgumentException if {@code min} or {@code max} is invalid
+   * 设置查询范围
    */
   public void setRangeValues(double[] min, double[] max) {
     checkArgs(min, max);
@@ -85,11 +89,13 @@ public class DoubleRange extends Field {
 
     final byte[] bytes;
     if (fieldsData == null) {
+      // 设置一个刚好能填充所有 min 和 max的数组
       bytes = new byte[BYTES*2*min.length];
       fieldsData = new BytesRef(bytes);
     } else {
       bytes = ((BytesRef)fieldsData).bytes;
     }
+    // 将最大值 最小值编码后设置到 bytes中
     verifyAndEncode(min, max, bytes);
   }
 
@@ -121,6 +127,7 @@ public class DoubleRange extends Field {
    * <p>
    * example for 4 dimensions (8 bytes per dimension value):
    * minD1 ... minD4 | maxD1 ... maxD4
+   *
    */
   static void verifyAndEncode(double[] min, double[] max, byte[] bytes) {
     for (int d=0,i=0,j=min.length*BYTES; d<min.length; ++d, i+=BYTES, j+=BYTES) {

@@ -23,6 +23,7 @@ import java.io.IOException;
  * A {@link RateLimiter rate limiting} {@link IndexOutput}
  * 
  * @lucene.internal
+ * 代表该输出流 还具备限流的功能
  */
 
 public final class RateLimitedIndexOutput extends IndexOutput {
@@ -31,6 +32,7 @@ public final class RateLimitedIndexOutput extends IndexOutput {
   private final RateLimiter rateLimiter;
 
   /** How many bytes we've written since we last called rateLimiter.pause. */
+  // 记录在被限流前写入了多少数据
   private long bytesSinceLastPause;
   
   /** Cached here not not always have to call RateLimiter#getMinPauseCheckBytes()
@@ -74,6 +76,7 @@ public final class RateLimitedIndexOutput extends IndexOutput {
   }
   
   private void checkRate() throws IOException {
+    // 超过检查值 就调用 pause() 方法  该方法会按照当前情况判断是否需要限流
     if (bytesSinceLastPause > currentMinPauseCheckBytes) {
       rateLimiter.pause(bytesSinceLastPause);
       bytesSinceLastPause = 0;

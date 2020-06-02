@@ -25,6 +25,9 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryVisitor;
 
+/**
+ * 这些query对象好像没有什么实质性的方法
+ */
 class DoubleRangeSlowRangeQuery extends BinaryRangeFieldRangeQuery {
   private final String field;
   private final double[] min;

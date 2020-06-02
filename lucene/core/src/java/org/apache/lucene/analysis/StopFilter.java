@@ -24,9 +24,13 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 
 /**
  * Removes stop words from a token stream.
+ * 将停词 从token流中移除
  */
 public class StopFilter extends FilteringTokenFilter {
 
+  /**
+   * 包含停词的 一个map   改良版的hashMap
+   */
   private final CharArraySet stopWords;
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
   
@@ -78,6 +82,7 @@ public class StopFilter extends FilteringTokenFilter {
    * @param stopWords An array of stopwords
    * @param ignoreCase If true, all words are lower cased first.  
    * @return a Set containing the words
+   * 将停词填充到容器中
    */    
   public static CharArraySet makeStopSet(String[] stopWords, boolean ignoreCase) {
     CharArraySet stopSet = new CharArraySet(stopWords.length, ignoreCase);

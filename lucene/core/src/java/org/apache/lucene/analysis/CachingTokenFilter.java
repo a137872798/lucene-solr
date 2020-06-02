@@ -33,11 +33,10 @@ import org.apache.lucene.util.AttributeSource;
  * <em>Important:</em> Like any proper TokenFilter, {@link #reset()} propagates
  * to the input, although only before {@link #incrementToken()} is called the
  * first time. Prior to  Lucene 5, it was never propagated.
+ * 该对象负责缓存 state
  */
 public final class CachingTokenFilter extends TokenFilter {
-  /**
-   * 内部维护一组状态对象 而每个state又是一个链表 每个节点上携带一个 attribute 对象
-   */
+
   private List<AttributeSource.State> cache = null;
   private Iterator<AttributeSource.State> iterator = null;
   /**
@@ -71,7 +70,7 @@ public final class CachingTokenFilter extends TokenFilter {
   /** The first time called, it'll read and cache all tokens from the input. */
   @Override
   public final boolean incrementToken() throws IOException {
-    // 创建 cache 对象 以及填充cache
+    // 创建 cache 对象 将数据读取到缓存中
     if (cache == null) {//first-time
       // fill cache lazily
       cache = new ArrayList<>(64);
@@ -79,7 +78,7 @@ public final class CachingTokenFilter extends TokenFilter {
       iterator = cache.iterator();
     }
 
-    // 当迭代器中没有数据时 无法在添加
+    // 这里直接开始处理缓存的数据
     if (!iterator.hasNext()) {
       // the cache is exhausted, return false
       return false;
@@ -101,8 +100,8 @@ public final class CachingTokenFilter extends TokenFilter {
    * @throws IOException
    */
   private void fillCache() throws IOException {
+    // 原本每调用一次 incrementToken 会读取一个token 并存到容器中 这里预先加载数据到cache中
     while (input.incrementToken()) {
-      // 每当成功往 tokenStream 插入数据时  往缓存中写入数据
       cache.add(captureState());
     }
     // capture final state

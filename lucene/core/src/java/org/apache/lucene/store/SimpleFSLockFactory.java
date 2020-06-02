@@ -56,6 +56,7 @@ import java.nio.file.attribute.FileTime;
  * <p>This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
+ * 一个简单的文件锁工厂对象
  */
 
 public final class SimpleFSLockFactory extends FSLockFactory {
@@ -73,8 +74,10 @@ public final class SimpleFSLockFactory extends FSLockFactory {
     
     // Ensure that lockDir exists and is a directory.
     // note: this will fail if lockDir is a symlink
+    // 首先确保目录存在
     Files.createDirectories(lockDir);
-    
+
+    // 转换成一个锁文件的路径
     Path lockFile = lockDir.resolve(lockName);
     
     // create the file: this will fail if it already exists
@@ -86,13 +89,23 @@ public final class SimpleFSLockFactory extends FSLockFactory {
     }
     
     // used as a best-effort check, to see if the underlying file has changed
+    // 获取锁文件的创建时间
     final FileTime creationTime = Files.readAttributes(lockFile, BasicFileAttributes.class).creationTime();
     
     return new SimpleFSLock(lockFile, creationTime);
   }
-  
+
+  /**
+   * 锁对象
+   */
   static final class SimpleFSLock extends Lock {
+    /**
+     * 锁文件的路径
+     */
     private final Path path;
+    /**
+     * 该锁文件创建的时间
+     */
     private final FileTime creationTime;
     private volatile boolean closed;
 
@@ -101,6 +114,10 @@ public final class SimpleFSLockFactory extends FSLockFactory {
       this.creationTime = creationTime;
     }
 
+    /**
+     * 检查当前锁是否可用  通过path定位到锁文件后 获取创建时间 通过对比发现时间不一致 也就是已经不是之前的文件了 （锁已经失效了）
+     * @throws IOException
+     */
     @Override
     public void ensureValid() throws IOException {
       if (closed) {
@@ -115,6 +132,10 @@ public final class SimpleFSLockFactory extends FSLockFactory {
       }
     }
 
+    /**
+     * 关闭该文件锁
+     * @throws IOException
+     */
     @Override
     public synchronized void close() throws IOException {
       if (closed) {
@@ -133,6 +154,7 @@ public final class SimpleFSLockFactory extends FSLockFactory {
         // we did a best effort check, now try to remove the file. if something goes wrong,
         // we need to make it clear to the user that the directory may still remain locked.
         try {
+          // 直接删除文件就好
           Files.delete(path);
         } catch (Throwable exc) {
           throw new LockReleaseFailedException("Unable to remove lock file. Manual intervention is recommended", exc);

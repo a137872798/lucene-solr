@@ -35,6 +35,7 @@ import org.apache.lucene.util.automaton.Automaton;
  *  TermToBytesRefAttribute}.  Between tokens we insert
  *  POS_SEP and for holes we insert HOLE.
  *
+ * 将token 流转换成自动机
  * @lucene.experimental */
 public class TokenStreamToAutomaton {
 
@@ -102,6 +103,7 @@ public class TokenStreamToAutomaton {
    *  TokenStream}, and creates the corresponding
    *  automaton where arcs are bytes (or Unicode code points 
    *  if unicodeArcs = true) from each term. */
+  // 将流对象转换为 自动机对象
   public Automaton toAutomaton(TokenStream in) throws IOException {
     final Automaton.Builder builder = new Automaton.Builder();
     builder.createState();

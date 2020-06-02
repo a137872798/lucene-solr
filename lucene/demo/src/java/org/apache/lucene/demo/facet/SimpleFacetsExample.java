@@ -58,6 +58,7 @@ public class SimpleFacetsExample {
   
   /** Build the example index. */
   private void index() throws IOException {
+    // 使用一个 给与的 目录 以及相关的配置 初始化 IndexWriter对象
     IndexWriter indexWriter = new IndexWriter(indexDir, new IndexWriterConfig(
         new WhitespaceAnalyzer()).setOpenMode(OpenMode.CREATE));
 

@@ -48,7 +48,7 @@ import org.apache.lucene.util.BitUtil;
  * short-lived indexes when disk syncs provide an additional overhead.</p>
  *
  * @lucene.experimental
- * 这是一个内存目录
+ * 这是一个内存目录  也就是数据实际上还是写入到 内存中
  */
 public final class ByteBuffersDirectory extends BaseDirectory {
   public static final BiFunction<String, ByteBuffersDataOutput, IndexInput> OUTPUT_AS_MANY_BUFFERS = 

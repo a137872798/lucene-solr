@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * will fail.
  *
  * @lucene.experimental
+ * 只允许使用一次的set  一旦内部存储了某个元素 就不允许调用set了
  */
 public final class SetOnce<T> implements Cloneable {
 

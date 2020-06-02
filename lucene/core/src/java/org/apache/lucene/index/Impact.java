@@ -18,16 +18,19 @@ package org.apache.lucene.index;
 
 /**
  * Per-document scoring factors.
+ * 影响每个文档得分的因素
  */
 public final class Impact {
 
   /**
    * Term frequency of the term in the document.
+   * 当前词出现在文档中的频率
    */
   public int freq;
 
   /**
    * Norm factor of the document.
+   * 规范因子
    */
   public long norm;
 

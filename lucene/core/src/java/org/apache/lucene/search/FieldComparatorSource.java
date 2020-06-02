@@ -21,7 +21,7 @@ package org.apache.lucene.search;
  * Provides a {@link FieldComparator} for custom field sorting.
  *
  * @lucene.experimental
- *
+ * 自定义排序源  根据不同的字段 创建对应的排序函数
  */
 public abstract class FieldComparatorSource {
 

@@ -21,6 +21,7 @@ import java.io.IOException;
 
 /**
  * A simple iterator interface for {@link BytesRef} iteration.
+ * 由一组 bytesRef组成   在lucene中 Term作为最小单位就是由 bytesRef组成的
  */
 public interface BytesRefIterator {
 

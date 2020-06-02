@@ -33,36 +33,44 @@ import org.apache.lucene.util.StringHelper;
  *  fields.
  *
  *  @lucene.experimental */
+// 代表某个片段的提交信息
 public class SegmentCommitInfo {
   
   /** The {@link SegmentInfo} that we wrap. */
+  // 内嵌的一个只读段信息   一个片段可以对应多个文件  而一个doc对应一个文件
   public final SegmentInfo info;
 
   /** Id that uniquely identifies this segment commit. */
   private byte[] id;
 
   // How many deleted docs in the segment:
+  // 记录当前段 删除了多少doc
   private int delCount;
 
   // How many soft-deleted docs in the segment that are not also hard-deleted:
+  // 软删除数量   TODO 什么是软删除
   private int softDelCount;
 
   // Generation number of the live docs file (-1 if there
-  // are no deletes yet):
+  // are no deletes yet):  代表删除的文件对应的年代    什么时候发生年代的更替???
   private long delGen;
 
   // Normally 1+delGen, unless an exception was hit on last
   // attempt to write:
+  // 下一个删除的年代 默认就是 delGen+1
   private long nextWriteDelGen;
 
   // Generation number of the FieldInfos (-1 if there are no updates)
+  // 针对字段信息的年代
   private long fieldInfosGen;
   
   // Normally 1+fieldInfosGen, unless an exception was hit on last attempt to
   // write
+  // 下一个fieldInfosGen
   private long nextWriteFieldInfosGen;
   
   // Generation number of the DocValues (-1 if there are no updates)
+  // 代表 docValue的年代
   private long docValuesGen;
   
   // Normally 1+dvGen, unless an exception was hit on last attempt to
@@ -70,13 +78,18 @@ public class SegmentCommitInfo {
   private long nextWriteDocValuesGen;
 
   // Track the per-field DocValues update files
+  // 代表哪些文件对应的 docValues发生了变化  key对应的是年代
   private final Map<Integer,Set<String>> dvUpdatesFiles = new HashMap<>();
   
   // TODO should we add .files() to FieldInfosFormat, like we have on
   // LiveDocsFormat?
   // track the fieldInfos update files
   private final Set<String> fieldInfosFiles = new HashSet<>();
-  
+
+  /**
+   * 代表当前segment下所有文件的总长度
+   * 每次删除动作完成时 更新年代同时会重置该值 以及重置id
+   */
   private volatile long sizeInBytes = -1;
 
   // NOTE: only used in-RAM by IW to track buffered deletes;
@@ -85,7 +98,7 @@ public class SegmentCommitInfo {
 
   /**
    * Sole constructor.
-   * @param info
+   * @param info   描述该片段的基础信息
    *          {@link SegmentInfo} that we wrap
    * @param delCount
    *          number of deleted documents in this segment
@@ -102,6 +115,7 @@ public class SegmentCommitInfo {
     this.delCount = delCount;
     this.softDelCount = softDelCount;
     this.delGen = delGen;
+    // 如果传入的年代值为 -1 重置为1
     this.nextWriteDelGen = delGen == -1 ? 1 : delGen + 1;
     this.fieldInfosGen = fieldInfosGen;
     this.nextWriteFieldInfosGen = fieldInfosGen == -1 ? 1 : fieldInfosGen + 1;
@@ -114,6 +128,7 @@ public class SegmentCommitInfo {
   }
   
   /** Returns the per-field DocValues updates files. */
+  // 返回更新的 docValue的文件列表
   public Map<Integer,Set<String>> getDocValuesUpdatesFiles() {
     return Collections.unmodifiableMap(dvUpdatesFiles);
   }
@@ -125,6 +140,7 @@ public class SegmentCommitInfo {
       // rename the set
       Set<String> set = new HashSet<>();
       for (String file : kv.getValue()) {
+        // 为文件追加 segment.name 后 添加到容器中
         set.add(info.namedForThisSegment(file));
       }
       this.dvUpdatesFiles.put(kv.getKey(), set);
@@ -145,9 +161,11 @@ public class SegmentCommitInfo {
   }
 
   /** Called when we succeed in writing deletes */
+  // 增加年代   每个删除动作结束后 年代都会加1 有点类似版本号的概念
   void advanceDelGen() {
     delGen = nextWriteDelGen;
     nextWriteDelGen = delGen+1;
+    // 当更新年代后 重置 id
     generationAdvanced();
   }
 
@@ -199,7 +217,9 @@ public class SegmentCommitInfo {
     nextWriteDocValuesGen = docValuesGen + 1;
     generationAdvanced();
   }
-  
+
+  // 增加对应的年代值
+
   /**
    * Called if there was an exception while writing a new generation of
    * DocValues, so that we don't try to write to the same file more than once.
@@ -220,6 +240,7 @@ public class SegmentCommitInfo {
   
   /** Returns total size in bytes of all files for this
    *  segment. */
+  // 返回当前segment下所有文件的总长度
   public long sizeInBytes() throws IOException {
     if (sizeInBytes == -1) {
       long sum = 0;
@@ -233,6 +254,7 @@ public class SegmentCommitInfo {
   }
 
   /** Returns all files in use by this segment. */
+  // 返回当前segment 下所有的文件
   public Collection<String> files() throws IOException {
     // Start from the wrapped info's files:
     Collection<String> files = new HashSet<>(info.files());
@@ -241,14 +263,17 @@ public class SegmentCommitInfo {
     // updates) and then maybe even be able to remove LiveDocsFormat.files().
     
     // Must separately add any live docs files:
+    // TODO 只获取 live的doc???
     info.getCodec().liveDocsFormat().files(this, files);
-    
+
+    // 将相关文件存入容器后返回
     // must separately add any field updates files
     for (Set<String> updatefiles : dvUpdatesFiles.values()) {
       files.addAll(updatefiles);
     }
     
     // must separately add fieldInfos files
+    // fieldInfosFiles 还不明白是干嘛的
     files.addAll(fieldInfosFiles);
     
     return files;

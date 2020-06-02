@@ -38,6 +38,7 @@ import java.io.Reader;
  * {@link org.apache.lucene.analysis Analysis package documentation}.
  */
 // the way java.io.FilterReader should work!
+// 开放钩子 便于子类拓展
 public abstract class CharFilter extends Reader {
   /** 
    * The underlying character-input stream. 

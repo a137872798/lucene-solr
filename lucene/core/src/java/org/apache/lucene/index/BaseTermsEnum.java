@@ -33,6 +33,7 @@ import org.apache.lucene.util.BytesRef;
  *
  * In some cases, the default implementation may be slow and consume huge memory, so subclass SHOULD have its own
  * implementation if possible.
+ * 一个基础的 term迭代器模板
  */
 public abstract class BaseTermsEnum extends TermsEnum {
 

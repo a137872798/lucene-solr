@@ -65,7 +65,7 @@ public class AttributeSource {
     }
 
     // These two maps must always be in sync!!!
-    // So they are private, final and read-only from the outside (read-only iterators)
+    // So they are private, final and read-only from the outside (read-only iterators)  该source相关的所有attrImpl
     private final Map<Class<? extends Attribute>, AttributeImpl> attributes;
     private final Map<Class<? extends AttributeImpl>, AttributeImpl> attributeImpls;
     // 数组  然后内部每个state 对象都是一个链表
@@ -228,6 +228,7 @@ public class AttributeSource {
      * This method first checks if an instance of that class is
      * already in this AttributeSource and returns it. Otherwise a
      * new instance is created, added to this AttributeSource and returned.
+     * 根据attr类型 获取实现类
      */
     public final <T extends Attribute> T addAttribute(Class<T> attClass) {
         AttributeImpl attImpl = attributes.get(attClass);

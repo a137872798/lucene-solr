@@ -29,7 +29,7 @@ import java.util.HashSet;
  *
  * @see LockFactory
  */
-
+// 基于synchronize的一个内存锁
 public final class SingleInstanceLockFactory extends LockFactory {
 
   final HashSet<String> locks = new HashSet<>();
