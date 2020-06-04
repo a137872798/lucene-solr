@@ -25,8 +25,12 @@ import org.apache.lucene.util.BytesRef;
 /** Iterates through the postings.
  *  NOTE: you must first call {@link #nextDoc} before using
  *  any of the per-doc methods. */
+// 该对象拓展于 一个 docId迭代器
+// DocIdSetIterator 的一般逻辑是在每次迭代器时 增加docId  并且有一个上界  当达到上界时 返回一个 Integer.MAX_VALUE
 public abstract class PostingsEnum extends DocIdSetIterator {
-  
+
+  // 这里是对应 positing 需要展示的数据
+
   /**
    * Flag to pass to {@link TermsEnum#postings(PostingsEnum, int)} if you don't
    * require per-document postings in the returned enum.
@@ -57,6 +61,7 @@ public abstract class PostingsEnum extends DocIdSetIterator {
 
   /**
    * Returns true if the given feature is requested in the flags, false otherwise.
+   * 判断当前flag 是否已经包含了所需的特性
    */
   public static boolean featureRequested(int flags, short feature) {
     return (flags & feature) == feature;

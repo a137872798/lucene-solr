@@ -22,17 +22,20 @@ import java.util.List;
 /**
  * A struct like class that represents a hierarchical relationship between
  * {@link IndexReader} instances.
- * 代表读取索引时的一个上下文对象   (具有分层的概念)
+ * 每个reader 对象都会关联一个 context
  */
 public abstract class IndexReaderContext {
   /** The reader context for this reader's immediate parent, or null if none */
-  // 对应该节点的父级 如果为null 代表本节点就是 top
+  // 父级reader 对应的上下文
   public final CompositeReaderContext parent;
   /** <code>true</code> if this context struct represents the top level reader within the hierarchical context */
+  // 当前节点是否处在最高层
   public final boolean isTopLevel;
   /** the doc base for this reader in the parent, <code>0</code> if parent is null */
+  // 对应父节点下 doc的绝对偏移量
   public final int docBaseInParent;
   /** the ord for this reader in the parent, <code>0</code> if parent is null */
+  // 代表当前上下文绑定的节点 对应 子节点数组中的下标
   public final int ordInParent;
 
   // An object that uniquely identifies this context without referencing
@@ -41,7 +44,7 @@ public abstract class IndexReaderContext {
   final Object identity = new Object();
 
   IndexReaderContext(CompositeReaderContext parent, int ordInParent, int docBaseInParent) {
-    // 要求上下文 必须是 Composite或者 Leaf
+    // 要求上下文 必须是 Composite或者 Leaf  不支持用户自定义的context
     if (!(this instanceof CompositeReaderContext || this instanceof LeafReaderContext))
       throw new Error("This class should never be extended by custom code!");
     this.parent = parent;

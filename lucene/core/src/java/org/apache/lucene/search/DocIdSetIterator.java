@@ -25,7 +25,7 @@ import java.io.IOException;
  * {@link #NO_MORE_DOCS} is set to {@value #NO_MORE_DOCS} in order to be used as
  * a sentinel object. Implementations of this class are expected to consider
  * {@link Integer#MAX_VALUE} as an invalid value.
- * 用于存储 doc的id 容器
+ * 该对象负责迭代 docId
  */
 public abstract class DocIdSetIterator {
   
@@ -65,7 +65,8 @@ public abstract class DocIdSetIterator {
   }
 
   /** A {@link DocIdSetIterator} that matches all documents up to
-   *  {@code maxDoc - 1}. */  // 迭代方式就是不断递增id
+   *  {@code maxDoc - 1}. */
+  // 注意该对象是用于 迭代 docId 的
   public static final DocIdSetIterator all(int maxDoc) {
     return new DocIdSetIterator() {
       int doc = -1;
@@ -74,6 +75,8 @@ public abstract class DocIdSetIterator {
       public int docID() {
         return doc;
       }
+
+      // 每次 docId 自增1
 
       @Override
       public int nextDoc() throws IOException {
@@ -98,7 +101,7 @@ public abstract class DocIdSetIterator {
 
   /** A {@link DocIdSetIterator} that matches a range documents from
    *  minDocID (inclusive) to maxDocID (exclusive). */
-  // 代表一组 doc  这里通过传入 minDocID 和maxDocID 找到范围内的数据
+  // 传入一个 docId的范围  每次迭代 增加docId 直到 maxDoc
   public static final DocIdSetIterator range(int minDoc, int maxDoc) {
     if (minDoc >= maxDoc) {
         throw new IllegalArgumentException("minDoc must be < maxDoc but got minDoc=" + minDoc + " maxDoc=" + maxDoc);
@@ -121,8 +124,10 @@ public abstract class DocIdSetIterator {
 
       @Override
       public int advance(int target) throws IOException {
+        // 不能低于最小值
         if (target < minDoc) {
             doc = minDoc;
+        // 超过最大值时 返回特殊枚举
         } else if (target >= maxDoc) {
             doc = NO_MORE_DOCS;
         } else {

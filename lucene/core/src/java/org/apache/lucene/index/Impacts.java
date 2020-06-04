@@ -39,7 +39,7 @@ public abstract class Impacts {
    * Return the maximum inclusive doc ID until which the list of impacts
    * returned by {@link #getImpacts(int)} is valid. This is a non-decreasing
    * function of {@code level}.
-   * 返回最大的id
+   * 该影响对象 最大影响到哪个 doc
    */
   public abstract int getDocIdUpTo(int level);
 

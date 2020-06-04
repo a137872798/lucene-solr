@@ -31,14 +31,22 @@ import org.apache.lucene.search.DocIdSetIterator;
  *     the number of one bits on the right of the <code>i-th</code> bit.</li></ul>
  *
  * @lucene.internal
+ * 一个稀疏的 bitSet
  */
 public class SparseFixedBitSet extends BitSet implements Bits, Accountable {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(SparseFixedBitSet.class);
   private static final long SINGLE_ELEMENT_ARRAY_BYTES_USED = RamUsageEstimator.sizeOf(new long[1]);
+  // 4095
   private static final int MASK_4096 = (1 << 12) - 1;
 
+  /**
+   * 将长度换算成  block的数量
+   * @param length
+   * @return
+   */
   private static int blockCount(int length) {
+    // 默认情况下 每个 block的大小为 4096
     int blockCount = length >>> 12;
     if ((blockCount << 12) < length) {
       ++blockCount;
@@ -47,19 +55,34 @@ public class SparseFixedBitSet extends BitSet implements Bits, Accountable {
     return blockCount;
   }
 
+  /**
+   * 该对象内部专门用于存放索引    比如要为某个int 对应bit 设置值 首先 / 4096 找到该下标对应的值
+   */
   final long[] indices;
+  /**
+   * 第一维 对应block的下标 第二维对应每个block下面存放的数据
+   * 既然每个block 以4096为单位 也就是每个long 实际能存储 4096位???   这里通过一个额外的映射数组实现 (long 原本只能表示64位)
+   */
   final long[][] bits;
+  /**
+   * 应该是记录总计有多少bit
+   */
   final int length;
   int nonZeroLongCount;
+  /**
+   * 总计消耗的空间
+   */
   long ramBytesUsed;
 
   /** Create a {@link SparseFixedBitSet} that can contain bits between
    *  <code>0</code> included and <code>length</code> excluded. */
+  // 通过一个  maxDoc 进行初始化    对应docId的最大值
   public SparseFixedBitSet(int length) {
     if (length < 1) {
       throw new IllegalArgumentException("length needs to be >= 1");
     }
     this.length = length;
+    // 预估占用多少个 block   一个block默认占用 4096  也就是12位
     final int blockCount = blockCount(length);
     indices = new long[blockCount];
     bits = new long[blockCount][];
@@ -73,37 +96,60 @@ public class SparseFixedBitSet extends BitSet implements Bits, Accountable {
     return length;
   }
 
+  /**
+   * 进行合法性校验
+   * @param index
+   * @return
+   */
   private boolean consistent(int index) {
     assert index >= 0 && index < length : "index=" + index + ",length=" + length;
     return true;
   }
 
+  /**
+   * 返回set 内已经设置的数量
+   * @return
+   */
   @Override
   public int cardinality() {
     int cardinality = 0;
     for (long[] bitArray : bits) {
+      // 首先对应下标的 long[] 已经被创建
       if (bitArray != null) {
         for (long bits : bitArray) {
+          // 计算当前值 占用多少位  比如   1 占用1位  2占用一位   3 占用2位   Long的最大值就占用63位
           cardinality += Long.bitCount(bits);
         }
       }
     }
+    // 计算总计占用了多少 bit
     return cardinality;
   }
 
+  /**
+   * 获取一个近似值  可能精确度会下降
+   * @return
+   */
   @Override
   public int approximateCardinality() {
     // we are assuming that bits are uniformly set and use the linear counting
     // algorithm to estimate the number of bits that are set based on the number
     // of longs that are different from zero
+    // 去尾法 获取一个大致的 long 值
     final int totalLongs = (length + 63) >>> 6; // total number of longs in the space
     assert totalLongs >= nonZeroLongCount;
+    // 除开zeroLong 剩余的都假设沾满 就可以计算出总共占用的bit
     final int zeroLongs = totalLongs - nonZeroLongCount; // number of longs that are zeros
     // No need to guard against division by zero, it will return +Infinity and things will work as expected
     final long estimate = Math.round(totalLongs * Math.log((double) totalLongs / zeroLongs));
     return (int) Math.min(length, estimate);
   }
 
+  /**
+   * 判断下标对应的 bit 是否被设置
+   * @param i
+   * @return
+   */
   @Override
   public boolean get(int i) {
     assert consistent(i);
@@ -133,21 +179,43 @@ public class SparseFixedBitSet extends BitSet implements Bits, Accountable {
 
   /**
    * Set the bit at index <code>i</code>.
+   * @param i 该值代表设置第几位   正常情况下 / 64 得到一个long的下标 然后修改long的值就可以了 (long|=1L<<i)
+   *          但是这里通过额外的映射实现一个位图存放4096个数据
+   * 设置指定下标的值
    */
   public void set(int i) {
     assert consistent(i);
+    // 通过 / 4096 计算block的下标    4096 = 64*64
     final int i4096 = i >>> 12;
+    // 首先通过 / 4096 找到对应的索引
     final long index = indices[i4096];
+    // i/64 后 就对应一个正常的位图能够存放的数量 (64个)
+    // 这么考虑吧  要实现一个位图存储 4096位数据 实际上就是需要一个存储64位的视图 * 一个存储64位的视图  也就是先通过一个64位视图定位到某个下标后 在那个值上还能存储64位
+    // 每当index多存储一位 另一个值又能多存储64位的值
     final int i64 = i >>> 6;
+    // 代表64位数中出现了冲突
     if ((index & (1L << i64)) != 0) {
       // in that case the sub 64-bits block we are interested in already exists,
       // we just need to set a bit in an existing long: the number of ones on
       // the right of i64 gives us the index of the long we need to update
+      // 除了第一个值触发 insertBlock  其余63个值 都进入该分支
+      // 既然第一维的64位中出现了冲突 那么接下去就要在第二维的long值中想办法占一位
+      // 这里将 index 转换为一个 最大值为 64的下标      这样二维数组 子数组 还是会最多占用64个long啊 这样优化有什么意义吗
+      //
+
+      /**
+       * 比如int值是  1000 (1000/64 = 15) 计算出的index为15 会映射到二维数组的某个小数组中
+       * 这时又出现了一个int值 是800 800/64=12 index为12 这样才会在二维数组中创建第二个子数组
+       * 节省内存   如果一个普通的
+       *
+       */
       bits[i4096][Long.bitCount(index & ((1L << i64) - 1))] |= 1L << i; // shifts are mod 64 in java
+    // 代表还没有设置任何block
     } else if (index == 0) {
       // if the index is 0, it means that we just found a block of 4096 bits
       // that has no bit that is set yet. So let's initialize a new block:
       insertBlock(i4096, i64, i);
+    // 代表4096个数中 下一批64  (总计64*64  除了第一个数以外  64个数中 63个进入下面的分支  1个进入       bits[i4096][Long.bitCount(index & ((1L << i64) - 1))] |= 1L << i; )
     } else {
       // in that case we found a block of 4096 bits that has some values, but
       // the sub-block of 64 bits that we are interested in has no value yet,
@@ -156,31 +224,59 @@ public class SparseFixedBitSet extends BitSet implements Bits, Accountable {
     }
   }
 
+  /**
+   * 初始化一个 block
+   * @param i4096  目标偏移量/ 4096的结果   右移12位
+   * @param i64  目标偏移量/ 64的结果    右移6位
+   * @param i   代表打算在第几位存入数据  正常的视图 只能存放 64个数据  该对象可以存放4096个数据
+   */
   private void insertBlock(int i4096, int i64, int i) {
+    // 这是首次初始化设置的值
+    // i/64 后 就对应一个正常的位图能够存放的数量 (64个)   也就可以用一个long来表示
+    // 也就代表着 每64个数 对应index 的同一个位
     indices[i4096] = 1L << i64; // shifts are mod 64 in java
     assert bits[i4096] == null;
+    // 这里实际上存储多少并不重要  只要能占一位就可以了 这样就对应64*64中的一种情况
     bits[i4096] = new long[] { 1L << i }; // shifts are mod 64 in java
     ++nonZeroLongCount;
+    // 增加占用的内存
     ramBytesUsed += SINGLE_ELEMENT_ARRAY_BYTES_USED;
   }
 
+  /**
+   * 代表往位图对象中插入一个新值
+   * @param i4096
+   * @param i64
+   * @param i
+   * @param index
+   */
   private void insertLong(int i4096, int i64, int i, long index) {
+    // index 就是 indices[i4096]   这里是在原来的映射上多占用了一位   也就是每经过64数  会往该值增加一位   (该值刚好是64位) 这样正好对应 4096
     indices[i4096] |= 1L << i64; // shifts are mod 64 in java
     // we count the number of bits that are set on the right of i64
     // this gives us the index at which to perform the insertion
+    // 未增加位数前 一共占用几位    比如说修改后是3位 原来占用2位 那么对应的二维数组子数组内部包含2个元素 就需要扩容到3个元素
     final int o = Long.bitCount(index & ((1L << i64) - 1));
+    // 获取原来的数组
     final long[] bitArray = bits[i4096];
+    // 如果数组中最后一个long值为0  这种情况是存在的 因为每次扩容不是+1 而是增加50%  那么就不需要进行扩容了
     if (bitArray[bitArray.length - 1] == 0) {
       // since we only store non-zero longs, if the last value is 0, it means
       // that we alreay have extra space, make use of it
+      // 将o的数据拷贝到 o+1
       System.arraycopy(bitArray, o, bitArray, o + 1, bitArray.length - o - 1);
+      // 原来数组的值重置了
       bitArray[o] = 1L << i;
     } else {
       // we don't have extra space so we need to resize to insert the new long
+      // 需要对原数组进行扩容  它的扩容每次增加 50% 而不是加1
       final int newSize = oversize(bitArray.length + 1);
       final long[] newBitArray = new long[newSize];
+      // 将原来的数据拷贝到新数组
       System.arraycopy(bitArray, 0, newBitArray, 0, o);
+      // 同样修改之前位置对应的数据
       newBitArray[o] = 1L << i;
+      // 将o的值 处理后设置到 o+1 中
       System.arraycopy(bitArray, o, newBitArray, o + 1, bitArray.length - o);
       bits[i4096] = newBitArray;
       ramBytesUsed += RamUsageEstimator.sizeOf(newBitArray) - RamUsageEstimator.sizeOf(bitArray);

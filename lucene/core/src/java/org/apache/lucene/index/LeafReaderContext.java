@@ -22,24 +22,28 @@ import java.util.List;
 
 /**
  * {@link IndexReaderContext} for {@link LeafReader} instances.
- * 代表一个基于 LeafReader的上下文对象
+ * 一个叶子节点对应的上下文对象
  */
 public final class LeafReaderContext extends IndexReaderContext {
   /** The reader's ord in the top-level's leaves array */
-  // 记录本节点的顺序
+  // 本节点在所处子节点数组的位置
   public final int ord;
   /** The reader's absolute doc base */
-  // 对于doc的绝对顺序
+  // 在 BaseCompositeReader 中 子节点数组中每个节点对应的doc 都是需要累加前一个子节点节点的doc数量  也就是 absolute doc 数量
   public final int docBase;
-  
+
+  /**
+   * 关联的 reader节点
+   */
   private final LeafReader reader;
   /**
-   * 该对象也可以有一组叶子节点
+   * 当前节点是顶层节点时 内部存放自身 否则为null
    */
   private final List<LeafReaderContext> leaves;
   
   /**
-   * Creates a new {@link LeafReaderContext} 
+   * Creates a new {@link LeafReaderContext}
+   * @param parent 声明本上下文的父节点
    */    
   LeafReaderContext(CompositeReaderContext parent, LeafReader reader,
                     int ord, int docBase, int leafOrd, int leafDocBase) {
@@ -49,11 +53,19 @@ public final class LeafReaderContext extends IndexReaderContext {
     this.reader = reader;
     this.leaves = isTopLevel ? Collections.singletonList(this) : null;
   }
-  
+
+  /**
+   * 默认情况下 认为传入的是一个顶层节点
+   * @param leafReader
+   */
   LeafReaderContext(LeafReader leafReader) {
     this(null, leafReader, 0, 0, 0, 0);
   }
-  
+
+  /**
+   * 只有当前节点是顶层节点时才允许调用该方法
+   * @return
+   */
   @Override
   public List<LeafReaderContext> leaves() {
     if (!isTopLevel) {

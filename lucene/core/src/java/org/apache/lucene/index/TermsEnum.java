@@ -40,7 +40,7 @@ import org.apache.lucene.util.BytesRefIterator;
  * of the <code>seek</code> methods.
  *
  * @lucene.experimental */
-// 该对象提供api可以遍历内部的term
+// 该对象提供api可以遍历内部的term   每个term 可以看作一个简单的 byte[]
 public abstract class TermsEnum implements BytesRefIterator {
 
   /** Sole constructor. (For invocation by subclass 
@@ -49,11 +49,11 @@ public abstract class TermsEnum implements BytesRefIterator {
   }
 
   /** Returns the related attributes. */
-  // 每组词对象 还挂载了一个 attr对象  attr本身也是链表结构
+  // 该对象为什么会绑定一个 attr ???
   public abstract AttributeSource attributes();
   
   /** Represents returned result from {@link #seekCeil}. */
-  // 代表在遍历过程中的状态  是读取到末尾了 还是未找到/找到
+  // 代表在遍历过程中的状态  是读取到末尾了/未找到/找到
   public enum SeekStatus {
     /** The term was not found, and the end of iteration was hit. */
     END,
@@ -70,7 +70,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    * 
    *
    * @return true if the term is found; return false if the enum is unpositioned.
-   * 从一组term中找到与text匹配的词
+   * 判断这组 term中是否有与 传入的 byteRef完全匹配的term
    */
   public abstract boolean seekExact(BytesRef text) throws IOException;
 
@@ -80,7 +80,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    *  term was found, or EOF was hit.  The target term may
    *  be before or after the current term.  If this returns
    *  SeekStatus.END, the enum is unpositioned. */
-  // 返回text的下一个词
+  // 查找 对应的数据  并返回一个查询结果
   public abstract SeekStatus seekCeil(BytesRef text) throws IOException;
 
   /** Seeks to the specified term by ordinal (position) as
@@ -110,12 +110,13 @@ public abstract class TermsEnum implements BytesRefIterator {
    * maintained separately if this method is used.
    * @param term the term the TermState corresponds to
    * @param state the {@link TermState}
+   *
    * */
   public abstract void seekExact(BytesRef term, TermState state) throws IOException;
 
   /** Returns current term. Do not call this when the enum
    *  is unpositioned. */
-  // 返回当前的 term
+  // 返回当前的term
   public abstract BytesRef term() throws IOException;
 
   /** Returns ordinal position for current term.  This is an
@@ -136,7 +137,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    *  doc that has this term). Note that, like
    *  other term measures, this measure does not take
    *  deleted documents into account. */
-  // 计算每个文档中该词出现的次数总和
+  // 计算下面所有词 出现的频率总和
   public abstract long totalTermFreq() throws IOException;
 
   /** Get {@link PostingsEnum} for the current term.  Do not
@@ -153,6 +154,7 @@ public abstract class TermsEnum implements BytesRefIterator {
    *
    * @param reuse pass a prior PostingsEnum for possible reuse 
    * @see #postings(PostingsEnum, int)
+   * 基于当前指向的 term 生成一个 position的迭代器
    */
   public final PostingsEnum postings(PostingsEnum reuse) throws IOException {
     return postings(reuse, PostingsEnum.FREQS);
@@ -169,13 +171,14 @@ public abstract class TermsEnum implements BytesRefIterator {
    * @param reuse pass a prior PostingsEnum for possible reuse
    * @param flags specifies which optional per-document values
    *        you require; see {@link PostingsEnum#FREQS}
-   *              获取当前词的一个描述信息  有关频率 偏移量 负荷等
+   *              首先 TermsEnum 是 term 的迭代器对象 然后每个 term 应该是包含了一组 position 通过该api 可以返回该term 对应的position迭代器 用于获取position 的信息
    */
   public abstract PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException;
 
   /**
    * Return a {@link ImpactsEnum}.
    * @see #postings(PostingsEnum, int)
+   * 什么是影响因子的迭代器 ???
    */
   public abstract ImpactsEnum impacts(int flags) throws IOException;
   

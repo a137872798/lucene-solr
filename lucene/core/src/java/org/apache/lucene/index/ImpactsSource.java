@@ -23,6 +23,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 /**
  * Source of {@link Impacts}.
  * @lucene.internal
+ *  一个产生 impacts 的数据源
  */
 public interface ImpactsSource {
 
@@ -48,6 +49,7 @@ public interface ImpactsSource {
    * {@link #advanceShallow(int)} has never been called.
    * NOTE: advancing this iterator may invalidate the returned impacts, so they
    * should not be used after the iterator has been advanced.
+   * 用于提供一组 impact     (impact本身包含一个频率属性 和一个规范属性  用于计算某个词在doc的相关度)
    */
   Impacts getImpacts() throws IOException;
 

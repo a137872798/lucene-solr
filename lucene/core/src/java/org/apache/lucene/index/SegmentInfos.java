@@ -1127,11 +1127,16 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
         // deleted while we are merging, in which case it should
         // be the case that the new segment is also all deleted,
         // we insert it at the beginning if it should not be dropped:
+        // 没有发生insert的情况 选择在头部增加一个 merge.info
         if (!inserted && !dropSegment) {
             segments.add(0, merge.info);
         }
     }
 
+    /**
+     * 创建  segmentCommitInfo的副本
+     * @return
+     */
     List<SegmentCommitInfo> createBackupSegmentInfos() {
         final List<SegmentCommitInfo> list = new ArrayList<>(size());
         for (final SegmentCommitInfo info : this) {
@@ -1141,6 +1146,10 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
         return list;
     }
 
+    /**
+     * 将内部的commit信息 替换成入参
+     * @param infos
+     */
     void rollbackSegmentInfos(List<SegmentCommitInfo> infos) {
         this.clear();
         this.addAll(infos);

@@ -41,13 +41,19 @@ import org.apache.lucene.util.UnicodeUtil;
  * dead states but is not necessarily minimal.
  *
  * @lucene.experimental
+ * 已编译的自动机
  */
 public class CompiledAutomaton implements Accountable {
+
+  /**
+   * 计算该对象所占用的 内存大小
+   */
   private static final long BASE_RAM_BYTES = RamUsageEstimator.shallowSizeOfInstance(CompiledAutomaton.class);
 
   /**
    * Automata are compiled into different internal forms for the
    * most efficient execution depending upon the language they accept.
+   * 自动机的状态
    */
   public enum AUTOMATON_TYPE {
     /** Automaton that accepts no strings. */
@@ -61,10 +67,12 @@ public class CompiledAutomaton implements Accountable {
   };
 
   /** If simplify is true this will be the "simplified" type; else, this is NORMAL */
+  // 当前自动机的状态
   public final AUTOMATON_TYPE type;
 
   /** 
    * For {@link AUTOMATON_TYPE#SINGLE} this is the singleton term.
+   * 当前词的信息
    */
   public final BytesRef term;
 

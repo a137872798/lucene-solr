@@ -41,12 +41,15 @@ import org.apache.lucene.util.Bits;
  synchronization, you should <b>not</b> synchronize on the
  <code>IndexReader</code> instance; use your own
  (non-Lucene) objects instead.
- 代表一个叶子节点
+ 代表一个叶子节点   在lucene中 reader分为2种类型 一种是 leafReader 一种是 CompositeReader
+ CompositeReader 相当于树枝节点 方法调用都是转发到下面所有的叶子节点
+ 实际干活的就是叶子节点
 */
 public abstract class LeafReader extends IndexReader {
 
   /**
    * 每个reader对象会绑定一个context
+   * 使用单个reader 进行初始化的时候 每个context会认为自己是top节点
    */
   private final LeafReaderContext readerContext = new LeafReaderContext(this);
 
@@ -85,16 +88,19 @@ public abstract class LeafReader extends IndexReader {
    */
   @Override
   public final int docFreq(Term term) throws IOException {
-    // 定位到该词
+    // 通过 term的标识  定位到一组词对象   (内部的数量就代表了 出现的次数)
     final Terms terms = terms(term.field());
+    // 代表没有找到term 返回0
     if (terms == null) {
       return 0;
     }
+    //
     final TermsEnum termsEnum = terms.iterator();
-    // 返回该词在文档中出现的频率
+    // 精准匹配内容后 返回出现的频率
     if (termsEnum.seekExact(term.bytes())) {
       return termsEnum.docFreq();
     } else {
+      // 精准匹配失败 返回0
       return 0;
     }
   }

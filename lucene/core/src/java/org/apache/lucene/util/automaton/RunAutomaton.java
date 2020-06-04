@@ -39,12 +39,22 @@ import org.apache.lucene.util.RamUsageEstimator;
  * Finite-state automaton with fast run operation.  The initial state is always 0.
  * 
  * @lucene.experimental
+ * 具有快速运行操作的有限状态自动机   初始状态总是0
  */
 public abstract class RunAutomaton implements Accountable {
   private static final long BASE_RAM_BYTES = RamUsageEstimator.shallowSizeOfInstance(RunAutomaton.class);
 
+  /**
+   * 自动机对象
+   */
   final Automaton automaton;
+  /**
+   * 字母的长度
+   */
   final int alphabetSize;
+  /**
+   * 总长度
+   */
   final int size;
   final FixedBitSet accept;
   final int[] transitions; // delta(state,c) = transitions[state*points.length +

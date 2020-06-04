@@ -53,6 +53,7 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
    * @param in the wrapped MergePolicy
    */
   public SoftDeletesRetentionMergePolicy(String field, Supplier<Query> retentionQuerySupplier, MergePolicy in) {
+    // 这里是 lucene中唯一的 OneMerge实现类
     super(in, toWrap -> new MergePolicy.OneMerge(toWrap.segments) {
       @Override
       public CodecReader wrapForMerge(CodecReader reader) throws IOException {

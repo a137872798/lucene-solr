@@ -35,13 +35,15 @@ import org.apache.lucene.util.Accountables;
 
 /**
  * LeafReader implemented by codec APIs.
+ * 该对象用于统筹基于各种格式读取数据的 reader 并维护一个 fieldInfo 列表 只要查询的field能够在fieldInfo中找到 配合指定的reader  实现功能
  */
 public abstract class CodecReader extends LeafReader implements Accountable {
   
   /** Sole constructor. (For invocation by subclass 
    * constructors, typically implicit.) */
   protected CodecReader() {}
-  
+
+  // 根据需要查询的数据  返回对应格式的reader
   /** 
    * Expert: retrieve thread-private StoredFieldsReader
    * @lucene.internal 
@@ -77,13 +79,25 @@ public abstract class CodecReader extends LeafReader implements Accountable {
    * @lucene.internal
    */
   public abstract PointsReader getPointsReader();
-  
+
+  /**
+   * 先通过 id 定位到reader对象 之后使用 visitor 读取doc内部的数据
+   * @param docID
+   * @param visitor
+   * @throws IOException
+   */
   @Override
   public final void document(int docID, StoredFieldVisitor visitor) throws IOException {
     checkBounds(docID);
     getFieldsReader().visitDocument(docID, visitor);
   }
-  
+
+  /**
+   * 套路是类似的  都是先获取满足api功能的对应reader 之后进行转发
+   * @param docID
+   * @return
+   * @throws IOException
+   */
   @Override
   public final Fields getTermVectors(int docID) throws IOException {
     TermVectorsReader termVectorsReader = getTermVectorsReader();
@@ -93,16 +107,27 @@ public abstract class CodecReader extends LeafReader implements Accountable {
     checkBounds(docID);
     return termVectorsReader.get(docID);
   }
-  
+
+  /**
+   * 确保传入的 docId 不能超过最大的 docId
+   * @param docID
+   */
   private void checkBounds(int docID) {
     Objects.checkIndex(docID, maxDoc());
   }
 
+  /**
+   * 通过传入 field的描述信息 返回一组词
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public final Terms terms(String field) throws IOException {
     //ensureOpen(); no; getPostingsReader calls this
     // We could check the FieldInfo IndexOptions but there's no point since
     //   PostingsReader will simply return null for fields that don't exist or that have no terms index.
+    // 基于指针reader读取
     return getPostingsReader().terms(field);
   }
 
@@ -110,11 +135,13 @@ public abstract class CodecReader extends LeafReader implements Accountable {
   // null if the field does not exist, or not indexed as the requested
   // DovDocValuesType.
   private FieldInfo getDVField(String field, DocValuesType type) {
+    // 找到该字段的详细信息
     FieldInfo fi = getFieldInfos().fieldInfo(field);
     if (fi == null) {
       // Field does not exist
       return null;
     }
+    // 判断数值类型是否匹配  匹配的情况下才返回 fieldInfo
     if (fi.getDocValuesType() == DocValuesType.NONE) {
       // Field was not indexed with doc values
       return null;
@@ -127,6 +154,12 @@ public abstract class CodecReader extends LeafReader implements Accountable {
     return fi;
   }
 
+  /**
+   * 读取某个 field的数值
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public final NumericDocValues getNumericDocValues(String field) throws IOException {
     ensureOpen();
@@ -134,6 +167,7 @@ public abstract class CodecReader extends LeafReader implements Accountable {
     if (fi == null) {
       return null;
     }
+    // 通过对应的reader 对象 获取目标field的值
     return getDocValuesReader().getNumeric(fi);
   }
 
