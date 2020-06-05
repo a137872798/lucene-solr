@@ -35,7 +35,8 @@ public abstract class BitSet implements Bits, Accountable {
   public static BitSet of(DocIdSetIterator it, int maxDoc) throws IOException {
     // 该迭代器内 总计有多少 docId
     final long cost = it.cost();
-    // 以128作为分割线
+    // 以128作为分割线    如果maxDoc 本身比较大  那么创建的位图数组就会很大  这有可能会导致大量内存被浪费
+    // lucene 创建了一个压缩的位图对象 先将doc本身映射到一个小数组上 在这基础上 在设置占位符  这样实际创建的数组大小就变成了原来的 1/64
     final int threshold = maxDoc >>> 7;
     BitSet set;
     // docId 区间在 128之内的创建一个稀疏的 bitSet

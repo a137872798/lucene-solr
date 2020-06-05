@@ -38,6 +38,7 @@ public final class BitUtil {
 
   /** Returns the popcount or cardinality of the two sets after an intersection.
    *  Neither array is modified. */
+  // 返回2个位图的交集
   public static long pop_intersect(long[] arr1, long[] arr2, int wordOffset, int numWords) {
     long popCount = 0;
     for (int i = wordOffset, end = wordOffset + numWords; i < end; ++i) {

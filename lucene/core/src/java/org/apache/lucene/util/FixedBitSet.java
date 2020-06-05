@@ -30,13 +30,24 @@ import org.apache.lucene.search.DocIdSetIterator;
  * {@link LongBitSet}.
  * 
  * @lucene.internal
+ * 一个最基础的位图对象  不考虑内存开销
+ * (如果一开始maxDoc非常大 那么创建的数组也会很大 而实际上占用的位少 那么就造成大量的内存浪费)
  */
 public final class FixedBitSet extends BitSet implements Bits, Accountable {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FixedBitSet.class);
 
-  private final long[] bits; // Array of longs holding the bits 
+  /**
+   * 位图数组 每个元素存储64位数据
+   */
+  private final long[] bits; // Array of longs holding the bits
+  /**
+   * 记录当前已经标记了多少位
+   */
   private final int numBits; // The number of bits in use
+  /**
+   * bits.length
+   */
   private final int numWords; // The exact number of longs needed to hold numBits (<= bits.length)
   
   /**
@@ -47,6 +58,7 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
    * <b>NOTE:</b> the returned bitset reuses the underlying {@code long[]} of
    * the given {@code bits} if possible. Also, calling {@link #length()} on the
    * returned bits may return a value greater than {@code numBits}.
+   * 判断传入的参数是否有足够的空间 用于设置该位
    */
   public static FixedBitSet ensureCapacity(FixedBitSet bits, int numBits) {
     if (numBits < bits.numBits) {
@@ -54,9 +66,11 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     } else {
       // Depends on the ghost bits being clear!
       // (Otherwise, they may become visible in the new instance)
+      // 代表传入的 bits空间不足 需要做扩容 + 数据拷贝
       int numWords = bits2words(numBits);
       long[] arr = bits.getBits();
       if (numWords >= arr.length) {
+        // 扩容 + 数据拷贝
         arr = ArrayUtil.grow(arr, numWords + 1);
       }
       return new FixedBitSet(arr, arr.length << 6);
@@ -65,12 +79,19 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
 
   /** returns the number of 64 bit words it would take to hold numBits */
   public static int bits2words(int numBits) {
+    // 3种情况
+    // 1: 64的整数倍  那么取余后 + 1 相当于向上取整
+    // 2: 小于64的倍数    那么即使是0 计算出来也至少是1
+    // 3: 如果大于64的倍数 也是向上取整
     return ((numBits - 1) >> 6) + 1; // I.e.: get the word-offset of the last bit and add one (make sure to use >> so 0 returns 0!)
   }
+
+  // 下面3个方法套路都类似  都是利用一些位运算
 
   /**
    * Returns the popcount or cardinality of the intersection of the two sets.
    * Neither set is modified.
+   * 返回交集
    */
   public static long intersectionCount(FixedBitSet a, FixedBitSet b) {
     // Depends on the ghost bits being clear!
@@ -80,10 +101,12 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
   /**
    * Returns the popcount or cardinality of the union of the two sets. Neither
    * set is modified.
+   * 返回并集
    */
   public static long unionCount(FixedBitSet a, FixedBitSet b) {
     // Depends on the ghost bits being clear!
     long tot = BitUtil.pop_union(a.bits, b.bits, 0, Math.min(a.numWords, b.numWords));
+    // 单独计算剩余的部分
     if (a.numWords < b.numWords) {
       tot += BitUtil.pop_array(b.bits, a.numWords, b.numWords - a.numWords);
     } else if (a.numWords > b.numWords) {
@@ -109,9 +132,11 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
    * Creates a new LongBitSet.
    * The internally allocated long array will be exactly the size needed to accommodate the numBits specified.
    * @param numBits the number of bits needed
+   *                基于目标大小创建位图对象
    */
   public FixedBitSet(int numBits) {
     this.numBits = numBits;
+    // 换算成 long的数量  (向上取整)
     bits = new long[bits2words(numBits)];
     numWords = bits.length;
   }
@@ -120,8 +145,9 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
    * Creates a new LongBitSet using the provided long[] array as backing store.
    * The storedBits array must be large enough to accommodate the numBits specified, but may be larger.
    * In that case the 'extra' or 'ghost' bits must be clear (or they may provoke spurious side-effects)
-   * @param storedBits the array to use as backing store
-   * @param numBits the number of bits actually needed
+   * @param storedBits the array to use as backing store 基于一个已经存在的数组创建位图对象
+   * @param numBits the number of bits actually needed   记录当前位图一共占用多少个 long
+   *
    */
   public FixedBitSet(long[] storedBits, int numBits) {
     this.numWords = bits2words(numBits);
@@ -140,14 +166,19 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
    * @return true if the bits past numBits are clear.
    */
   private boolean verifyGhostBitsClear() {
+    // 默认情况下 这里是不跑的  因为 numWords = bits.length  这里主要是针对扩容的情况
     for (int i = numWords; i < bits.length; i++) {
       if (bits[i] != 0) return false;
     }
-    
-    if ((numBits & 0x3f) == 0) return true;
-    
-    long mask = -1L << numBits;
 
+    // 只要numBits 不是64的倍数 那么数组必然有空位可使用
+    if ((numBits & 0x3f) == 0) return true;
+
+    // -1L 64位全部是1    这里高位全部用1占住了   低位全是0
+    // 当左移超过64位时 编译器会自动做取模运算
+    long mask = -1L << numBits;
+    // 这个方法的含义实际上是判断 mask 到 能被64整出的数之间是否有空间  如果mask本身就存在0 那么 代表numBits 本身就不是64的倍数  当然有空间
+    // 那么进入到这里 就代表 mask 全是1  同时最后一个long 必须有空位
     return (bits[numWords - 1] & mask) == 0;
   }
   
@@ -169,6 +200,7 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
   /** Returns number of set bits.  NOTE: this visits every
    *  long in the backing bits array, and the result is not
    *  internally cached!
+   *  一共占了多少位
    */
   @Override
   public int cardinality() {
@@ -176,6 +208,13 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     return (int) BitUtil.pop_array(bits, 0, numWords);
   }
 
+  /**
+   * 通过指定位数 判断对应的位是否被设置
+   * @param index index, should be non-negative and &lt; {@link #length()}.
+   *        The result of passing negative or out of bounds values is undefined
+   *        by this interface, <b>just don't do it!</b>
+   * @return
+   */
   @Override
   public boolean get(int index) {
     assert index >= 0 && index < numBits: "index=" + index + ", numBits=" + numBits;
@@ -188,7 +227,9 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
 
   public void set(int index) {
     assert index >= 0 && index < numBits: "index=" + index + ", numBits=" + numBits;
+    // 定位数组下标
     int wordNum = index >> 6;      // div 64
+    // 从低位开始往上填充
     long bitmask = 1L << index;
     bits[wordNum] |= bitmask;
   }
@@ -207,6 +248,7 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     assert index >= 0 && index < numBits: "index=" + index + ", numBits=" + numBits;
     int wordNum = index >> 6;
     long bitmask = 1L << index;
+    // x & 0 必然是0
     bits[wordNum] &= ~bitmask;
   }
 
@@ -219,6 +261,11 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     return val;
   }
 
+  /**
+   * 从当前位置遍历到下一个已经被设置的位
+   * @param index
+   * @return
+   */
   @Override
   public int nextSetBit(int index) {
     // Depends on the ghost bits being clear!
@@ -226,10 +273,15 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     int i = index >> 6;
     long word = bits[i] >> index;  // skip all the bits to the right of index
 
+    // 如果刚好在同一个long 中 判断剩余的位是否被设置
     if (word!=0) {
+      // numberOfTrailingZeros 代表从最低位往上数 直到遇到1时 经过的位数  index 是一个基础的值
       return index + Long.numberOfTrailingZeros(word);
     }
 
+    /**
+     * 需要遍历到下一个long
+     */
     while(++i < numWords) {
       word = bits[i];
       if (word != 0) {
@@ -240,6 +292,11 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     return DocIdSetIterator.NO_MORE_DOCS;
   }
 
+  /**
+   * 获取上一个设置的位
+   * @param index
+   * @return
+   */
   @Override
   public int prevSetBit(int index) {
     assert index >= 0 && index < numBits: "index=" + index + " numBits=" + numBits;
