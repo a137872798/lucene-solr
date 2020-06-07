@@ -27,7 +27,7 @@ import org.apache.lucene.util.packed.PagedGrowableWriter;
 final class NodeHash<T> {
 
   /**
-   * 具备自主扩容能力的对象
+   * 具备自主扩容能力的对象  用于写入数据
    */
   private PagedGrowableWriter table;
   private long count;
@@ -44,7 +44,7 @@ final class NodeHash<T> {
   private final FST.BytesReader in;
 
   public NodeHash(FST<T> fst, FST.BytesReader in) {
-    // 采用紧凑模式进行创建
+    // 采用紧凑模式进行创建   size 代表初始大小  pageSize代表每个存储单位(block)的大小
     table = new PagedGrowableWriter(16, 1<<27, 8, PackedInts.COMPACT);
     mask = 15;
     this.fst = fst;
