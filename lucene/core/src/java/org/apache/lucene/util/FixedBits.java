@@ -18,6 +18,7 @@ package org.apache.lucene.util;
 
 /**
  * Immutable twin of FixedBitSet.
+ * 只读对象
  */
 final class FixedBits implements Bits {
 

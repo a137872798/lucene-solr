@@ -37,6 +37,7 @@ public abstract class Terms {
 
   /** Returns an iterator that will step through all
    *  terms. This method will not return null. */
+  // 返回词的迭代器对象  注意词就是一个byte[] (内部使用ByteRef表示)
   public abstract TermsEnum iterator() throws IOException;
 
   /** Returns a TermsEnum that iterates over all terms and

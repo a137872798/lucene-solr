@@ -23,6 +23,7 @@ import org.apache.lucene.search.DocIdSetIterator;
  * A {@link DocIdSetIterator} which iterates over set bits in a
  * bit set.
  * @lucene.internal
+ * 该对象代表 基于位图来实现 docId迭代器的功能    思路也是尽可能的压缩空间
  */
 public class BitSetIterator extends DocIdSetIterator {
 
@@ -47,6 +48,9 @@ public class BitSetIterator extends DocIdSetIterator {
     return getBitSet(iterator, SparseFixedBitSet.class);
   }
 
+  /**
+   * 迭代器就是通过遍历 位图获取id
+   */
   private final BitSet bits;
   private final int length;
   private final long cost;

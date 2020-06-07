@@ -25,11 +25,14 @@ import org.apache.lucene.index.TermState;
  * terms dict.
  *
  * @lucene.internal
+ * 块状的词的状态
  */
 public class BlockTermState extends OrdTermState {
   /** how many docs have this term */
+  // 该词中有多少doc
   public int docFreq;
   /** total number of occurrences of this term */
+  // 一共出现多少 term
   public long totalTermFreq;
 
   /** the term's ord in the current block */

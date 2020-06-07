@@ -60,11 +60,13 @@ import static org.apache.lucene.util.fst.FST.Arc.BitTable;
  *      documentation} for some simple examples.
  *
  * @lucene.experimental
+ * 有限状态机
  */
 public final class FST<T> implements Accountable {
 
   /** Specifies allowed range of each int input label for
    *  this FST. */
+  // 只允许写入 1byte  2byte  4byte
   public enum INPUT_TYPE {BYTE1, BYTE2, BYTE4}
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FST.class);
@@ -140,6 +142,7 @@ public final class FST<T> implements Accountable {
   /** A {@link BytesStore}, used during building, or during reading when
    *  the FST is very large (more than 1 GB).  If the FST is less than 1
    *  GB then bytesArray is set instead. */
+  // 该对象负责存储数据
   final BytesStore bytes;
 
   private final FSTStore fstStore;
@@ -149,6 +152,7 @@ public final class FST<T> implements Accountable {
   public final Outputs<T> outputs;
 
   /** Represents a single arc. */
+  // arc 代表一个节点
   public static final class Arc<T> {
 
     //*** Arc fields.
@@ -392,21 +396,32 @@ public final class FST<T> implements Accountable {
     return (flags & bit) != 0;
   }
 
-  // make a new empty FST, for building; Builder invokes this
+  /**
+   * make a new empty FST, for building; Builder invokes this
+   * @param inputType   代表数据的输入里欸选哪个
+   * @param outputs
+   * @param bytesPageBits
+   */
   FST(INPUT_TYPE inputType, Outputs<T> outputs, int bytesPageBits) {
     this.inputType = inputType;
     this.outputs = outputs;
     fstStore = null;
+    // 根据指定的大小创建 store对象   该对象内部就是一个 List<byte[]>
     bytes = new BytesStore(bytesPageBits);
     // pad: ensure no node gets address 0 which is reserved to mean
     // the stop state w/ no arcs
+    // 初始化时写入一个0
     bytes.writeByte((byte) 0);
     emptyOutput = null;
   }
 
+  /**
+   * 一般情况下认为 一个block最多占30个bit
+   */
   private static final int DEFAULT_MAX_BLOCK_BITS = Constants.JRE_IS_64BIT ? 30 : 28;
 
   /** Load a previously saved FST. */
+  // 使用相关参数进行初始化
   public FST(DataInput in, Outputs<T> outputs) throws IOException {
     this(in, outputs, new OnHeapFSTStore(DEFAULT_MAX_BLOCK_BITS));
   }
@@ -415,31 +430,40 @@ public final class FST<T> implements Accountable {
    *  control the size of the byte[] pages used to hold the FST bytes. */
   public FST(DataInput in, Outputs<T> outputs, FSTStore fstStore) throws IOException {
     bytes = null;
+    // 默认情况下创建基于heap的 fst仓库
     this.fstStore = fstStore;
     this.outputs = outputs;
 
     // NOTE: only reads formats VERSION_START up to VERSION_CURRENT; we don't have
     // back-compat promise for FSTs (they are experimental), but we are sometimes able to offer it
+    // 这里在检验输入流是否合法
     CodecUtil.checkHeader(in, FILE_FORMAT_NAME, VERSION_START, VERSION_CURRENT);
+    // 如果读取的值为1
     if (in.readByte() == 1) {
       // accepts empty string
       // 1 KB blocks:
+      // 1 << 10 = 1024   1kb = 1024byte
       BytesStore emptyBytes = new BytesStore(10);
+      // 读取内部的数据长度
       int numBytes = in.readVInt();
+      // 读取指定长度的数据 填充到 store中
       emptyBytes.copyBytes(in, numBytes);
 
       // De-serialize empty-string output:
+      // 生成一个反向读取数据的reader
       BytesReader reader = emptyBytes.getReverseReader();
       // NoOutputs uses 0 bytes when writing its output,
       // so we have to check here else BytesStore gets
       // angry:
       if (numBytes > 0) {
+        // 指向reader 的默认 这样该对象才能正常使用
         reader.setPosition(numBytes-1);
       }
       emptyOutput = outputs.readFinalOutput(reader);
     } else {
       emptyOutput = null;
     }
+    // 每次读取一个 byte
     final byte t = in.readByte();
     switch(t) {
       case 0:
@@ -1444,6 +1468,7 @@ public final class FST<T> implements Accountable {
   }
 
   /** Reads bytes stored in an FST. */
+  // FST 中读取数据的对象
   public static abstract class BytesReader extends DataInput {
     /** Get current read position. */
     public abstract long getPosition();
@@ -1453,6 +1478,7 @@ public final class FST<T> implements Accountable {
 
     /** Returns true if this reader uses reversed bytes
      *  under-the-hood. */
+    // 判断数据是否采用反向读取的方式
     public abstract boolean reversed();
   }
 }

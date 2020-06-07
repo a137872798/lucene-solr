@@ -78,6 +78,7 @@ public abstract class BitSet implements Bits, Accountable {
 
   /** Returns the index of the first set bit starting at the index specified.
    *  {@link DocIdSetIterator#NO_MORE_DOCS} is returned if there are no more set bits.
+   *  基于当前指针 获取下一个被设置的位
    */
   public abstract int nextSetBit(int index);
 

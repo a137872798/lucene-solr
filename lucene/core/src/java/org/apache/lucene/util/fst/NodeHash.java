@@ -23,20 +23,28 @@ import org.apache.lucene.util.packed.PackedInts;
 import org.apache.lucene.util.packed.PagedGrowableWriter;
 
 // Used to dedup states (lookup already-frozen states)
-// 存储hash值 这样当发现某些节点的hash值一致时 就可以避免重复添加
+// 存储数据 这样在构建fst时 如果发现了hash相同的数据则可以共享数据 (避免重复创建 节省内存)
 final class NodeHash<T> {
 
   /**
-   * 存储数据的桶
+   * 具备自主扩容能力的对象
    */
   private PagedGrowableWriter table;
   private long count;
   private long mask;
+  /**
+   * 代表该对象挂载在哪个fst上
+   */
   private final FST<T> fst;
+
   private final FST.Arc<T> scratchArc = new FST.Arc<>();
+  /**
+   * 以反向读取对象来包装 bytesStore 内部的数据
+   */
   private final FST.BytesReader in;
 
   public NodeHash(FST<T> fst, FST.BytesReader in) {
+    // 采用紧凑模式进行创建
     table = new PagedGrowableWriter(16, 1<<27, 8, PackedInts.COMPACT);
     mask = 15;
     this.fst = fst;

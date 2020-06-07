@@ -18,6 +18,7 @@ package org.apache.lucene.util.fst;
 
 
 /** Reads in reverse from a single byte[]. */
+// 该对象可以反向读取内部的数据
 final class ReverseBytesReader extends FST.BytesReader {
   private final byte[] bytes;
   private int pos;
@@ -53,6 +54,10 @@ final class ReverseBytesReader extends FST.BytesReader {
     this.pos = (int) pos;
   }
 
+  /**
+   * 代表该容器内部的数据是反向读取的
+   * @return
+   */
   @Override
   public boolean reversed() {
     return true;

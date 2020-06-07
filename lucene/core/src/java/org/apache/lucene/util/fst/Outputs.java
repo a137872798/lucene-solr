@@ -32,6 +32,7 @@ import org.apache.lucene.util.Accountable;
  * #getNoOutput}.</p>
  *
  * @lucene.experimental
+ * 该对象负责协助构建 FST 对象
  */
 
 public abstract class Outputs<T> {
@@ -41,27 +42,33 @@ public abstract class Outputs<T> {
   // (new object per byte/char/int) if eg used during
   // analysis
 
+  // 输出交集
   /** Eg common("foobar", "food") -&gt; "foo" */
   public abstract T common(T output1, T output2);
 
+  // 输出差集
   /** Eg subtract("foobar", "foo") -&gt; "bar" */
   public abstract T subtract(T output, T inc);
 
+  // 拼接后返回
   /** Eg add("foo", "bar") -&gt; "foobar" */
   public abstract T add(T prefix, T output);
 
+  // 将结果做特殊处理后 存入到 DataOutput
   /** Encode an output value into a {@link DataOutput}. */
   public abstract void write(T output, DataOutput out) throws IOException;
 
   /** Encode an final node output value into a {@link
    *  DataOutput}.  By default this just calls {@link #write(Object,
    *  DataOutput)}. */
+  // 代表某个字符输入到结尾了
   public void writeFinalOutput(T output, DataOutput out) throws IOException {
     write(output, out);
   }
 
   /** Decode an output value previously written with {@link
    *  #write(Object, DataOutput)}. */
+  // 从输入流中读取数据
   public abstract T read(DataInput in) throws IOException;
 
   /** Skip the output; defaults to just calling {@link #read}

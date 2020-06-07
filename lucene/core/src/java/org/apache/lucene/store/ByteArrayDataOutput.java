@@ -32,6 +32,10 @@ public class ByteArrayDataOutput extends DataOutput {
   private int pos;
   private int limit;
 
+  /**
+   * 初始化相关属性
+   * @param bytes
+   */
   public ByteArrayDataOutput(byte[] bytes) {
     reset(bytes);
   }

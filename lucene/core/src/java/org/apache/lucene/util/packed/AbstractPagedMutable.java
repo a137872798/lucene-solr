@@ -28,8 +28,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 /**
  * Base implementation for {@link PagedMutable} and {@link PagedGrowableWriter}.
  * @lucene.internal
- * paged的骨架类
- * 理解成一个个数据页
+ * 作为 PagedMutable 和 PagedGrowableWriter 的骨架类 
  */
 public abstract class AbstractPagedMutable<T extends AbstractPagedMutable<T>> extends LongValues implements Accountable {
 

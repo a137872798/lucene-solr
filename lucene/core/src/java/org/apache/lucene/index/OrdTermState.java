@@ -21,6 +21,7 @@ package org.apache.lucene.index;
  * An ordinal based {@link TermState}
  * 
  * @lucene.experimental
+ * 原始的词状态基础上增加一个顺序
  */
 public class OrdTermState extends TermState {
   /** Term ordinal, i.e. its position in the full list of

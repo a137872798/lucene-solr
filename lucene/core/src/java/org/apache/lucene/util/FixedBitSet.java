@@ -219,14 +219,22 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     return val;
   }
 
+  /**
+   * 获取下一个被设置的位
+   * @param index
+   * @return
+   */
   @Override
   public int nextSetBit(int index) {
     // Depends on the ghost bits being clear!
     assert index >= 0 && index < numBits : "index=" + index + ", numBits=" + numBits;
+    // 除以64 获取下标
     int i = index >> 6;
+    // 因为 index 如果超过64 会被编译器自动取余 所以这里只是正常的去掉末尾  (并且 位本身就是从后往前设置的)
     long word = bits[i] >> index;  // skip all the bits to the right of index
 
     if (word!=0) {
+      // 从后往前直到第一个非0值时 一共遇到了多少个0 再加在基础值 index
       return index + Long.numberOfTrailingZeros(word);
     }
 
@@ -240,14 +248,23 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
     return DocIdSetIterator.NO_MORE_DOCS;
   }
 
+  /**
+   * 获取上一个设置的位
+   * @param index
+   * @return
+   */
   @Override
   public int prevSetBit(int index) {
     assert index >= 0 && index < numBits: "index=" + index + " numBits=" + numBits;
     int i = index >> 6;
+    // 下面的写法等价于  index % 64   就是算一个余数
     final int subIndex = index & 0x3f;  // index within the word
+    // 63 - subIndex 代表从index开始到这个block的结束还有多少位
+    // bits[i] << (63-subIndex)   代表把后面还未填写的位数先去掉  这样反过来变成 高位都是已经设置过位的 并且设置的位数是 subIndex
     long word = (bits[i] << (63-subIndex));  // skip all the bits to the left of index
 
     if (word != 0) {
+      // Long.numberOfLeadingZeros(word)  从高位数 有多少连续的0   此时高位的第一位 反而变成了  上一个被设置的位
       return (i << 6) + subIndex - Long.numberOfLeadingZeros(word); // See LUCENE-3197
     }
 
@@ -265,7 +282,8 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
   public void or(DocIdSetIterator iter) throws IOException {
     if (BitSetIterator.getFixedBitSetOrNull(iter) != null) {
       checkUnpositioned(iter);
-      final FixedBitSet bits = BitSetIterator.getFixedBitSetOrNull(iter); 
+      final FixedBitSet bits = BitSetIterator.getFixedBitSetOrNull(iter);
+      // 将当前迭代器与 传入的迭代器做 | 运算
       or(bits);
     } else {
       super.or(iter);
@@ -315,6 +333,7 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
   }
 
   /** returns true if the sets have any elements in common */
+  // 判断与目标位图 是否有交集
   public boolean intersects(FixedBitSet other) {
     // Depends on the ghost bits being clear!
     int pos = Math.min(numWords, other.numWords);
@@ -328,7 +347,12 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
   public void and(FixedBitSet other) {
     and(other.bits, other.numWords);
   }
-  
+
+  /**
+   * 将内部 bits 变成2个数组的交集
+   * @param otherArr
+   * @param otherNumWords
+   */
   private void and(final long[] otherArr, final int otherNumWords) {
     final long[] thisArr = this.bits;
     int pos = Math.min(this.numWords, otherNumWords);
@@ -344,7 +368,12 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
   public void andNot(FixedBitSet other) {
     andNot(other.bits, other.numWords);
   }
-  
+
+  /**
+   * 与取反后的结果做交集
+   * @param otherArr
+   * @param otherNumWords
+   */
   private void andNot(final long[] otherArr, final int otherNumWords) {
     final long[] thisArr = this.bits;
     int pos = Math.min(this.numWords, otherNumWords);
@@ -376,6 +405,7 @@ public final class FixedBitSet extends BitSet implements Bits, Accountable {
    *
    * @param startIndex lower index
    * @param endIndex one-past the last bit to flip
+   *                 反转部分数据
    */
   public void flip(int startIndex, int endIndex) {
     assert startIndex >= 0 && startIndex < numBits;

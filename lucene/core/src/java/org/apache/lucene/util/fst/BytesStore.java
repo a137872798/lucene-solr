@@ -28,7 +28,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 
 // TODO: merge with PagedBytes, except PagedBytes doesn't
 // let you read while writing which FST needs
-
+// 该对象内部存储了一组用于写入 数据的block    该对象在 fst中被使用
 class BytesStore extends DataOutput implements Accountable {
 
   private static final long BASE_RAM_BYTES_USED =
@@ -36,12 +36,12 @@ class BytesStore extends DataOutput implements Accountable {
       + RamUsageEstimator.shallowSizeOfInstance(ArrayList.class);
 
   /**
-   * 内部就是一个 byte[] 列表
+   * 每个block 都是一个 byte[]  一个byte代表8bit 也就是每个block大小 都是8的倍数
    */
   private final List<byte[]> blocks = new ArrayList<>();
 
   /**
-   * 相当于2的 blockBits 次
+   * 等价于 1 << blockBits
    */
   private final int blockSize;
   /**
@@ -57,12 +57,13 @@ class BytesStore extends DataOutput implements Accountable {
    * 当前数到 list的哪个block
    */
   private byte[] current;
-  /**
-   * 正常情况下写入的下一个值对应的起点
-   * 如果 == blockSize 那么代表下次写入需要创建一个新的block
-   */
+
   private int nextWrite;
 
+  /**
+   * 每个block 占多少bit
+   * @param blockBits
+   */
   public BytesStore(int blockBits) {
     this.blockBits = blockBits;
     blockSize = 1 << blockBits;
@@ -99,7 +100,7 @@ class BytesStore extends DataOutput implements Accountable {
 
   /** Absolute write byte; you must ensure dest is &lt; max
    *  position written so far. */
-  // dest 需要通过位运算 换算成目标 block的下标
+  // dest 代表写入的目标位置   然后b 代表写入的值
   public void writeByte(long dest, byte b) {
     int blockIndex = (int) (dest >> blockBits);
     byte[] block = blocks.get(blockIndex);
@@ -486,25 +487,37 @@ class BytesStore extends DataOutput implements Accountable {
     };
   }
 
+  /**
+   * 将内部数据 以反向的方式读取
+   * @return
+   */
   public FST.BytesReader getReverseReader() {
     return getReverseReader(true);
   }
 
   FST.BytesReader getReverseReader(boolean allowSingle) {
+    // 如果内部只有一个元素 那么直接返回一个基于 byte[] 的反向reader
     if (allowSingle && blocks.size() == 1) {
       return new ReverseBytesReader(blocks.get(0));
     }
+    // 返回一个内部类
     return new FST.BytesReader() {
+      // 默认情况下指向的是第一个 byte[]
       private byte[] current = blocks.size() == 0 ? null : blocks.get(0);
+      // 对应list 下标
       private int nextBuffer = -1;
+      // 对应byte[] 下标
       private int nextRead = 0;
 
       @Override
       public byte readByte() {
+        // 代表此时已经读取完这个数组 那么就获取上一个数组 并重置nextRead
         if (nextRead == -1) {
+          // 获取上一个 byte[]
           current = blocks.get(nextBuffer--);
           nextRead = blockSize-1;
         }
+        // 因为是反向读取 所以 nextRead --
         return current[nextRead--];
       }
 
@@ -513,6 +526,12 @@ class BytesStore extends DataOutput implements Accountable {
         setPosition(getPosition() - count);
       }
 
+      /**
+       * 读取数据到b 中
+       * @param b the array to read bytes into
+       * @param offset the offset in the array to start storing bytes
+       * @param len the number of bytes to read
+       */
       @Override
       public void readBytes(byte[] b, int offset, int len) {
         for(int i=0;i<len;i++) {
@@ -525,15 +544,23 @@ class BytesStore extends DataOutput implements Accountable {
         return ((long) nextBuffer+1)*blockSize + nextRead;
       }
 
+      /**
+       * 更新当前的指针
+       * 初始化该对象后 必须通过该方法后才能正常使用
+       * @param pos
+       */
       @Override
       public void setPosition(long pos) {
         // NOTE: a little weird because if you
         // setPosition(0), the next byte you read is
         // bytes[0] ... but I would expect bytes[-1] (ie,
         // EOF)...?
+        // 将指针换算成下标
         int bufferIndex = (int) (pos >> blockBits);
+        // 因为是从后往前遍历 所以下一个buffer 是当前buffer - 1
         nextBuffer = bufferIndex-1;
         current = blocks.get(bufferIndex);
+        // 略小于pos 代表下一个要被读取的元素
         nextRead = (int) (pos & blockMask);
         assert getPosition() == pos: "pos=" + pos + " getPos()=" + getPosition();
       }

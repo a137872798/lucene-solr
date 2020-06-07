@@ -21,7 +21,7 @@ import java.util.Arrays;
 /** Represents int[], as a slice (offset + length) into an
  *  existing int[].  The {@link #ints} member should never be null; use
  *  {@link #EMPTY_INTS} if necessary.
- *  这个类就是某个字符链路上的数字吧    FST中每个字符会携带一个类似于比重的东西 每个字符使用唯一一条数字链
+ *  一个 int 数组的包装类
  *  @lucene.internal */
 public final class IntsRef implements Comparable<IntsRef>, Cloneable {
   /** An empty integer array for convenience */
