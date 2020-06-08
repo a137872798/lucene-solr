@@ -37,12 +37,20 @@ final class NodeHash<T> {
   private final FST.BytesReader in;
 
   public NodeHash(FST<T> fst, FST.BytesReader in) {
+    // 该对象用于存储数据 底层使用了 PackedInts
     table = new PagedGrowableWriter(16, 1<<27, 8, PackedInts.COMPACT);
     mask = 15;
     this.fst = fst;
     this.in = in;
   }
 
+  /**
+   * 判断目标节点是否已经存在
+   * @param node
+   * @param address
+   * @return
+   * @throws IOException
+   */
   private boolean nodesEqual(FSTCompiler.UnCompiledNode<T> node, long address) throws IOException {
     fst.readFirstRealTargetArc(address, scratchArc, in);
 

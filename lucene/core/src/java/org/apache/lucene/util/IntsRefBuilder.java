@@ -20,6 +20,7 @@ package org.apache.lucene.util;
 /**
  * A builder for {@link IntsRef} instances.
  * @lucene.internal
+ * 该对象负责构建内部的 IntsRef
  */
 public class IntsRefBuilder {
 
