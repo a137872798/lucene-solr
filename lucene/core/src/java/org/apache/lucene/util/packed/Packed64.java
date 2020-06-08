@@ -70,11 +70,12 @@ class Packed64 extends PackedInts.MutableImpl {
    */
   public Packed64(int valueCount, int bitsPerValue) {
     super(valueCount, bitsPerValue);
+    // 默认采用紧凑的方式
     final PackedInts.Format format = PackedInts.Format.PACKED;
     // 计算valueCount 一共需要多少个long存储 实际上就是 转换为以bit作为基本存储单位后 再 /64 这样long型变量的每个位数都有意义
     final int longCount = format.longCount(PackedInts.VERSION_CURRENT, valueCount, bitsPerValue);
     this.blocks = new long[longCount];
-    // ~0 代表对0取反 也就是所有位都是1 这里最后就会变成  000...11111  也就是一个掩码
+    // >>> 右边会补0
     maskRight = ~0L << (BLOCK_SIZE-bitsPerValue) >>> (BLOCK_SIZE-bitsPerValue);
     // bitsPerValue - 64    得到的是个负数
     bpvMinusBlockSize = bitsPerValue - BLOCK_SIZE;
@@ -124,6 +125,7 @@ class Packed64 extends PackedInts.MutableImpl {
     final long majorBitPos = (long)index * bitsPerValue;
     // The index in the backing long-array
     // 这里 除以一个block的大小 就获得了 block的下标  意味着这个值当前处在第几个block
+    // 在 Packed64 中一个 block 就是64位
     final int elementPos = (int)(majorBitPos >>> BLOCK_BITS);
     // The number of value-bits in the second long
     // 该值是用来判断是否跨越了block

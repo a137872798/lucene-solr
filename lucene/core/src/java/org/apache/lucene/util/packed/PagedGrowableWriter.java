@@ -67,7 +67,7 @@ public final class PagedGrowableWriter extends AbstractPagedMutable<PagedGrowabl
     /**
      * 为每个 Mutable槽创建对象
      *
-     * @param valueCount
+     * @param valueCount  该容器将会存放多少元素
      * @param bitsPerValue
      * @return
      */

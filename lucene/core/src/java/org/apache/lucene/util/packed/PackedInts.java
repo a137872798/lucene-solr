@@ -704,9 +704,7 @@ public class PackedInts {
         }
     }
 
-    /**
-     * 代表一个内部值可以改变的int[]
-     */
+
     static abstract class MutableImpl extends Mutable {
 
         protected final int valueCount;

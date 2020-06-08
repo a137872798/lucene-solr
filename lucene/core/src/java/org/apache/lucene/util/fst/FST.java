@@ -594,8 +594,15 @@ public final class FST<T> implements Accountable {
     }
   }
 
+  /**
+   * 将 label 信息写入到输出流中
+   * @param out
+   * @param v
+   * @throws IOException
+   */
   private void writeLabel(DataOutput out, int v) throws IOException {
     assert v >= 0: "v=" + v;
+    // 根据输入类型 确定写入的长度
     if (inputType == INPUT_TYPE.BYTE1) {
       assert v <= 255: "v=" + v;
       out.writeByte((byte) v);
@@ -630,29 +637,40 @@ public final class FST<T> implements Accountable {
 
   // serializes new node by appending its bytes to the end
   // of the current byte[]
+  // 将某个未编辑的节点变成编译状态 并添加到 FST 中
   long addNode(FSTCompiler<T> fstCompiler, FSTCompiler.UnCompiledNode<T> nodeIn) throws IOException {
     T NO_OUTPUT = outputs.getNoOutput();
 
     //System.out.println("FST.addNode pos=" + bytes.getPosition() + " numArcs=" + nodeIn.numArcs);
+    // 代表这个节点没有 arc
     if (nodeIn.numArcs == 0) {
+      // 如果该节点就是 final
       if (nodeIn.isFinal) {
+        // 返回末尾节点
         return FINAL_END_NODE;
       } else {
+        // 代表还没有到末尾节点
         return NON_FINAL_END_NODE;
       }
     }
+    // 找到当前 bytes 中的偏移量
     final long startAddress = fstCompiler.bytes.getPosition();
     //System.out.println("  startAddr=" + startAddress);
 
+    // 是否应该以 FixedLength 的长度 存储arc
+    // 如果返回true 代表每个 arc都用一样的字节长度  每个arc本身的长度 可能是不一致的 那么就按照最长的arc分配长度
+    // 坏处是会存在内存碎片  好处是能够快速定位到 第n个arc的位置
     final boolean doFixedLengthArcs = shouldExpandNodeWithFixedLengthArcs(fstCompiler, nodeIn);
     if (doFixedLengthArcs) {
       //System.out.println("  fixed length arcs");
       if (fstCompiler.numBytesPerArc.length < nodeIn.numArcs) {
+        // 扩容到 4
         fstCompiler.numBytesPerArc = new int[ArrayUtil.oversize(nodeIn.numArcs, Integer.BYTES)];
         fstCompiler.numLabelBytesPerArc = new int[fstCompiler.numBytesPerArc.length];
       }
     }
 
+    // 追加当前 arc 总数
     fstCompiler.arcCount += nodeIn.numArcs;
     
     final int lastArc = nodeIn.numArcs-1;
@@ -660,16 +678,21 @@ public final class FST<T> implements Accountable {
     long lastArcStart = fstCompiler.bytes.getPosition();
     int maxBytesPerArc = 0;
     int maxBytesPerArcWithoutLabel = 0;
+    // 这里在遍历所有的 arc
     for(int arcIdx=0; arcIdx < nodeIn.numArcs; arcIdx++) {
       final FSTCompiler.Arc<T> arc = nodeIn.arcs[arcIdx];
+      // 获取arc 上的 target 并转换成一个完成编译的节点
       final FSTCompiler.CompiledNode target = (FSTCompiler.CompiledNode) arc.target;
       int flags = 0;
       //System.out.println("  arc " + arcIdx + " label=" + arc.label + " -> target=" + target.node);
 
+      // 如果当前遍历到的是最后一个节点
       if (arcIdx == lastArc) {
+        // 为标识值 加了一个 特殊值
         flags += BIT_LAST_ARC;
       }
 
+      // 如果目标节点就是 上一个被冻结的节点  且 arc没有采用固定的长度  flags位 增加一个特殊值
       if (fstCompiler.lastFrozenNode == target.node && !doFixedLengthArcs) {
         // TODO: for better perf (but more RAM used) we
         // could avoid this except when arc is "near" the
@@ -677,8 +700,11 @@ public final class FST<T> implements Accountable {
         flags += BIT_TARGET_NEXT;
       }
 
+      // 如果当前节点是某串字符串的末尾
       if (arc.isFinal) {
+        // 追加标志信息
         flags += BIT_FINAL_ARC;
+        // 追加标志信息
         if (arc.nextFinalOutput != NO_OUTPUT) {
           flags += BIT_ARC_HAS_FINAL_OUTPUT;
         }
@@ -688,31 +714,40 @@ public final class FST<T> implements Accountable {
 
       boolean targetHasArcs = target.node > 0;
 
+      // 如果目标节点后没有数据了 代表是终止节点
       if (!targetHasArcs) {
         flags += BIT_STOP_NODE;
       }
 
+      // 代表有 输出数据
       if (arc.output != NO_OUTPUT) {
         flags += BIT_ARC_HAS_OUTPUT;
       }
 
+      // 这里将标识位写入到 bytes 中
       fstCompiler.bytes.writeByte((byte) flags);
+      // 找到当前的位置
       long labelStart = fstCompiler.bytes.getPosition();
+      // 将 label写入到 bytes 中
       writeLabel(fstCompiler.bytes, arc.label);
+      // 通过偏移量的变化 确定写入的长度
       int numLabelBytes = (int) (fstCompiler.bytes.getPosition() - labelStart);
 
       // System.out.println("  write arc: label=" + (char) arc.label + " flags=" + flags + " target=" + target.node + " pos=" + bytes.getPosition() + " output=" + outputs.outputToString(arc.output));
 
       if (arc.output != NO_OUTPUT) {
+        // 将arc.ouput 数据写入到 bytes中
         outputs.write(arc.output, fstCompiler.bytes);
         //System.out.println("    write output");
       }
 
+      // 写入 final
       if (arc.nextFinalOutput != NO_OUTPUT) {
         //System.out.println("    write final output");
         outputs.writeFinalOutput(arc.nextFinalOutput, fstCompiler.bytes);
       }
 
+      // 这里是写入 VLong 类型
       if (targetHasArcs && (flags & BIT_TARGET_NEXT) == 0) {
         assert target.node > 0;
         //System.out.println("    write target");
@@ -721,11 +756,14 @@ public final class FST<T> implements Accountable {
 
       // just write the arcs "like normal" on first pass, but record how many bytes each one took
       // and max byte size:
+      // 如果按照固定长度
       if (doFixedLengthArcs) {
+        // 记录每个 arc的长度
         int numArcBytes = (int) (fstCompiler.bytes.getPosition() - lastArcStart);
         fstCompiler.numBytesPerArc[arcIdx] = numArcBytes;
         fstCompiler.numLabelBytesPerArc[arcIdx] = numLabelBytes;
         lastArcStart = fstCompiler.bytes.getPosition();
+        // 记录最长的 arc长度
         maxBytesPerArc = Math.max(maxBytesPerArc, numArcBytes);
         maxBytesPerArcWithoutLabel = Math.max(maxBytesPerArcWithoutLabel, numArcBytes - numLabelBytes);
         //System.out.println("    arcBytes=" + numArcBytes + " labelBytes=" + numLabelBytes);
@@ -752,10 +790,12 @@ public final class FST<T> implements Accountable {
     }
     */
 
+    // 如果每个arc 采用固定长度 那么要修改之前写入的arc  变成等长
     if (doFixedLengthArcs) {
       assert maxBytesPerArc > 0;
       // 2nd pass just "expands" all arcs to take up a fixed byte size
 
+      // 找到标签的范围
       int labelRange = nodeIn.arcs[nodeIn.numArcs - 1].label - nodeIn.arcs[0].label + 1;
       assert labelRange > 0;
       if (shouldExpandNodeWithDirectAddressing(fstCompiler, nodeIn, maxBytesPerArc, maxBytesPerArcWithoutLabel, labelRange)) {
@@ -774,17 +814,22 @@ public final class FST<T> implements Accountable {
   }
 
   /**
-   * Returns whether the given node should be expanded with fixed length arcs.
-   * Nodes will be expanded depending on their depth (distance from the root node) and their number
-   * of arcs.
-   * <p>
-   * Nodes with fixed length arcs use more space, because they encode all arcs with a fixed number
-   * of bytes, but they allow either binary search or direct addressing on the arcs (instead of linear
-   * scan) on lookup by arc label.
+     * Returns whether the given node should be expanded with fixed length arcs.
+     * Nodes will be expanded depending on their depth (distance from the root node) and their number
+     * of arcs.
+     * <p>
+     * Nodes with fixed length arcs use more space, because they encode all arcs with a fixed number
+     * of bytes, but they allow either binary search or direct addressing on the arcs (instead of linear
+     * scan) on lookup by arc label.
+   * 判断是否应该为 每个arc 分配相同的空间
+   * 如果元素本身比较少 是不推荐这样做的  分配相同空间无非就是通过 二分查找提升查询效率  如果元素本身就少的情况下 并不能明显的提升速度 返回产生了内存碎片
    */
   private boolean shouldExpandNodeWithFixedLengthArcs(FSTCompiler<T> fstCompiler, FSTCompiler.UnCompiledNode<T> node) {
+    // 首先需要 compiler 打开这个开关
     return fstCompiler.allowFixedLengthArcs &&
+            // node 深度小于一定值  且元素数量超过某个值
         ((node.depth <= FIXED_LENGTH_ARC_SHALLOW_DEPTH && node.numArcs >= FIXED_LENGTH_ARC_SHALLOW_NUM_ARCS) ||
+                // 如果数量超过这个值就可以无视深度
             node.numArcs >= FIXED_LENGTH_ARC_DEEP_NUM_ARCS);
   }
 
@@ -823,6 +868,13 @@ public final class FST<T> implements Accountable {
     return false;
   }
 
+  /**
+   * 以固定的长度  写入 arc
+   * @param fstCompiler
+   * @param nodeIn
+   * @param startAddress
+   * @param maxBytesPerArc
+   */
   private void writeNodeForBinarySearch(FSTCompiler<T> fstCompiler, FSTCompiler.UnCompiledNode<T> nodeIn, long startAddress, int maxBytesPerArc) {
     // Build the header in a buffer.
     // It is a false/special arc which is in fact a node header with node flags followed by node metadata.
@@ -1084,6 +1136,14 @@ public final class FST<T> implements Accountable {
     }
   }
 
+  /**
+   *
+   * @param nodeAddress
+   * @param arc
+   * @param in  该对象负责从fst中读取数据
+   * @return
+   * @throws IOException
+   */
   public Arc<T> readFirstRealTargetArc(long nodeAddress, Arc<T> arc, final BytesReader in) throws IOException {
     in.setPosition(nodeAddress);
     //System.out.println("   flags=" + arc.flags);

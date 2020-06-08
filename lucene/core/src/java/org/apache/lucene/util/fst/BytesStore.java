@@ -374,6 +374,10 @@ class BytesStore extends DataOutput implements Accountable {
     }
   }
 
+  /**
+   * 返回当前存储的位置
+   * @return
+   */
   public long getPosition() {
     return ((long) blocks.size()-1) * blockSize + nextWrite;
   }

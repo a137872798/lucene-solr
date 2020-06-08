@@ -54,7 +54,7 @@ public class FSTCompiler<T> {
     static final float DIRECT_ADDRESSING_MAX_OVERSIZING_FACTOR = 1f;
 
     /**
-     * 该对象存储节点的hash值 主要是复用节点 以节省内存
+     * 就是一个hash桶 主要是复用节点 以节省内存
      */
     private final NodeHash<T> dedupHash;
     /**
@@ -97,11 +97,17 @@ public class FSTCompiler<T> {
     int[] numLabelBytesPerArc = new int[numBytesPerArc.length];
     final FixedLengthArcsBuffer fixedLengthArcsBuffer = new FixedLengthArcsBuffer();
 
+    /**
+     * 每当某个节点转移到 fst中 将目标节点挂载的 arc加到该值上
+     */
     long arcCount;
     long nodeCount;
     long binarySearchNodeCount;
     long directAddressingNodeCount;
 
+    /**
+     * 是否开启了 每个arc 使用相同长度的开关
+     */
     final boolean allowFixedLengthArcs;
     final float directAddressingMaxOversizingFactor;
     long directAddressingExpansionCredit;
@@ -159,6 +165,7 @@ public class FSTCompiler<T> {
                 (UnCompiledNode<T>[]) new UnCompiledNode[10];
         frontier = f;
         for (int idx = 0; idx < frontier.length; idx++) {
+            // 这里下标作为depth
             frontier[idx] = new UnCompiledNode<>(this, idx);
         }
     }
@@ -337,10 +344,18 @@ public class FSTCompiler<T> {
         return directAddressingMaxOversizingFactor;
     }
 
+    /**
+     * 总是返回第一个 unCompiledNode 的 inputCount 作为 TermCount
+     * @return
+     */
     public long getTermCount() {
         return frontier[0].inputCount;
     }
 
+    /**
+     * 这里好像额外考虑了一个 final节点
+     * @return
+     */
     public long getNodeCount() {
         // 1+ in order to count the -1 implicit final node
         return 1 + nodeCount;
@@ -354,6 +369,13 @@ public class FSTCompiler<T> {
         return dedupHash == null ? 0 : nodeCount;
     }
 
+    /**
+     * 将某个节点变成编译后的状态
+     * @param nodeIn
+     * @param tailLength
+     * @return
+     * @throws IOException
+     */
     private CompiledNode compileNode(UnCompiledNode<T> nodeIn, int tailLength) throws IOException {
         final long node;
         long bytesPosStart = bytes.getPosition();
@@ -383,25 +405,37 @@ public class FSTCompiler<T> {
         return fn;
     }
 
+    /**
+     * 冻结指定前缀后面的末尾  冻结后的数据就会存入到 fst中
+     * @param prefixLenPlus1
+     * @throws IOException
+     */
     private void freezeTail(int prefixLenPlus1) throws IOException {
         //System.out.println("  compileTail " + prefixLenPlus1);
         final int downTo = Math.max(1, prefixLenPlus1);
+        // 遍历上一次输入的值 从共享的前缀之后的数据开始
         for (int idx = lastInput.length(); idx >= downTo; idx--) {
 
+            // 是否已经修剪
             boolean doPrune = false;
             boolean doCompile = false;
 
+            // 获取当前节点 以及它的父节点
             final UnCompiledNode<T> node = frontier[idx];
             final UnCompiledNode<T> parent = frontier[idx - 1];
 
+            // 如果当前节点的 inputCount 小于最小的后缀数量 那么就是已经修剪过的
             if (node.inputCount < minSuffixCount1) {
                 doPrune = true;
                 doCompile = true;
+            // 第一次 idx = prefixLenPlus1
             } else if (idx > prefixLenPlus1) {
                 // prune if parent's inputCount is less than suffixMinCount2
+                // 对父对象进行修剪
                 if (parent.inputCount < minSuffixCount2 || (minSuffixCount2 == 1 && parent.inputCount == 1 && idx > 1)) {
                     // my parent, about to be compiled, doesn't make the cut, so
                     // I'm definitely pruned
+                    // 父对象被编译完 不符合要求 本对象一定已经被裁剪了
 
                     // if minSuffixCount2 is 1, we keep only up
                     // until the 'distinguished edge', ie we keep only the
@@ -414,12 +448,14 @@ public class FSTCompiler<T> {
                 } else {
                     // my parent, about to be compiled, does make the cut, so
                     // I'm definitely not pruned
+                    // 父对象已经编译完成  符合要求 所以本对象不需要被裁剪
                     doPrune = false;
                 }
                 doCompile = true;
             } else {
                 // if pruning is disabled (count is 0) we can always
                 // compile current node
+                // 判断本节点是否编译完成就是看 后缀Count2 是否为0
                 doCompile = minSuffixCount2 == 0;
             }
 
@@ -501,9 +537,9 @@ public class FSTCompiler<T> {
      * {@link ByteSequenceOutputs} or {@link
      * IntSequenceOutputs}) then you cannot reuse across
      * calls.
-     * 这里往 FST 中追加一个元素  看看入参
+     * 这里往 FST 中追加一个元素
      *
-     * @param input  一个int[]
+     * @param input  这个应该就是插入的数据携带的一组 权重一样的东西  长度 跟output会占用的节点数一样
      * @param output 要插入的数据
      */
     public void add(IntsRef input, T output) throws IOException {
@@ -523,6 +559,7 @@ public class FSTCompiler<T> {
     */
 
         // De-dup NO_OUTPUT since it must be a singleton:
+        // 节省内存开销 释放引用
         if (output.equals(NO_OUTPUT)) {
             output = NO_OUTPUT;
         }
@@ -531,6 +568,7 @@ public class FSTCompiler<T> {
         assert validOutput(output);
 
         //System.out.println("\nadd: " + input);
+        // TODO 特殊情况 先忽略
         if (input.length == 0) {
             // empty input: only allowed as first input.  we have
             // to special case this because the packed FST
@@ -544,10 +582,12 @@ public class FSTCompiler<T> {
         }
 
         // compare shared prefix length
+        // 这里在寻找与上一个插入的 input 相同的后缀的位置
         int pos1 = 0;
         int pos2 = input.offset;
         final int pos1Stop = Math.min(lastInput.length(), input.length);
         while (true) {
+            // 增加该元素上挂载的 input
             frontier[pos1].inputCount++;
             //System.out.println("  incr " + pos1 + " ct=" + frontier[pos1].inputCount + " n=" + frontier[pos1]);
             if (pos1 >= pos1Stop || lastInput.intAt(pos1) != input.ints[pos2]) {
@@ -556,9 +596,10 @@ public class FSTCompiler<T> {
             pos1++;
             pos2++;
         }
-        // 找到本次插入的input 和 lastInput 公共前缀的位置
+        // 找到本次插入的input 和 lastInput 公共前缀的位置  这里额外加了1
         final int prefixLenPlus1 = pos1 + 1;
 
+        // 用于存储 UnCompiledNode 的数组长度不够  需要进行扩容
         if (frontier.length < input.length + 1) {
             // 存在2种节点 一种叫 UnCompiledNode  也就是还未被冻结的节点  可能会产生新的子节点
             // 另一种是确定不会再变化的节点
@@ -571,15 +612,19 @@ public class FSTCompiler<T> {
 
         // minimize/compile states from previous input's
         // orphan'd suffix
+        // 每次插入新的数据时 无法被共享的后缀就要被冻结
         freezeTail(prefixLenPlus1);
 
         // init tail states for current input
         for (int idx = prefixLenPlus1; idx <= input.length; idx++) {
+            // 从无法被共享的位置开始  将数据 挨个插入到 UnCompiledNode
             frontier[idx - 1].addArc(input.ints[input.offset + idx - 1],
                     frontier[idx]);
+            // 增加计数器
             frontier[idx].inputCount++;
         }
 
+        // 找到最后一个节点  如果该节点与之前的节点不同 就需要设置成末尾节点
         final UnCompiledNode<T> lastNode = frontier[input.length];
         if (lastInput.length() != input.length || prefixLenPlus1 != input.length + 1) {
             lastNode.isFinal = true;
@@ -588,10 +633,13 @@ public class FSTCompiler<T> {
 
         // push conflicting outputs forward, only as far as
         // needed
+        // 如果有冲突的话 重新分配 output值
         for (int idx = 1; idx < prefixLenPlus1; idx++) {
+            // 从最前面开始 直到共享前缀的末尾
             final UnCompiledNode<T> node = frontier[idx];
             final UnCompiledNode<T> parentNode = frontier[idx - 1];
 
+            // 返回父节点挂载的 多个 arc的最后一个
             final T lastOutput = parentNode.getLastOutput(input.ints[input.offset + idx - 1]);
             assert validOutput(lastOutput);
 
@@ -599,16 +647,22 @@ public class FSTCompiler<T> {
             final T wordSuffix;
 
             if (lastOutput != NO_OUTPUT) {
+                // 计算公共前缀
                 commonOutputPrefix = fst.outputs.common(output, lastOutput);
                 assert validOutput(commonOutputPrefix);
+                // 计算新的后缀
                 wordSuffix = fst.outputs.subtract(lastOutput, commonOutputPrefix);
                 assert validOutput(wordSuffix);
+                // 把最后一个节点的 output 更新成了 公共后缀
                 parentNode.setLastOutput(input.ints[input.offset + idx - 1], commonOutputPrefix);
+                // 为当前节点下所有arc 都追加一个固定的前缀
                 node.prependOutput(wordSuffix);
             } else {
+                // 如果最后一个 output 是 NO_OUTPUT
                 commonOutputPrefix = wordSuffix = NO_OUTPUT;
             }
 
+            // 将输出数据变成 2个数据的交集
             output = fst.outputs.subtract(output, commonOutputPrefix);
             assert validOutput(output);
         }
@@ -705,6 +759,9 @@ public class FSTCompiler<T> {
      * 对应一个已经被 freeze的节点
      */
     static final class CompiledNode implements Node {
+        /**
+         * 地址信息
+         */
         long node;
 
         @Override
@@ -749,8 +806,7 @@ public class FSTCompiler<T> {
         /**
          * @param depth The node's depth starting from the automaton root. Needed for
          *              LUCENE-2934 (node expansion based on conditions other than the
-         *              fanout size).
-         *              通过一个 持有者对象 和一个depth 进行初始化
+         *              fanout size)
          */
         @SuppressWarnings({"rawtypes", "unchecked"})
         UnCompiledNode(FSTCompiler<T> owner, int depth) {
@@ -790,8 +846,8 @@ public class FSTCompiler<T> {
 
         /**
          * 添加一个新的arc   此时添加的节点 不是作为final节点
-         * @param label
-         * @param target
+         * @param label   权重值
+         * @param target  arc连接的节点
          */
         void addArc(int label, Node target) {
             assert label >= 0;
@@ -806,7 +862,6 @@ public class FSTCompiler<T> {
                 }
                 arcs = newArcs;
             }
-            // 找到目标节点 并进行赋值     不需要判断相同前缀什么的吗???
             final Arc<T> arc = arcs[numArcs++];
             arc.label = label;
             arc.target = target;

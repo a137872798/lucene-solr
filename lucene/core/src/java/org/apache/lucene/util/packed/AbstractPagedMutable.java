@@ -59,8 +59,8 @@ public abstract class AbstractPagedMutable<T extends AbstractPagedMutable<T>> ex
 
     /**
      * @param bitsPerValue 填入的每个值占用多少bit
-     * @param size         初始大小
-     * @param pageSize     每页存储多少数据
+     * @param size         允许存储多少元素 (还要乘上位数才知道占用多少位)
+     * @param pageSize     每页存储多少元素
      */
     AbstractPagedMutable(int bitsPerValue, long size, int pageSize) {
         this.bitsPerValue = bitsPerValue;

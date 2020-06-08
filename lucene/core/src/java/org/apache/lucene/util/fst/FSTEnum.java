@@ -27,6 +27,7 @@ import static org.apache.lucene.util.fst.FST.Arc.BitTable;
 /** Can next() and advance() through the terms in an FST
  *
  * @lucene.experimental
+ * 在 lucene中 迭代器都被叫做 Enum
 */
 
 abstract class FSTEnum<T> {
