@@ -85,6 +85,7 @@ public class FSTCompiler<T> {
     // current "frontier"
     // 每次插入数据时 都会被封装成 UnCompiledNode  每当确定前面的数据不会改变时 会调用freeze 将node固化
     // Compiler 被创建时 使用10个对象填充该数组
+    // frontier[0] 是根节点 此时还没有任何数据  当插入第一个数据时 根节点会往下延申 通过 arc关联到下一个节点
     private UnCompiledNode<T>[] frontier;
 
     // Used for the BIT_TARGET_NEXT optimization (whereby
@@ -464,6 +465,7 @@ public class FSTCompiler<T> {
      * {@link ByteSequenceOutputs} or {@link
      * IntSequenceOutputs}) then you cannot reuse across
      * calls.
+     * @param input  一组以 ascii写入的字符  每个元素会写入到node中
      */
     // 开始往 compiler中插入一个节点
     public void add(IntsRef input, T output) throws IOException {
@@ -492,15 +494,19 @@ public class FSTCompiler<T> {
         assert validOutput(output);
 
         //System.out.println("\nadd: " + input);
-        // 只允许传入的第一个值使用 空数据
+        // 因为本身构建 FST 的数据必须满足 已经完成排序  所以只有第一次允许写入一个空值   并且写入的位置 自然对应了 UnCompiledNode的末尾
         if (input.length == 0) {
             // empty input: only allowed as first input.  we have
             // to special case this because the packed FST
             // format cannot represent the empty input since
             // 'finalness' is stored on the incoming arc, not on
             // the node
+            // 代表该节点被多少字符(链路)共享
+            // frontier[0] 是根节点  会被所有的链路共享    匹配前缀是从根节点出发的  通过根节点延申的边  到下游节点
             frontier[0].inputCount++;
+            // 该节点可以直接作为一个终止节点
             frontier[0].isFinal = true;
+            // 当整个FST 链路中没有其他节点时  传入的 output 会作为 emptyOutput 代表整个FST 为空结构时  使用的output值
             fst.setEmptyOutput(output);
             return;
         }
@@ -508,12 +514,11 @@ public class FSTCompiler<T> {
         // compare shared prefix length
         // 找到共享前缀的偏移量
         int pos1 = 0;
-        // 找到int[]的起始偏移量
         int pos2 = input.offset;
         // 将本次插入的数据与上次插入的数据做比较 计算出相同的前缀长度 (这里有一个前提就是构建fst时 插入的数据就是顺序的)
         final int pos1Stop = Math.min(lastInput.length(), input.length);
         while (true) {
-            // 每个元素对应的应该是 字符串中某个字符
+            // 代表这个节点被共享的次数
             frontier[pos1].inputCount++;
             //System.out.println("  incr " + pos1 + " ct=" + frontier[pos1].inputCount + " n=" + frontier[pos1]);
             // 当前缀不相同时 退出循环  或者当前遍历的位置已经超过了 较小的数据的长度
@@ -646,13 +651,13 @@ public class FSTCompiler<T> {
      * Expert: holds a pending (seen but not yet serialized) arc.
      */
     // 该对象负责存储数据  并且关联到一个node对象  node实现了链表的功能
-    // 每个node下会挂载一个 Arc[]
+    // 每个node下会挂载一个 Arc[]     arc可以理解成FST 结构中的边
     static class Arc<T> {
         int label;                             // really an "unsigned" byte   这个arc所代表的值 使用ascii 代替byte
         Node target;   // 连接的下个节点  也就是先从一个node出发 它包含了一个 arc[] 然后每个arc又会连接到下一个node
         boolean isFinal;
         T output;     // out也就是类似权重的附加值了  FST的特性是每个字符串有自己的权重 而不会重复
-        T nextFinalOutput;
+        T nextFinalOutput; // 等同于 target.output
     }
 
     // NOTE: not many instances of Node or CompiledNode are in
@@ -687,13 +692,16 @@ public class FSTCompiler<T> {
     static final class UnCompiledNode<T> implements Node {
         final FSTCompiler<T> owner;
         int numArcs;
+        // arc数量为0的节点 将不会写入 FST
         Arc<T>[] arcs;
         // TODO: instead of recording isFinal/output on the
         // node, maybe we should use -1 arc to mean "end" (like
         // we do when reading the FST).  Would simplify much
         // code here...
         T output;
+        // 当该节点是 终点时  arcs[] 是空数组  并且此时 output才有值    每个节点最终都会写入到FST中
         boolean isFinal;
+        // 该节点被多少链路共享   比如 acc acd  当前节点作为连接 ac 的节点 被2条链路共享  (a,c 这种对应的是 arc.label 所以 连接ac的才是节点)
         long inputCount;
 
         /**

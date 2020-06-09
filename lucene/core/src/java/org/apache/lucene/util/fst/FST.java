@@ -60,49 +60,53 @@ import static org.apache.lucene.util.fst.FST.Arc.BitTable;
  *      documentation} for some simple examples.
  *
  * @lucene.experimental
+ * 该对象是  FST 的主体  在FSTCompiler中 开放了一个插入数据的入口 而当数据被冻结时 就会从 frontier的 UnCompiledNode 转移到  FST 中 (节点还会变成 CompiledNode)
  */
 public final class FST<T> implements Accountable {
 
   /** Specifies allowed range of each int input label for
    *  this FST. */
+  // 允许插入的字符类型
   public enum INPUT_TYPE {BYTE1, BYTE2, BYTE4}
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FST.class);
   private static final long ARC_SHALLOW_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Arc.class);
 
+  // 一个标识位
   private static final int BIT_FINAL_ARC = 1 << 0;
+
+  // 下面是各个标识常量
   static final int BIT_LAST_ARC = 1 << 1;
   static final int BIT_TARGET_NEXT = 1 << 2;
-
   // TODO: we can free up a bit if we can nuke this:
   private static final int BIT_STOP_NODE = 1 << 3;
-
   /** This flag is set if the arc has an output. */
   public static final int BIT_ARC_HAS_OUTPUT = 1 << 4;
-
   private static final int BIT_ARC_HAS_FINAL_OUTPUT = 1 << 5;
+  /** Value of the arc flags to declare a node with fixed length arcs
+   * and bit table designed for direct addressing. */
+  static final byte ARCS_FOR_DIRECT_ADDRESSING = 1 << 6;
 
   /** Value of the arc flags to declare a node with fixed length arcs
    * designed for binary search. */
   // We use this as a marker because this one flag is illegal by itself.
   public static final byte ARCS_FOR_BINARY_SEARCH = BIT_ARC_HAS_FINAL_OUTPUT;
 
-  /** Value of the arc flags to declare a node with fixed length arcs
-   * and bit table designed for direct addressing. */
-  static final byte ARCS_FOR_DIRECT_ADDRESSING = 1 << 6;
-
   /**
    * @see #shouldExpandNodeWithFixedLengthArcs
+   * 当arc采用固定长度存储时 需要满足的 depth条件
    */
   static final int FIXED_LENGTH_ARC_SHALLOW_DEPTH = 3; // 0 => only root node.
 
   /**
    * @see #shouldExpandNodeWithFixedLengthArcs
+   * 与上面的条件结合
    */
   static final int FIXED_LENGTH_ARC_SHALLOW_NUM_ARCS = 5;
 
   /**
    * @see #shouldExpandNodeWithFixedLengthArcs
+   * 当arc达到该数量时 没有depth 要求
    */
   static final int FIXED_LENGTH_ARC_DEEP_NUM_ARCS = 10;
 
@@ -131,15 +135,20 @@ public final class FST<T> implements Accountable {
   /** If arc has this label then that arc is final/accepted */
   public static final int END_LABEL = -1;
 
+  /**
+   * 标记本对象输入的类型
+   */
   final INPUT_TYPE inputType;
 
   // if non-null, this FST accepts the empty string and
   // produces this output
+  // 代表一个空的结尾
   T emptyOutput;
 
   /** A {@link BytesStore}, used during building, or during reading when
    *  the FST is very large (more than 1 GB).  If the FST is less than 1
    *  GB then bytesArray is set instead. */
+  // fst的数据会存储在该对象内
   final BytesStore bytes;
 
   private final FSTStore fstStore;
@@ -149,16 +158,23 @@ public final class FST<T> implements Accountable {
   public final Outputs<T> outputs;
 
   /** Represents a single arc. */
+  // 这个arc 对象与 FSTCompiler.Arc 不同 它没有指向下游的节点
   public static final class Arc<T> {
 
     //*** Arc fields.
-
+    // 对应该arc的文本数据
     private int label;
 
     private T output;
 
+    /**
+     * 这个应该是 node 的地址
+     */
     private long target;
 
+    /**
+     * 当前标记位
+     */
     private byte flags;
 
     private T nextFinalOutput;
