@@ -184,10 +184,12 @@ public final class LZ4 {
 
   /**
    * A record of previous occurrences of sequences of 4 bytes.
+   * 一个hash桶对象
    */
   static abstract class HashTable {
 
     /** Reset this hash table in order to compress the given content. */
+    // 重置指定范围内的数据
     abstract void reset(byte[] b, int off, int len);
 
     /**
@@ -195,6 +197,7 @@ public final class LZ4 {
      * 4 bytes as {@code b[o:o+4)}. This may only be called on strictly
      * increasing sequences of offsets. A return value of {@code -1} indicates
      * that no other index could be found. */
+    // 指定偏移量并返回对应的数据
     abstract int get(int off);
 
     /**
@@ -202,6 +205,7 @@ public final class LZ4 {
      * bytes. Unlike {@link #get}, it doesn't need to be called on increasing
      * offsets. A return value of {@code -1} indicates that no other index could
      * be found. */
+    // 返回上一个数据
     abstract int previous(int off);
 
     // For testing
@@ -211,9 +215,13 @@ public final class LZ4 {
   /**
    * Simple lossy {@link HashTable} that only stores the last ocurrence for
    * each hash on {@code 2^14} bytes of memory.
+   * 基于 LZ4Fast 相关的 hash桶
    */
   public static final class FastCompressionHashTable extends HashTable {
 
+    /**
+     * 用于存放数据的内存块
+     */
     private byte[] bytes;
     private int base;
     private int lastOff;

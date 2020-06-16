@@ -149,7 +149,9 @@ class BytesStore extends DataOutput implements Accountable {
 
   /** Absolute writeBytes without changing the current
    *  position.  Note: this cannot "grow" the bytes, so you
-   *  must only call it on already written parts. */
+   *  must only call it on already written parts.
+   * @param offset  代表该数组从哪里开始拷贝
+   */
   void writeBytes(long dest, byte[] b, int offset, int len) {
     //System.out.println("  BS.writeBytes dest=" + dest + " offset=" + offset + " len=" + len);
     assert dest + len <= getPosition(): "dest=" + dest + " pos=" + getPosition() + " len=" + len;
@@ -210,7 +212,6 @@ class BytesStore extends DataOutput implements Accountable {
   /** Absolute copy bytes self to self, without changing the
    *  position. Note: this cannot "grow" the bytes, so must
    *  only call it on already written parts. */
-  // 这里好像是在 覆盖  从src 开始读取 len的长度的数据 覆盖到从dest开始 len的位置
   public void copyBytes(long src, long dest, int len) {
     //System.out.println("BS.copyBytes src=" + src + " dest=" + dest + " len=" + len);
     assert src < dest;
@@ -241,11 +242,13 @@ class BytesStore extends DataOutput implements Accountable {
     }
     */
 
+    // 本次写入的终点
     long end = src + len;
 
     // 这里是定位终点在哪个block
     int blockIndex = (int) (end >> blockBits);
     int downTo = (int) (end & blockMask);
+    // 如果刚好写换到下一个  block 那么回到上个block的末尾
     if (downTo == 0) {
       blockIndex--;
       downTo = blockSize;
@@ -254,7 +257,7 @@ class BytesStore extends DataOutput implements Accountable {
 
     while (len > 0) {
       //System.out.println("  cycle downTo=" + downTo);
-      // 没有跨越block 可以直接读取数据
+      // 没有跨越block 可以直接写入数据
       if (len <= downTo) {
         //System.out.println("    finish");
         writeBytes(dest, block, downTo-len, len);
@@ -404,12 +407,15 @@ class BytesStore extends DataOutput implements Accountable {
     assert newLen == getPosition();
   }
 
+  /**
+   * 当FST.finish() 触发时 会转发到该方法
+   */
   public void finish() {
     if (current != null) {
-      // 将当前数据 拷贝到一个新的byte[] 中
+      // 这里创建了一个 等大的数组 将元素拷贝进去
       byte[] lastBuffer = new byte[nextWrite];
       System.arraycopy(current, 0, lastBuffer, 0, nextWrite);
-      // 将block 添加到 blocks 中 并置空 current
+      // 替换原来的数组
       blocks.set(blocks.size()-1, lastBuffer);
       current = null;
     }

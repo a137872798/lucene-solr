@@ -34,6 +34,9 @@ import org.apache.lucene.index.IndexReader;
 public final class BoostQuery extends Query {
 
   private final Query query;
+  /**
+   * 权重值 相关
+   */
   private final float boost;
 
   /** Sole constructor: wrap {@code query} in such a way that the produced

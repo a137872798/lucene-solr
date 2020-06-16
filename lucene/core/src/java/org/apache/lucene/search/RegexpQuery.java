@@ -44,6 +44,7 @@ import org.apache.lucene.util.automaton.RegExp;
  * 
  * @see RegExp
  * @lucene.experimental
+ * 基于正则表达式进行查询
  */
 public class RegexpQuery extends AutomatonQuery {
   /**

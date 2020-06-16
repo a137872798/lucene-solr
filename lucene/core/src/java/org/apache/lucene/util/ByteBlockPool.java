@@ -39,7 +39,8 @@ import static org.apache.lucene.util.RamUsageEstimator.NUM_BYTES_OBJECT_REF;
  * its length and instead allocate a new slice once they
  * hit a non-zero byte.
  *
- * @lucene.internal 一个内存池 用于重复利用 Block
+ * @lucene.internal
+ * 该对象的实现机理与 IntBlockPool 相近
  **/
 public final class ByteBlockPool implements Accountable {
     /**
@@ -49,7 +50,7 @@ public final class ByteBlockPool implements Accountable {
 
     public final static int BYTE_BLOCK_SHIFT = 15;
     /**
-     * 这是一个block的大小
+     * 这是一个block的大小  默认为  32768
      */
     public final static int BYTE_BLOCK_SIZE = 1 << BYTE_BLOCK_SHIFT;
     public final static int BYTE_BLOCK_MASK = BYTE_BLOCK_SIZE - 1;
@@ -108,7 +109,7 @@ public final class ByteBlockPool implements Accountable {
      * A simple {@link Allocator} that never recycles, but
      * tracks how much total RAM is in use.
      */
-    // 每次操作前 操作一次计数器
+    // 内部包含一个计数器 记录使用了多少byte
     public static class DirectTrackingAllocator extends Allocator {
         private final Counter bytesUsed;
 
@@ -141,31 +142,35 @@ public final class ByteBlockPool implements Accountable {
     /**
      * array of buffers currently used in the pool. Buffers are allocated if
      * needed don't modify this outside of this class.
-     * 这个对象池 本身是一个二维数组
+     * 该对象的初衷是 无法在一开始确定要分配多大的内存  所以采用了 二维数组的方式  将多个block连接起来 生成一个逻辑上的大数组
      */
     public byte[][] buffers = new byte[10][];
 
     /**
      * index into the buffers array pointing to the current buffer used as the head
+     * 一维数组的偏移量  对应的block 就是  byte[] buffer
      */
-    // 相当于二维数组的一个指针
     private int bufferUpto = -1;                        // Which buffer we are upto
     /**
      * Where we are in head buffer
+     * 当前block的相对偏移量
      */
-    // 对应正在使用的byte[] 数组 使用到的偏移量
     public int byteUpto = BYTE_BLOCK_SIZE;
 
     /**
      * Current head buffer
+     * 当前指向的 block
      */
-    // 当前 bufferUpto 指向的 数组
     public byte[] buffer;
     /**
      * Current head offset
+     * 当前block的head的起始偏移量
      */
     public int byteOffset = -BYTE_BLOCK_SIZE;
 
+    /**
+     * pool对象就是通过该对象分配内存的
+     */
     private final Allocator allocator;
 
     public ByteBlockPool(Allocator allocator) {
@@ -263,16 +268,17 @@ public final class ByteBlockPool implements Accountable {
      * Allocates a new slice with the given size.
      *
      * @see ByteBlockPool#FIRST_LEVEL_SIZE
-     * 创建一个分片对象
+     * 在某个block内部预先分配一块内存  被叫做分片 同时分片本身还可以组成一个 链表结构
      */
     public int newSlice(final int size) {
         // 代表剩余空间不足 创建一个新的buffer
         if (byteUpto > BYTE_BLOCK_SIZE - size)
             nextBuffer();
+        // 返回该分片的起点
         final int upto = byteUpto;
         // 移动到对应的位置
         byteUpto += size;
-        // 将对应的值设置成16
+        // 这个是分片的特殊标记 代表当前位置是该分片的末尾  同时通过位运算还可以得到此次分配的内存块大小
         buffer[byteUpto - 1] = 16;
         return upto;
     }
@@ -286,7 +292,7 @@ public final class ByteBlockPool implements Accountable {
     /**
      * An array holding the offset into the {@link ByteBlockPool#LEVEL_SIZE_ARRAY}
      * to quickly navigate to the next slice level.
-     * 这里数组大小分为5个级别
+     * 分片的级别
      */
     public final static int[] NEXT_LEVEL_ARRAY = {1, 2, 3, 4, 5, 6, 7, 8, 9, 9};
 
@@ -310,7 +316,7 @@ public final class ByteBlockPool implements Accountable {
      */
     public int allocSlice(final byte[] slice, final int upto) {
 
-        // 以16为单位是一个分片级别
+        // 每16作为一个级别
         final int level = slice[upto] & 15;
         // 找到该级别对应的大小
         final int newLevel = NEXT_LEVEL_ARRAY[level];
@@ -323,19 +329,20 @@ public final class ByteBlockPool implements Accountable {
         }
 
         final int newUpto = byteUpto;
-        // 获取当前byte[] 在整个池中的偏移量
+        // 计算绝对偏移量
         final int offset = newUpto + byteOffset;
         // 直接指向目标位置
         byteUpto += newSize;
 
         // Copy forward the past 3 bytes (which we are about
         // to overwrite with the forwarding address):
-        // 目标位置的指针指向 传入的分片数组
+        // 从新起点开始 将之前最后的3个值拷贝过去
         buffer[newUpto] = slice[upto - 3];
         buffer[newUpto + 1] = slice[upto - 2];
         buffer[newUpto + 2] = slice[upto - 1];
 
         // Write forwarding address at end of last slice:
+        // 使用4个位置来存储 下一个分片的地址   跟 IntBlockPool 不一样  需要使用4个byte来存储int值
         slice[upto - 3] = (byte) (offset >>> 24);
         slice[upto - 2] = (byte) (offset >>> 16);
         slice[upto - 1] = (byte) (offset >>> 8);
@@ -344,6 +351,7 @@ public final class ByteBlockPool implements Accountable {
         // Write new level:
         buffer[byteUpto - 1] = (byte) (16 | newLevel);
 
+        // 前3个位置因为 写入了上个分片的值 所以不能使用
         return newUpto + 3;
     }
 
@@ -351,46 +359,52 @@ public final class ByteBlockPool implements Accountable {
      * Fill the provided {@link BytesRef} with the bytes at the specified offset/length slice.
      * This will avoid copying the bytes, if the slice fits into a single block; otherwise, it uses
      * the provided {@link BytesRefBuilder} to copy bytes over.
+     * 将指定位置的block的数据拷贝出来 生成 BytesRef  （引用指向同一地址）
      */
     void setBytesRef(BytesRefBuilder builder, BytesRef result, long offset, int length) {
         result.length = length;
 
-        // 将偏移量转换成 buffer的下标
         int bufferIndex = (int) (offset >> BYTE_BLOCK_SHIFT);
         byte[] buffer = buffers[bufferIndex];
-        // 获取单个 byte 下的偏移量
         int pos = (int) (offset & BYTE_BLOCK_MASK);
-        // 不需要切换到下个 buffer
+
+        // 定位到block后 发现读取动作不会跨block 那么直接读取就好
         if (pos + length <= BYTE_BLOCK_SIZE) {
             // common case where the slice lives in a single block: just reference the buffer directly without copying
+            // 不经过拷贝 而是指向同一地址
             result.bytes = buffer;
             result.offset = pos;
         } else {
             // uncommon case: the slice spans at least 2 blocks, so we must copy the bytes:
-            // 开辟至少2倍的大小
+            // 扩容
             builder.grow(length);
-            // 将result内部的byte 指向 builder 将数据读取到 bytes中
+            // 将result 指向扩容后的数组
             result.bytes = builder.get().bytes;
             result.offset = 0;
-            // 读取数据
+            // 采用拷贝数据的方式
             readBytes(offset, result.bytes, 0, length);
         }
     }
 
-    // Fill in a BytesRef from term's length & bytes encoded in
-    // byte block
+    /**
+     * Fill in a BytesRef from term's length & bytes encoded in
+     * byte block
+     * @param term
+     * @param textStart  这是一个词的起点  term的存放特性是先存一个长度 然后存字符
+     */
     public void setBytesRef(BytesRef term, int textStart) {
-        // 从池中找到目标byte[]
+        // 将 term.bytes 指向了block
         final byte[] bytes = term.bytes = buffers[textStart >> BYTE_BLOCK_SHIFT];
         int pos = textStart & BYTE_BLOCK_MASK;
-        // 代表只需要读取一个 byte
+        // 代表只有低7位有数据  也就是长度只有一个byte
         if ((bytes[pos] & 0x80) == 0) {
             // length is 1 byte
             term.length = bytes[pos];
+            // 读取的起点就是 pos + 1
             term.offset = pos + 1;
         } else {
             // length is 2 bytes
-            // 需要连续读取2个byte
+            // 长度不是1就是2
             term.length = (bytes[pos] & 0x7f) + ((bytes[pos + 1] & 0xff) << 7);
             term.offset = pos + 2;
         }
@@ -400,11 +414,13 @@ public final class ByteBlockPool implements Accountable {
     /**
      * Appends the bytes in the provided {@link BytesRef} at
      * the current position.
+     * 将bytes 内部的数据追加到 block中
      */
     public void append(final BytesRef bytes) {
         int bytesLeft = bytes.length;
         int offset = bytes.offset;
         while (bytesLeft > 0) {
+            // 当前block的剩余空间
             int bufferLeft = BYTE_BLOCK_SIZE - byteUpto;
             if (bytesLeft < bufferLeft) {
                 // 当前byte有足够的空间
@@ -455,17 +471,15 @@ public final class ByteBlockPool implements Accountable {
      * value crosses a boundary, a fresh copy will be returned.
      * On the contrary to {@link #setBytesRef(BytesRef, int)}, this does not
      * expect the length to be encoded with the data.
+     * 读取block的数据
      */
     public void setRawBytesRef(BytesRef ref, final long offset) {
         int bufferIndex = (int) (offset >> BYTE_BLOCK_SHIFT);
         int pos = (int) (offset & BYTE_BLOCK_MASK);
-        // 代表没有超过当前byte[]
         if (pos + ref.length <= BYTE_BLOCK_SIZE) {
-            // 将ref内的byte 指向池内的byte[]
             ref.bytes = buffers[bufferIndex];
             ref.offset = pos;
         } else {
-            // 大小不匹配  从对应的byte中拷贝数据到目标数组中
             ref.bytes = new byte[ref.length];
             ref.offset = 0;
             readBytes(offset, ref.bytes, 0, ref.length);

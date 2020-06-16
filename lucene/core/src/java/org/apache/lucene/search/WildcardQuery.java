@@ -38,12 +38,15 @@ import org.apache.lucene.util.automaton.Operations;
  * rewrite method.
  *
  * @see AutomatonQuery
+ * 代表基于通配符进行查询
  */
 public class WildcardQuery extends AutomatonQuery {
   /** String equality with support for wildcards */
+  // 代表匹配一串值
   public static final char WILDCARD_STRING = '*';
 
   /** Char equality with support for wildcards */
+  // 代表匹配某个值
   public static final char WILDCARD_CHAR = '?';
 
   /** Escape character */

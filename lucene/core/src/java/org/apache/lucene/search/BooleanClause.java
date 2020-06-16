@@ -20,15 +20,21 @@ package org.apache.lucene.search;
 import java.util.Objects;
 
 /** A clause in a BooleanQuery. */
+
+/**
+ * 在一个 BooleanQuery中 某个被包装的Query
+ */
 public final class BooleanClause {
   
   /** Specifies how clauses are to occur in matching documents. */
   public static enum Occur {
 
     /** Use this operator for clauses that <i>must</i> appear in the matching documents. */
+    // 必须满足 Query
     MUST     { @Override public String toString() { return "+"; } },
 
     /** Like {@link #MUST} except that these clauses do not participate in scoring. */
+    // 类似于 MUST 查询的文档中必须包含某个词 不过该词不会参与打分
     FILTER   { @Override public String toString() { return "#"; } },
 
     /** Use this operator for clauses that <i>should</i> appear in the 
@@ -37,20 +43,26 @@ public final class BooleanClause {
      * for the BooleanQuery to match.
      * @see BooleanQuery.Builder#setMinimumNumberShouldMatch
      */
+    // 可以满足Query 并且满足越多分数越高
     SHOULD   { @Override public String toString() { return "";  } },
 
     /** Use this operator for clauses that <i>must not</i> appear in the matching documents.
      * Note that it is not possible to search for queries that only consist
      * of a <code>MUST_NOT</code> clause. These clauses do not contribute to the
      * score of documents. */
+    // 必须不满足Query
     MUST_NOT { @Override public String toString() { return "-"; } };
 
   }
 
   /** The query whose matching documents are combined by the boolean query.
+   * 这是一个原始的 query 对象
    */
   private final Query query;
 
+  /**
+   * 一种组合规则
+   */
   private final Occur occur;
 
 
@@ -78,6 +90,10 @@ public final class BooleanClause {
     return occur == Occur.MUST || occur == Occur.FILTER;
   }
 
+  /**
+   * 是否 参与打分
+   * @return
+   */
   public boolean isScoring() {
     return occur == Occur.MUST || occur == Occur.SHOULD;
   }

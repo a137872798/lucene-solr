@@ -51,6 +51,7 @@ import org.apache.lucene.util.automaton.LevenshteinAutomata;
  * the candidate term).  For example, FuzzyQuery on term "abcd" with maxEdits=2 will
  * not match an indexed term "ab", and FuzzyQuery on term "a" with maxEdits=2 will not
  * match an indexed term "abc".
+ * 模糊查询
  */
 public class FuzzyQuery extends MultiTermQuery {
   

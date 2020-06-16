@@ -35,10 +35,12 @@ import org.apache.lucene.search.SortField;
  * Represents a group that is found during the first pass search.
  *
  * @lucene.experimental
+ * 代表一个组对象
  */
 public class SearchGroup<T> {
 
   /** The value that defines this group  */
+  // 用于标记这个组的对象 比如 groupName
   public T groupValue;
 
   /** The sort values used during sorting. These are the
@@ -46,6 +48,7 @@ public class SearchGroup<T> {
    *  (by the groupSort) within the group.  Can be
    * <code>null</code> if <code>fillFields=false</code> had
    * been passed to {@link FirstPassGroupingCollector#getTopGroups} */
+  // 该组对象在产生时涉及到相关的排序对象
   public Object[] sortValues;
 
   @Override

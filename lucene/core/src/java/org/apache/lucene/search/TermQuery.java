@@ -34,9 +34,13 @@ import org.apache.lucene.search.similarities.Similarity;
 /**
  * A Query that matches documents containing a term. This may be combined with
  * other terms with a {@link BooleanQuery}.
+ * 基于域/词进行查询的对象
  */
 public class TermQuery extends Query {
 
+  /**
+   * 该查询对象定位了索引中的哪个词
+   */
   private final Term term;
   private final TermStates perReaderTermState;
 
@@ -164,6 +168,7 @@ public class TermQuery extends Query {
   }
 
   /** Constructs a query for the term <code>t</code>. */
+  // 通过一个词进行初始化
   public TermQuery(Term t) {
     term = Objects.requireNonNull(t);
     perReaderTermState = null;

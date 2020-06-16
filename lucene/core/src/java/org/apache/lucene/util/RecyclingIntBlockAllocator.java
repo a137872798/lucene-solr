@@ -27,27 +27,45 @@ import org.apache.lucene.util.IntBlockPool.Allocator;
  * Note: This class is not thread-safe
  * </p>
  * @lucene.internal
+ * 该对象具备回收 block的能力
  */
 public final class RecyclingIntBlockAllocator extends Allocator {
+
+  /**
+   * 维护被回收的 block的引用
+   */
   private int[][] freeByteBlocks;
+  /**
+   * 最大允许回收的数量
+   */
   private final int maxBufferedBlocks;
+  /**
+   * 当前已经回收了多少buffer
+   */
   private int freeBlocks = 0;
+  /**
+   * 一个计数器对象
+   */
   private final Counter bytesUsed;
+  /**
+   * 默认情况最多允许缓存 64个block
+   */
   public static final int DEFAULT_BUFFERED_BLOCKS = 64;
 
   /**
    * Creates a new {@link RecyclingIntBlockAllocator}
    * 
    * @param blockSize
-   *          the block size in bytes
+   *          the block size in bytes  初始化的时候要规定block的大小
    * @param maxBufferedBlocks
-   *          maximum number of buffered int block
+   *          maximum number of buffered int block   指定允许缓存的block大小
    * @param bytesUsed
-   *          {@link Counter} reference counting internally allocated bytes
+   *          {@link Counter} reference counting internally allocated bytes   计数器对象
    */
   public RecyclingIntBlockAllocator(int blockSize, int maxBufferedBlocks,
       Counter bytesUsed) {
     super(blockSize);
+    // 一开始就创建好一维数组
     freeByteBlocks = new int[maxBufferedBlocks][];
     this.maxBufferedBlocks = maxBufferedBlocks;
     this.bytesUsed = bytesUsed;
@@ -75,6 +93,10 @@ public final class RecyclingIntBlockAllocator extends Allocator {
     this(IntBlockPool.INT_BLOCK_SIZE, 64, Counter.newCounter(false));
   }
 
+  /**
+   * 获取一个block 如果有缓存的block 返回缓存的block  否则重新创建一个
+   * @return
+   */
   @Override
   public int[] getIntBlock() {
     if (freeBlocks == 0) {
@@ -82,12 +104,14 @@ public final class RecyclingIntBlockAllocator extends Allocator {
       return new int[blockSize];
     }
     final int[] b = freeByteBlocks[--freeBlocks];
+    // 记得将引用置空
     freeByteBlocks[freeBlocks] = null;
     return b;
   }
 
   @Override
   public void recycleIntBlocks(int[][] blocks, int start, int end) {
+    // 计算允许回收的量
     final int numBlocks = Math.min(maxBufferedBlocks - freeBlocks, end - start);
     final int size = freeBlocks + numBlocks;
     if (size >= freeByteBlocks.length) {
@@ -98,6 +122,7 @@ public final class RecyclingIntBlockAllocator extends Allocator {
     }
     final int stop = start + numBlocks;
     for (int i = start; i < stop; i++) {
+      // 使用该对象维护引用 并将源数组的引用释放掉
       freeByteBlocks[freeBlocks++] = blocks[i];
       blocks[i] = null;
     }
@@ -135,6 +160,7 @@ public final class RecyclingIntBlockAllocator extends Allocator {
    * @param num
    *          the number of int blocks to remove
    * @return the number of actually removed buffers
+   * 释放指定数量的 block
    */
   public int freeBlocks(int num) {
     assert num >= 0 : "free blocks must be >= 0 but was: "+ num;

@@ -24,6 +24,7 @@ import org.apache.lucene.util.BytesRef;
 
 /** 
  * This class contains utility methods and constants for DocValues
+ * 该静态类 可以提供一些常用的 DocValues 实现类    这些DocValues的作用是为查询结果提供一个排序规则
  */
 public final class DocValues {
 
@@ -63,6 +64,10 @@ public final class DocValues {
         return 0;
       }
 
+      /**
+       * 将当前文档id 以二进制的形式返回
+       * @return
+       */
       @Override
       public BytesRef binaryValue() {
         assert false;

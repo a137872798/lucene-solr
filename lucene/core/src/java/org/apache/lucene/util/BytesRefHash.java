@@ -53,17 +53,37 @@ public final class BytesRefHash implements Accountable {
 
   // the following fields are needed by comparator,
   // so package private to prevent access$-methods:
+  // 内存池对象 同时还有分片的概念
   final ByteBlockPool pool;
+
+  /**
+   * 下标作为 byteId  value是pool的大数组的偏移量
+   */
   int[] bytesStart;
 
   private final BytesRef scratch1 = new BytesRef();
   private int hashSize;
+  /**
+   * 等同于 hashSize >> 1
+   */
   private int hashHalfSize;
   private int hashMask;
+  /**
+   * 当前存储了多少数据
+   */
   private int count;
   private int lastCount = -1;
+  /**
+   * 用于存储hash值   初始状态都是-1   当对应的槽被占用的时候 存储的就是 bytesId  也就是 bytesStart的下标
+   */
   private int[] ids;
+  /**
+   * 该对象内部包含一个int[]
+   */
   private final BytesStartArray bytesStartArray;
+  /**
+   * 记录当前对象消耗了多少 byte
+   */
   private Counter bytesUsed;
 
   /**
@@ -92,6 +112,7 @@ public final class BytesRefHash implements Accountable {
     ids = new int[hashSize];
     Arrays.fill(ids, -1);
     this.bytesStartArray = bytesStartArray;
+    // 初始化一个int数组
     bytesStart = bytesStartArray.init();
     bytesUsed = bytesStartArray.bytesUsed() == null? Counter.newCounter() : bytesStartArray.bytesUsed();
     bytesUsed.addAndGet(hashSize * Integer.BYTES);
@@ -120,6 +141,7 @@ public final class BytesRefHash implements Accountable {
    * 
    * @return the given BytesRef instance populated with the bytes for the given
    *         bytesID
+   *         从池对象中读取数据
    */
   public BytesRef get(int bytesID, BytesRef ref) {
     assert bytesStart != null : "bytesStart is null - not initialized";
@@ -137,11 +159,13 @@ public final class BytesRefHash implements Accountable {
    * </p>
    *
    * @lucene.internal
+   * 紧凑化  可能初始化值的时候 ids 不是连续设置的  这里修改成连续
    */
   public int[] compact() {
     assert bytesStart != null : "bytesStart is null - not initialized";
     int upto = 0;
     for (int i = 0; i < hashSize; i++) {
+      // 代表目标值已经被设置
       if (ids[i] != -1) {
         if (upto < i) {
           ids[upto] = ids[i];
@@ -162,6 +186,7 @@ public final class BytesRefHash implements Accountable {
    * Note: This is a destructive operation. {@link #clear()} must be called in
    * order to reuse this {@link BytesRefHash} instance.
    * </p>
+   * TODO  MSB 啥玩意???
    */
   public int[] sort() {
     final int[] compact = compact();
@@ -191,6 +216,11 @@ public final class BytesRefHash implements Accountable {
     return scratch1.bytesEquals(b);
   }
 
+  /**
+   * 缩小
+   * @param targetSize
+   * @return
+   */
   private boolean shrink(int targetSize) {
     // Cannot use ArrayUtil.shrink because we require power
     // of 2:
@@ -198,10 +228,12 @@ public final class BytesRefHash implements Accountable {
     while (newSize >= 8 && newSize / 4 > targetSize) {
       newSize /= 2;
     }
+    // 只要允许缩小
     if (newSize != hashSize) {
       bytesUsed.addAndGet(Integer.BYTES * -(hashSize - newSize));
       hashSize = newSize;
       ids = new int[hashSize];
+      // 这里重置了原先的值
       Arrays.fill(ids, -1);
       hashHalfSize = newSize / 2;
       hashMask = newSize - 1;
@@ -213,18 +245,22 @@ public final class BytesRefHash implements Accountable {
 
   /**
    * Clears the {@link BytesRef} which maps to the given {@link BytesRef}
+   * 清理内部数据
    */
   public void clear(boolean resetPool) {
     lastCount = count;
     count = 0;
     if (resetPool) {
+      // 释放pool内部已经创建的block
       pool.reset(false, false); // we don't need to 0-fill the buffers
     }
     bytesStart = bytesStartArray.clear();
+    // 缩小成 lastCount
     if (lastCount != -1 && shrink(lastCount)) {
       // shrink clears the hash entries
       return;
     }
+    // 将内部数据都置成 -1
     Arrays.fill(ids, -1);
   }
 
@@ -254,26 +290,32 @@ public final class BytesRefHash implements Accountable {
    * @throws MaxBytesLengthExceededException
    *           if the given bytes are {@code > 2 +}
    *           {@link ByteBlockPool#BYTE_BLOCK_SIZE}
+   *           将某个 byte[] 写入到hash桶中
    */
   public int add(BytesRef bytes) {
     assert bytesStart != null : "Bytesstart is null - not initialized";
     final int length = bytes.length;
     // final position
+    // 计算hash值   这里已经使用线性探测法解决冲突了
     final int hashPos = findHash(bytes);
     int e = ids[hashPos];
-    
+
+    // 代表对应的bucket  还没有被抢占 这里抢占位置 并将数据写入到 block中
     if (e == -1) {
       // new entry
+      // 这里额外的2个byte 应该是用来存储长度的
       final int len2 = 2 + bytes.length;
       if (len2 + pool.byteUpto > BYTE_BLOCK_SIZE) {
         if (len2 > BYTE_BLOCK_SIZE) {
           throw new MaxBytesLengthExceededException("bytes can be at most "
               + (BYTE_BLOCK_SIZE - 2) + " in length; got " + bytes.length);
         }
+        // 当前block不够写 切换到新的 block
         pool.nextBuffer();
       }
       final byte[] buffer = pool.buffer;
       final int bufferUpto = pool.byteUpto;
+      // 该数组记录了 bytesId 与 pool绝对偏移量的映射关系
       if (count >= bytesStart.length) {
         bytesStart = bytesStartArray.grow();
         assert count < bytesStart.length + 1 : "count: " + count + " len: "
@@ -281,14 +323,17 @@ public final class BytesRefHash implements Accountable {
       }
       e = count++;
 
+      // 设置绝对偏移量
       bytesStart[e] = bufferUpto + pool.byteOffset;
 
       // We first encode the length, followed by the
       // bytes. Length is encoded as vInt, but will consume
       // 1 or 2 bytes at most (we reject too-long terms,
       // above).
+      // 当写入的长度小于128时 代表长度可以用一个byte 来表示
       if (length < 128) {
         // 1 byte to store length
+        // 先写入长度
         buffer[bufferUpto] = (byte) length;
         pool.byteUpto += length + 1;
         assert length >= 0: "Length must be positive: " + length;
@@ -303,13 +348,17 @@ public final class BytesRefHash implements Accountable {
             length);
       }
       assert ids[hashPos] == -1;
+      // 设置hash桶的 bytesId
       ids[hashPos] = e;
 
+      // 当达到半数时 进行扩容
       if (count == hashHalfSize) {
         rehash(2 * hashSize, true);
       }
       return e;
     }
+
+    // 代表当前值已经写入过了
     return -(e + 1);
   }
   
@@ -326,6 +375,11 @@ public final class BytesRefHash implements Accountable {
     return ids[findHash(bytes)];
   }
 
+  /**
+   * 根据 byte[] 计算hash值
+   * @param bytes
+   * @return
+   */
   private int findHash(BytesRef bytes) {
     assert bytesStart != null : "bytesStart is null - not initialized";
 
@@ -334,6 +388,7 @@ public final class BytesRefHash implements Accountable {
     // final position
     int hashPos = code & hashMask;
     int e = ids[hashPos];
+    // 这里会先使用线性探测法 解决冲突
     if (e != -1 && !equals(e, bytes)) {
       // Conflict; use linear probe to find an open slot
       // (see LUCENE-5604):
@@ -353,12 +408,15 @@ public final class BytesRefHash implements Accountable {
    *  directly and instead reference the byte[] term
    *  already stored by the postings BytesRefHash.  See
    *  add(int textStart) in TermsHashPerField. */
+  // 直接建立 hash桶到 block某个偏移量的关联关系   而该偏移量应该就是某个term (length + data)
   public int addByPoolOffset(int offset) {
     assert bytesStart != null : "Bytesstart is null - not initialized";
     // final position
     int code = offset;
     int hashPos = offset & hashMask;
     int e = ids[hashPos];
+
+    // 先解决hash冲突
     if (e != -1 && bytesStart[e] != offset) {
       // Conflict; use linear probe to find an open slot
       // (see LUCENE-5604):
@@ -391,6 +449,7 @@ public final class BytesRefHash implements Accountable {
   /**
    * Called when hash is too small ({@code > 50%} occupied) or too large ({@code < 20%}
    * occupied).
+   * 扩容
    */
   private void rehash(final int newSize, boolean hashOnData) {
     final int newMask = newSize - 1;
@@ -470,6 +529,7 @@ public final class BytesRefHash implements Accountable {
    *          the id to look up
    * @return the bytesStart offset into the internally used
    *         {@link ByteBlockPool} for the given id
+   *         返回 某个byte[] 对应的 block绝对偏移量
    */
   public int byteStart(int bytesID) {
     assert bytesStart != null : "bytesStart is null - not initialized";
@@ -498,11 +558,13 @@ public final class BytesRefHash implements Accountable {
   }
 
   /** Manages allocation of the per-term addresses. */
+  // 用于记录每个 term地址的对象
   public abstract static class BytesStartArray {
     /**
      * Initializes the BytesStartArray. This call will allocate memory
      * 
      * @return the initialized bytes start array
+     * 初始化一个int数组
      */
     public abstract int[] init();
 
@@ -510,6 +572,7 @@ public final class BytesRefHash implements Accountable {
      * Grows the {@link BytesStartArray}
      * 
      * @return the grown array
+     * 扩容
      */
     public abstract int[] grow();
 
@@ -517,6 +580,7 @@ public final class BytesRefHash implements Accountable {
      * clears the {@link BytesStartArray} and returns the cleared instance.
      * 
      * @return the cleared instance, this might be <code>null</code>
+     * 清空内部数据
      */
     public abstract int[] clear();
 
@@ -534,6 +598,7 @@ public final class BytesRefHash implements Accountable {
   /** A simple {@link BytesStartArray} that tracks
    *  memory allocation using a private {@link Counter}
    *  instance.  */
+  // 一个简单的实现
   public static class DirectBytesStartArray extends BytesStartArray {
     // TODO: can't we just merge this w/
     // TrackingDirectBytesStartArray...?  Just add a ctor
@@ -552,6 +617,10 @@ public final class BytesRefHash implements Accountable {
       this(initSize, Counter.newCounter());
     }
 
+    /**
+     * 将内部数组置null 后返回
+     * @return
+     */
     @Override
     public int[] clear() {
       return bytesStart = null;

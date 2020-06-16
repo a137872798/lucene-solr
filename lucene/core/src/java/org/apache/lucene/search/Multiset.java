@@ -28,9 +28,13 @@ import java.util.Map;
  * each unique element has as many occurrences in both multisets.
  * Iteration order is not specified.
  * @lucene.internal
+ * 该set 允许元素去重 （也就是不再具备set的自动去重功能）
  */
 final class Multiset<T> extends AbstractCollection<T> {
 
+  /**
+   * 这里遇到重复的应该就是增加次数
+   */
   private final Map<T, Integer> map = new HashMap<>();
   private int size;
 
@@ -55,11 +59,13 @@ final class Multiset<T> extends AbstractCollection<T> {
       @Override
       public T next() {
         if (remaining == 0) {
+          // 当剩余数量为0时 才真正往下遍历
           Map.Entry<T, Integer> next = mapIterator.next();
           current = next.getKey();
           remaining = next.getValue();
         }
         assert remaining > 0;
+        // 减少剩余数量并再次返回本对象
         remaining -= 1;
         return current;
       }

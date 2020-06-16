@@ -90,6 +90,9 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
  */
 public class IndexSearcher {
 
+  /**
+   * 针对 BooleanQuery 组合的最大查询条件数量
+   */
   static int maxClauseCount = 1024;
   private static QueryCache DEFAULT_QUERY_CACHE;
   private static QueryCachingPolicy DEFAULT_CACHING_POLICY = new UsageTrackingQueryCachingPolicy();

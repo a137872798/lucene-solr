@@ -71,7 +71,6 @@ public abstract class Query {
   /** Expert: called to re-write queries into primitive queries. For example,
    * a PrefixQuery will be rewritten into a BooleanQuery that consists
    * of TermQuerys.
-   * 基于传入的 reader 重新构建查询对象
    */
   public Query rewrite(IndexReader reader) throws IOException {
     return this;

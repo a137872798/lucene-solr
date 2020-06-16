@@ -46,6 +46,7 @@ public final class BytesRef implements Comparable<BytesRef>, Cloneable {
   public int offset;
 
   /** Length of used bytes. */
+  // bytes 中实际使用了多少bytes
   public int length;
 
   /** Create a BytesRef with {@link #EMPTY_BYTES} */

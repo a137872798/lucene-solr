@@ -29,6 +29,9 @@ class BulkOperationPacked extends BulkOperation {
    */
   private final int bitsPerValue;
 
+  /**
+   * 总计有多少 block
+   */
   private final int longBlockCount;
   /**
    * 代表 64bit  按照 bitsPerValue 划分后的值
@@ -47,12 +50,9 @@ class BulkOperationPacked extends BulkOperation {
    */
   public BulkOperationPacked(int bitsPerValue) {
     this.bitsPerValue = bitsPerValue;
-    // 如果每个值需要 64 bit来表示 也就代表该long型的 64bit都填满了
     assert bitsPerValue > 0 && bitsPerValue <= 64;
     int blocks = bitsPerValue;
 
-    // 能否被2整除    如果bitsPerValue 取的比较奇怪 那么 longValueCount 会变成64
-    // 如果是34 那么 longValueCount 就会变成 32
     while ((blocks & 1) == 0) {
       blocks >>>= 1;
     }

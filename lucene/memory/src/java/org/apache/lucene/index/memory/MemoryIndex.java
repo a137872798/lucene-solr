@@ -173,7 +173,7 @@ import org.apache.lucene.util.Version;
  * target="_blank"
  * href="http://java.sun.com/developer/technicalArticles/Programming/HPROF.html">
  * hprof tracing </a>).
- *
+ * 内存中的索引对象   用于存储 域 以及域下的域值(term)
  */
 public class MemoryIndex {
 
