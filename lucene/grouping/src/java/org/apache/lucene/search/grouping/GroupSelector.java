@@ -31,26 +31,31 @@ import org.apache.lucene.search.Scorable;
  * for each matching document.
  *
  * @param <T> the type of the group value
+ *           鉴别某个文档是否属于某个组
  */
 public abstract class GroupSelector<T> {
 
   /**
    * What to do with the current value
+   * 代表当前doc 是需要跳过还是需要被收集
    */
   public enum State { SKIP, ACCEPT }
 
   /**
    * Set the LeafReaderContext
+   * 更新reader对象 这样会采集到新的数据
    */
   public abstract void setNextReader(LeafReaderContext readerContext) throws IOException;
 
   /**
    * Set the current Scorer
+   * 设置打分对象
    */
   public abstract void setScorer(Scorable scorer) throws IOException;
 
   /**
    * Advance the GroupSelector's iterator to the given document
+   * 传入文档id 并返回处理的结果 (不属于该组需要跳过 还是属于该组需要被收集)
    */
   public abstract State advanceTo(int doc) throws IOException;
 
@@ -58,11 +63,13 @@ public abstract class GroupSelector<T> {
    * Get the group value of the current document
    *
    * N.B. this object may be reused, for a persistent version use {@link #copyValue()}
+   * 返回当前文档
    */
   public abstract T currentValue() throws IOException;
 
   /**
    * @return a copy of the group value of the current document
+   * 拷贝一份当前文档的副本
    */
   public abstract T copyValue() throws IOException;
 
@@ -73,6 +80,7 @@ public abstract class GroupSelector<T> {
    * within this set, then {@link #advanceTo(int)} will return {@link State#SKIP}
    *
    * @param groups a set of {@link SearchGroup} objects to limit selections to
+   *               设置被预先设定的组  该对象就是基于这些组来筛选的
    */
   public abstract void setGroups(Collection<SearchGroup<T>> groups);
 

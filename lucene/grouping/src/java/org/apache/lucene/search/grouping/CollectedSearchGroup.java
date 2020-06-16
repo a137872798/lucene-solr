@@ -21,8 +21,16 @@ import org.apache.lucene.search.FieldComparator; // javadocs
 /** 
  * Expert: representation of a group in {@link FirstPassGroupingCollector},
  * tracking the top doc and {@link FieldComparator} slot.
+ * 代表一个已经采集完doc的 group
  * @lucene.internal */
 public class CollectedSearchGroup<T> extends SearchGroup<T> {
+
+  /**
+   * 该组下最大的文档编号
+   */
   int topDoc;
+  /**
+   * 用于比较的一个因子   调用comparable时就是传入2个group的 该属性
+   */
   int comparatorSlot;
 }

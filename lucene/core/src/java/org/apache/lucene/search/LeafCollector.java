@@ -75,6 +75,7 @@ public interface LeafCollector {
    * that need the score of the current document (passed-in to
    * {@link #collect(int)}), should save the passed-in Scorer and call
    * scorer.score() when needed.
+   * 为该对象设置分数对象
    */
   void setScorer(Scorable scorer) throws IOException;
   
@@ -90,6 +91,7 @@ public interface LeafCollector {
    * implementations of this method should not call {@link IndexSearcher#doc(int)} or
    * {@link org.apache.lucene.index.IndexReader#document(int)} on every hit.
    * Doing so can slow searches by an order of magnitude or more.
+   * 将某个文档采集过来
    */
   void collect(int doc) throws IOException;
 

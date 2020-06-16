@@ -23,16 +23,19 @@ import java.util.Collections;
 
 /**
  * Allows access to the score of a Query
+ * 代表允许查询分数
  */
 public abstract class Scorable {
 
   /**
    * Returns the score of the current document matching the query.
+   * 获取打分结果
    */
   public abstract float score() throws IOException;
 
   /**
    * Returns the doc ID that is currently being scored.
+   * 该分数是针对哪篇 doc
    */
   public abstract int docID();
 
@@ -44,6 +47,7 @@ public abstract class Scorable {
    * This method may only be called from collectors that use
    * {@link ScoreMode#TOP_SCORES}, and successive calls may only set increasing
    * values of {@code minScore}.
+   * 设置最小竞争力的 分数 ???
    */
   public void setMinCompetitiveScore(float minScore) throws IOException {
     // no-op by default
@@ -52,6 +56,7 @@ public abstract class Scorable {
   /**
    * Returns child sub-scorers positioned on the current document
    * @lucene.experimental
+   * 获取一组子对象 每个对象都有自己的分数  那么看来 Scorable 可能是由多个分数组合成的
    */
   public Collection<ChildScorable> getChildren() throws IOException {
     return Collections.emptyList();
@@ -60,6 +65,7 @@ public abstract class Scorable {
   /** A child Scorer and its relationship to its parent.
    * the meaning of the relationship depends upon the parent query.
    * @lucene.experimental */
+  // scorable的包装对象
   public static class ChildScorable {
     /**
      * Child Scorer. (note this is typically a direct child, and may

@@ -35,10 +35,12 @@ import org.apache.lucene.search.SortField;
  * Represents a group that is found during the first pass search.
  *
  * @lucene.experimental
+ * 一个组的描述信息  配合GroupSelector 将文档按组划分
  */
 public class SearchGroup<T> {
 
   /** The value that defines this group  */
+  // 用于标明组为标识   比如组名
   public T groupValue;
 
   /** The sort values used during sorting. These are the

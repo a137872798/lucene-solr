@@ -24,6 +24,7 @@ import org.apache.lucene.util.BytesRef;
 
 /** 
  * This class contains utility methods and constants for DocValues
+ * docValues 本身是作为正向索引的一种   该对象提供了4种实现
  */
 public final class DocValues {
 
@@ -32,6 +33,7 @@ public final class DocValues {
 
   /** 
    * An empty {@link BinaryDocValues} which returns no documents
+   * 这里返回一个空的基于 二进制的 docValues
    */
   public static final BinaryDocValues emptyBinary() {
     return new BinaryDocValues() {

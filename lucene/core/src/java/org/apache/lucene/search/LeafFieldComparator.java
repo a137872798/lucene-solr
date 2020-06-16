@@ -60,6 +60,7 @@ public interface LeafFieldComparator {
    * will always be called before {@link #compareBottom}.
    * 
    * @param slot the currently weakest (sorted last) slot in the queue
+   *             设置垫底
    */
   void setBottom(final int slot) throws IOException;
 

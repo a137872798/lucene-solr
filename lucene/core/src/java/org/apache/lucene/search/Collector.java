@@ -70,11 +70,13 @@ public interface Collector {
    *
    * @param context
    *          next atomic reader context
+   *          返回一个采集文档的对象  在树形结构中 叶子应该就是doc吧
    */
   LeafCollector getLeafCollector(LeafReaderContext context) throws IOException;
   
   /**
    * Indicates what features are required from the scorer.
+   * 获取打分模式
    */
   ScoreMode scoreMode();
 }
