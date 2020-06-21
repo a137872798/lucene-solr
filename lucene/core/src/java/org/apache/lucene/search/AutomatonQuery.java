@@ -46,6 +46,7 @@ import org.apache.lucene.util.automaton.Operations;
  * do, dog, lo, and log.
  * </p>
  * @lucene.experimental
+ * 该对象基于状态机查询数据
  */
 public class AutomatonQuery extends MultiTermQuery implements Accountable {
   private static final long BASE_RAM_BYTES = RamUsageEstimator.shallowSizeOfInstance(AutomatonQuery.class);

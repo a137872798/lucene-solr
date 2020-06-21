@@ -34,6 +34,7 @@ import org.apache.lucene.util.CollectionUtil;
  * This iterates over the doc ids that are present in each given DocIdSetIterator.
  * <br>Public only for use in {@link org.apache.lucene.search.spans}.
  * @lucene.internal
+ * 一个连接的  DocIdSetIterators
  */
 public final class ConjunctionDISI extends DocIdSetIterator {
 

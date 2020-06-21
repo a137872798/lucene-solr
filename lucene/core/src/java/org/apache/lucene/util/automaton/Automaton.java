@@ -52,12 +52,13 @@ import org.apache.lucene.util.Sorter;
  *  adjacent labels going to the same dest are combined).
  *
  * @lucene.experimental */
-// 自动机
+// 该对象只是相当于一个存储状态机的容器  内部定义了一系列的映射规则
 public class Automaton implements Accountable {
 
   /** Where we next write to the int[] states; this increments by 2 for
    *  each added state because we pack a pointer to the transitions
    *  array and a count of how many transitions leave the state.  */
+  // 代表下一个状态
   private int nextState;
 
   /** Where we next write to in int[] transitions; this
@@ -68,12 +69,14 @@ public class Automaton implements Accountable {
   /** Current state we are adding transitions to; the caller
    *  must add all transitions for this state before moving
    *  onto another state. */
+  // 当前状态
   private int curState = -1;
 
   /** Index in the transitions array, where this states
    *  leaving transitions are stored, or -1 if this state
    *  has not added any transitions yet, followed by number
    *  of transitions. */
+  // 一组候选的状态
   private int[] states;
 
   private final BitSet isAccept;
@@ -97,23 +100,36 @@ public class Automaton implements Accountable {
    *           Number of states.
    * @param numTransitions
    *           Number of transitions.
+   *           在初始化状态机的时候  会定义状态的数量 以及状态转移的数量
    */
   public Automaton(int numStates, int numTransitions) {
+    // 这里使用2倍的大小是为什么???
      states = new int[numStates * 2];
      isAccept = new BitSet(numStates);
+     // 3倍的状态转换
      transitions = new int[numTransitions * 3];
   }
 
   /** Create a new state. */
+  /**
+   * 创建
+   * @return
+   */
   public int createState() {
+    // 当nextState + 2 超过数组(states)大小时  进行扩容
     growStates();
+    // nextState 每次加2  意味着 state 每次加1
     int state = nextState/2;
+    // 对应的槽初始值为-1  代表一个状态机的起点
     states[nextState] = -1;
+    // 每次创建一个新的状态时 nextState + 2
     nextState += 2;
+    // 这里返回的是下标  不代表状态
     return state;
   }
 
   /** Set or clear this state as an accept state. */
+  // 在位图中找到 某状态匹配的下标的位置 并设置  accept标识
   public void setAccept(int state, boolean accept) {
     Objects.checkIndex(state, getNumStates());
     isAccept.set(state, accept);
@@ -121,15 +137,21 @@ public class Automaton implements Accountable {
 
   /** Sugar to get all transitions for all states.  This is
    *  object-heavy; it's better to iterate state by state instead. */
+  // 获取所有的转换对象
   public Transition[][] getSortedTransitions() {
+    // 获取当前已经初始化的状态
     int numStates = getNumStates();
+    // 为每个状态创建一个   转换数组 这些转换对象描述 状态在什么条件下 如何变化
     Transition[][] transitions = new Transition[numStates][];
     for(int s=0;s<numStates;s++) {
+      // 判断对应的状态 有多少种转换方式
       int numTransitions = getNumTransitions(s);
       transitions[s] = new Transition[numTransitions];
       for(int t=0;t<numTransitions;t++) {
         Transition transition = new Transition();
+        // 通过特殊的偏移量映射方式 找到转换对象需要的属性
         getTransition(s, t, transition);
+        // 填充到目标数组中
         transitions[s][t] = transition;
       }
     }
@@ -153,39 +175,48 @@ public class Automaton implements Accountable {
   }
 
   /** Add a new transition with the specified source, dest, min, max. */
+  // 填入 相关参数追加 有关转换的信息
   public void addTransition(int source, int dest, int min, int max) {
     assert nextTransition%3 == 0;
 
+    // 确保 source/dest 小于 bounds
     int bounds = nextState/2;
     Objects.checkIndex(source, bounds);
     Objects.checkIndex(dest, bounds);
 
+    // 注意扩容  该容器与 states 不同 每次递增3个值
     growTransitions();
     if (curState != source) {
+      // 接收当前状态
       if (curState != -1) {
         finishCurrentState();
       }
 
       // Move to next source:
+      // 冻结完毕后 切换当前的状态
       curState = source;
       if (states[2*curState] != -1) {
         throw new IllegalStateException("from state (" + source + ") already had transitions added");
       }
       assert states[2*curState+1] == 0;
+      // 将 state目标位置的值 标记成 nextTransition
       states[2*curState] = nextTransition;
     }
 
+    // 将目标值 连续插入到数组中
     transitions[nextTransition++] = dest;
     transitions[nextTransition++] = min;
     transitions[nextTransition++] = max;
 
     // Increment transition count for this state
+    // 代表当前位置增加了一种转换状态
     states[2*curState+1]++;
   }
 
   /** Add a [virtual] epsilon transition between source and dest.
    *  Dest state must already have all transitions added because this
    *  method simply copies those same transitions over to source. */
+  // 发起一次 从 source到 dest的转换
   public void addEpsilon(int source, int dest) {
     Transition t = new Transition();
     int count = initTransition(dest, t);
@@ -234,7 +265,9 @@ public class Automaton implements Accountable {
   }
 
   /** Freezes the last state, sorting and reducing the transitions. */
+  // 冻结当前状态
   private void finishCurrentState() {
+    // 这里是定位到当前状态对应的 转换对象
     int numTransitions = states[2*curState+1];
     assert numTransitions > 0;
 
@@ -328,6 +361,7 @@ public class Automaton implements Accountable {
   // TODO: add finish() to shrink wrap the arrays?
 
   /** How many states this automaton has. */
+  // 当前被使用的槽
   public int getNumStates() {
     return nextState/2;
   }
@@ -338,8 +372,10 @@ public class Automaton implements Accountable {
   }
   
   /** How many transitions this state has. */
+  // 获取某状态的转换方式
   public int getNumTransitions(int state) {
     assert state >= 0;
+    // 2倍状态下标的位置存放的就是转换的数量
     int count = states[2*state+1];
     if (count == -1) {
       return 0;
@@ -349,6 +385,7 @@ public class Automaton implements Accountable {
   }
 
   private void growStates() {
+    // 当下一个状态 + 2 超过了存储状态的数组 那么就进行扩容
     if (nextState+2 > states.length) {
       states = ArrayUtil.grow(states, nextState+2);
     }
@@ -472,6 +509,7 @@ public class Automaton implements Accountable {
    *  leaving the specified state.  You must call {@link #getNextTransition} to
    *  get each transition.  Returns the number of transitions
    *  leaving this state. */
+  // 初始化转换对象
   public int initTransition(int state, Transition t) {
     assert state < nextState/2: "state=" + state + " nextState=" + nextState;
     t.source = state;
@@ -530,8 +568,10 @@ public class Automaton implements Accountable {
   /** Fill the provided {@link Transition} with the index'th
    *  transition leaving the specified state. */
   public void getTransition(int state, int index, Transition t) {
+    //  又是压缩的套路  state能够通过某种发则找到当前支持的转换数量  然后再通过下面的公式得到新的下标
     int i = states[2*state] + 3*index;
     t.source = state;
+    // 从该下标开始连续读取3个值 分别是 Transition 需要的属性
     t.dest = transitions[i++];
     t.min = transitions[i++];
     t.max = transitions[i++];

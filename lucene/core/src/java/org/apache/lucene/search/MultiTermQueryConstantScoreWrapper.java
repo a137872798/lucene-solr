@@ -40,16 +40,29 @@ import org.apache.lucene.util.DocIdSetBuilder;
  * that returns a constant score and otherwise fills a
  * bit set with matches and builds a Scorer on top of
  * this bit set.
+ * 代表一个范围查询的包装对象  被包装的对象必须是 MultiTermQuery 的子类
  */
 final class MultiTermQueryConstantScoreWrapper<Q extends MultiTermQuery> extends Query {
 
   // mtq that matches 16 terms or less will be executed as a regular disjunction
   private static final int BOOLEAN_REWRITE_TERM_COUNT_THRESHOLD = 16;
 
+  /**
+   * 描述 term 以及其状态的一个bean
+   */
   private static class TermAndState {
+    /**
+     * 数据实体
+     */
     final BytesRef term;
     final TermState state;
+    /**
+     * 在某个文档中出现的次数
+     */
     final int docFreq;
+    /**
+     * 在所有文档中出现的次数
+     */
     final long totalTermFreq;
 
     TermAndState(BytesRef term, TermState state, int docFreq, long totalTermFreq) {
@@ -60,6 +73,9 @@ final class MultiTermQueryConstantScoreWrapper<Q extends MultiTermQuery> extends
     }
   }
 
+  /**
+   * 包含一个权重值 以及一组 docId
+   */
   private static class WeightOrDocIdSet {
     final Weight weight;
     final DocIdSet set;
@@ -75,6 +91,9 @@ final class MultiTermQueryConstantScoreWrapper<Q extends MultiTermQuery> extends
     }
   }
 
+  /**
+   * 查询对象  必须是MultiTermQuery的子类
+   */
   protected final Q query;
 
   /**
@@ -107,6 +126,14 @@ final class MultiTermQueryConstantScoreWrapper<Q extends MultiTermQuery> extends
   /** Returns the field name for this query */
   public final String getField() { return query.getField(); }
 
+  /**
+   * 核心就是重写了该方法 并返回一个常量打分对象
+   * @param searcher
+   * @param scoreMode     How the produced scorers will be consumed.
+   * @param boost         The boost that is propagated by the parent queries.
+   * @return
+   * @throws IOException
+   */
   @Override
   public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
     return new ConstantScoreWeight(this, boost) {

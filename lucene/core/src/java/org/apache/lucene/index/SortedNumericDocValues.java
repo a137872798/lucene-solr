@@ -22,6 +22,7 @@ import java.io.IOException;
 /**
  * A list of per-document numeric values, sorted 
  * according to {@link Long#compare(long, long)}.
+ * 该对象与 NumericDocValues 不同   相同域名可以存在多个域值 这时就体现出sorted的语义
  */
 public abstract class SortedNumericDocValues extends DocValuesIterator {
   

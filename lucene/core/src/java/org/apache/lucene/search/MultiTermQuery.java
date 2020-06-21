@@ -62,13 +62,26 @@ import org.apache.lucene.util.AttributeSource;
  * Note that org.apache.lucene.queryparser.classic.QueryParser produces
  * MultiTermQueries using {@link #CONSTANT_SCORE_REWRITE}
  * by default.
+ * 代表查询结果是多个值
  */
 public abstract class MultiTermQuery extends Query {
+  /**
+   * 查询的多个词 属于哪个域
+   */
   protected final String field;
   protected RewriteMethod rewriteMethod = CONSTANT_SCORE_REWRITE;
 
   /** Abstract class that defines how the query is rewritten. */
+  // 该对象描述了 如何重写一个 query对象
   public static abstract class RewriteMethod {
+    /**
+     * IndexReader 可以理解为读取索引的对象  并且应该是一个树结构  因为一次性加载所有的索引 内存会吃不消 所以每次都只加载部分数据
+     * @param reader
+     * @param query
+     * @return
+     * @throws IOException
+     * 基于当前最新的 reader对象 更新query
+     */
     public abstract Query rewrite(IndexReader reader, MultiTermQuery query) throws IOException;
     /**
      * Returns the {@link MultiTermQuery}s {@link TermsEnum}
@@ -89,6 +102,7 @@ public abstract class MultiTermQuery extends Query {
    *  matched documents is non-trivial. Also, it will never
    *  hit an errant {@link IndexSearcher.TooManyClauses}
    *  exception.
+   *  该对象会将 query 包装成 MultiTermQueryConstantScoreWrapper  其中重写了 createWeight方法
    *
    *  @see #setRewriteMethod */
   public static final RewriteMethod CONSTANT_SCORE_REWRITE = new RewriteMethod() {
