@@ -88,6 +88,7 @@ import org.apache.lucene.util.RoaringDocIdSet;
  * This ensures locality and keeps logistics simple.
  *
  * @lucene.internal
+ * docId的迭代器   在很多场景下会需要迭代docId  比如查看某个段下 多少个文档设置了某个域
  */
 final class IndexedDISI extends DocIdSetIterator {
 

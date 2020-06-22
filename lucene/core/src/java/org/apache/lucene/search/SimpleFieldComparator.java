@@ -31,12 +31,23 @@ public abstract class SimpleFieldComparator<T> extends FieldComparator<T> implem
   /** This method is called before collecting <code>context</code>. */
   protected abstract void doSetNextReader(LeafReaderContext context) throws IOException;
 
+  /**
+   * 先根据上下文对象 切换到下一个叶比较对象
+   * @param context current reader context
+   * @return
+   * @throws IOException
+   */
   @Override
   public final LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
     doSetNextReader(context);
     return this;
   }
 
+  /**
+   * 默认情况下 忽略打分对象
+   * @param scorer Scorer instance that you should use to
+   * @throws IOException
+   */
   @Override
   public void setScorer(Scorable scorer) throws IOException {}
 }

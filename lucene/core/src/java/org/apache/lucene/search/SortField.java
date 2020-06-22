@@ -37,12 +37,13 @@ public class SortField {
 
   /**
    * Specifies the type of the terms to be sorted, or special types such as CUSTOM
-   * 字段类型
+   * 代表排序类型
    */
   public static enum Type {
 
     /** Sort by document score (relevance).  Sort values are Float and higher
      * values are at the front. */
+    // 将结果按照文档得分排序
     SCORE,
 
     /** Sort by document number (index order).  Sort values are Integer and lower
@@ -52,7 +53,7 @@ public class SortField {
 
     /** Sort using term values as Strings.  Sort values are String and lower
      * values are at the front. */
-    // 使用某个string类型的词排序
+    // 使用string内部携带的 ord属性进行排序
     STRING,
 
     /** Sort using term values as encoded Integers.  Sort values are Integer and
@@ -80,6 +81,7 @@ public class SortField {
      * value (using String.compareTo) for all comparisons.
      * This is typically slower than {@link #STRING}, which
      * uses ordinals to do the sorting. */
+    // 将字符串按照字典顺序挨个比较
     STRING_VAL,
 
     /** Force rewriting of SortField using {@link SortField#rewrite(IndexSearcher)}

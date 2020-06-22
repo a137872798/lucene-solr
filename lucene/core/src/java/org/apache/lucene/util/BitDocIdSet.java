@@ -23,6 +23,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 /**
  * Implementation of the {@link DocIdSet} interface on top of a {@link BitSet}.
  * @lucene.internal
+ * 该存储容器内部通过 BitSet 存储数据   返回的迭代器就是从 BitSet 中读取数据
  */
 public class BitDocIdSet extends DocIdSet {
 

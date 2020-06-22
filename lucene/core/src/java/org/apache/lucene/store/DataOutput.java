@@ -190,7 +190,6 @@ public abstract class DataOutput {
   public final void writeVInt(int i) throws IOException {
     // 一个byte 的大小是256 而0x7F 是127 换算成位 就是 7位  也就是该int值每次都是按7位来取的
     while ((i & ~0x7F) != 0) {
-      // TODO 这里会在最高位第8位补上 1  应该是一种特殊的策略  比如一个占位符  比如说查看某个VByte值时 发现高位是1 代表这块内存本身存储的不一样是一个byte
       // 就需要在往高位读取 直到发现某个 VByte的高位为0
       writeByte((byte)((i & 0x7F) | 0x80));
       i >>>= 7;

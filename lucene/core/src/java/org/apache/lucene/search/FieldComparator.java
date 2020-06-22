@@ -17,7 +17,6 @@
 package org.apache.lucene.search;
 
 
-
 import java.io.IOException;
 
 import org.apache.lucene.index.BinaryDocValues;
@@ -47,888 +46,1097 @@ import org.apache.lucene.util.BytesRefBuilder;
  * {@link LeafFieldComparator} which also needs to interact
  * with the {@link FieldValueHitQueue} but can optimize based
  * on the segment to collect.</p>
- * 
+ *
  * <p>The following functions need to be implemented</p>
  * <ul>
- *  <li> {@link #compare} Compare a hit at 'slot a'
- *       with hit 'slot b'.
- * 
- *  <li> {@link #setTopValue} This method is called by
- *       {@link TopFieldCollector} to notify the
- *       FieldComparator of the top most value, which is
- *       used by future calls to
- *       {@link LeafFieldComparator#compareTop}.
- * 
- *  <li> {@link #getLeafComparator(org.apache.lucene.index.LeafReaderContext)} Invoked
- *       when the search is switching to the next segment.
- *       You may need to update internal state of the
- *       comparator, for example retrieving new values from
- *       DocValues.
+ * <li> {@link #compare} Compare a hit at 'slot a'
+ * with hit 'slot b'.
  *
- *  <li> {@link #value} Return the sort value stored in
- *       the specified slot.  This is only called at the end
- *       of the search, in order to populate {@link
- *       FieldDoc#fields} when returning the top results.
+ * <li> {@link #setTopValue} This method is called by
+ * {@link TopFieldCollector} to notify the
+ * FieldComparator of the top most value, which is
+ * used by future calls to
+ * {@link LeafFieldComparator#compareTop}.
+ *
+ * <li> {@link #getLeafComparator(org.apache.lucene.index.LeafReaderContext)} Invoked
+ * when the search is switching to the next segment.
+ * You may need to update internal state of the
+ * comparator, for example retrieving new values from
+ * DocValues.
+ *
+ * <li> {@link #value} Return the sort value stored in
+ * the specified slot.  This is only called at the end
+ * of the search, in order to populate {@link
+ * FieldDoc#fields} when returning the top results.
  * </ul>
  *
+ * @lucene.experimental 对查询结果进行排序
  * @see LeafFieldComparator
- * @lucene.experimental
- * 有关查询结果排序 是依赖于 FieldComparator 的
  */
 public abstract class FieldComparator<T> {
 
-  /**
-   * Compare hit at slot1 with hit at slot2.
-   * 
-   * @param slot1 first slot to compare
-   * @param slot2 second slot to compare
-   * @return any {@code N < 0} if slot2's value is sorted after
-   * slot1, any {@code N > 0} if the slot2's value is sorted before
-   * slot1 and {@code 0} if they are equal
-   */
-  public abstract int compare(int slot1, int slot2);
-
-  /**
-   * Record the top value, for future calls to {@link
-   * LeafFieldComparator#compareTop}.  This is only called for searches that
-   * use searchAfter (deep paging), and is called before any
-   * calls to {@link #getLeafComparator(LeafReaderContext)}.
-   */
-  public abstract void setTopValue(T value);
-
-  /**
-   * Return the actual value in the slot.
-   *
-   * @param slot the value
-   * @return value in this slot
-   */
-  public abstract T value(int slot);
-
-  /**
-   * Get a per-segment {@link LeafFieldComparator} to collect the given
-   * {@link org.apache.lucene.index.LeafReaderContext}. All docIDs supplied to
-   * this {@link LeafFieldComparator} are relative to the current reader (you
-   * must add docBase if you need to map it to a top-level docID).
-   * 
-   * @param context current reader context
-   * @return the comparator to use for this segment
-   * @throws IOException if there is a low-level IO error
-   */
-  public abstract LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException;
-
-  /** Returns a negative integer if first is less than second,
-   *  0 if they are equal and a positive integer otherwise. Default
-   *  impl to assume the type implements Comparable and
-   *  invoke .compareTo; be sure to override this method if
-   *  your FieldComparator's type isn't a Comparable or
-   *  if your values may sometimes be null */
-  @SuppressWarnings("unchecked")
-  public int compareValues(T first, T second) {
-    if (first == null) {
-      if (second == null) {
-        return 0;
-      } else {
-        return -1;
-      }
-    } else if (second == null) {
-      return 1;
-    } else {
-      return ((Comparable<T>) first).compareTo(second);
-    }
-  }
-
-
-  /**
-   * Base FieldComparator class for numeric types
-   */
-  public static abstract class NumericComparator<T extends Number> extends SimpleFieldComparator<T> {
-    protected final T missingValue;
-    protected final String field;
-    protected NumericDocValues currentReaderValues;
-    
-    public NumericComparator(String field, T missingValue) {
-      this.field = field;
-      this.missingValue = missingValue;
-    }
-
-    @Override
-    protected void doSetNextReader(LeafReaderContext context) throws IOException {
-      currentReaderValues = getNumericDocValues(context, field);
-    }
-    
-    /** Retrieves the NumericDocValues for the field in this segment */
-    protected NumericDocValues getNumericDocValues(LeafReaderContext context, String field) throws IOException {
-      return DocValues.getNumeric(context.reader(), field);
-    }
-  }
-
-  /** Parses field's values as double (using {@link
-   *  org.apache.lucene.index.LeafReader#getNumericDocValues} and sorts by ascending value */
-  // 基于 double的一个比较函数
-  public static class DoubleComparator extends NumericComparator<Double> {
-    private final double[] values;
-    private double bottom;
-    private double topValue;
-
-    /** 
-     * Creates a new comparator based on {@link Double#compare} for {@code numHits}.
-     * When a document has no value for the field, {@code missingValue} is substituted.
+    /**
+     * Compare hit at slot1 with hit at slot2.
+     *
+     * @param slot1 first slot to compare
+     * @param slot2 second slot to compare
+     * @return any {@code N < 0} if slot2's value is sorted after
+     * slot1, any {@code N > 0} if the slot2's value is sorted before
+     * slot1 and {@code 0} if they are equal
      */
-    public DoubleComparator(int numHits, String field, Double missingValue) {
-      super(field, missingValue != null ? missingValue : 0.0);
-      // 这里只是初始化数组 还没有赋值
-      values = new double[numHits];
-    }
+    public abstract int compare(int slot1, int slot2);
 
-    private double getValueForDoc(int doc) throws IOException {
-      if (currentReaderValues.advanceExact(doc)) {
-        return Double.longBitsToDouble(currentReaderValues.longValue());
-      } else {
-        return missingValue;
-      }
-    }
-
-    @Override
-    public int compare(int slot1, int slot2) {
-      return Double.compare(values[slot1], values[slot2]);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      return Double.compare(bottom, getValueForDoc(doc));
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      values[slot] = getValueForDoc(doc);
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = values[bottom];
-    }
-
-    @Override
-    public void setTopValue(Double value) {
-      topValue = value;
-    }
-
-    @Override
-    public Double value(int slot) {
-      return Double.valueOf(values[slot]);
-    }
-
-    @Override
-    public int compareTop(int doc) throws IOException {
-      return Double.compare(topValue, getValueForDoc(doc));
-    }
-  }
-
-  /** Parses field's values as float (using {@link
-   *  org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value */
-  public static class FloatComparator extends NumericComparator<Float> {
-    private final float[] values;
-    private float bottom;
-    private float topValue;
-
-    /** 
-     * Creates a new comparator based on {@link Float#compare} for {@code numHits}.
-     * When a document has no value for the field, {@code missingValue} is substituted. 
+    /**
+     * Record the top value, for future calls to {@link
+     * LeafFieldComparator#compareTop}.  This is only called for searches that
+     * use searchAfter (deep paging), and is called before any
+     * calls to {@link #getLeafComparator(LeafReaderContext)}.
+     * 指定排序结果中最大的值
      */
-    public FloatComparator(int numHits, String field, Float missingValue) {
-      super(field, missingValue != null ? missingValue : 0.0f);
-      values = new float[numHits];
-    }
-    
-    private float getValueForDoc(int doc) throws IOException {
-      if (currentReaderValues.advanceExact(doc)) {
-        return Float.intBitsToFloat((int) currentReaderValues.longValue());
-      } else {
-        return missingValue;
-      }
-    }
+    public abstract void setTopValue(T value);
 
-    @Override
-    public int compare(int slot1, int slot2) {
-      return Float.compare(values[slot1], values[slot2]);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      return Float.compare(bottom, getValueForDoc(doc));
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      values[slot] = getValueForDoc(doc);
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = values[bottom];
-    }
-
-    @Override
-    public void setTopValue(Float value) {
-      topValue = value;
-    }
-
-    @Override
-    public Float value(int slot) {
-      return Float.valueOf(values[slot]);
-    }
-
-    @Override
-    public int compareTop(int doc) throws IOException {
-      return Float.compare(topValue, getValueForDoc(doc));
-    }
-  }
-
-  /** Parses field's values as int (using {@link
-   *  org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value */
-  public static class IntComparator extends NumericComparator<Integer> {
-    private final int[] values;
-    private int bottom;                           // Value of bottom of queue
-    private int topValue;
-
-    /** 
-     * Creates a new comparator based on {@link Integer#compare} for {@code numHits}.
-     * When a document has no value for the field, {@code missingValue} is substituted. 
+    /**
+     * Return the actual value in the slot.
+     *
+     * @param slot the value
+     * @return value in this slot
+     * 通过指定槽的位置 返回对应的值
      */
-    public IntComparator(int numHits, String field, Integer missingValue) {
-      super(field, missingValue != null ? missingValue : 0);
-      //System.out.println("IntComparator.init");
-      //new Throwable().printStackTrace(System.out);
-      values = new int[numHits];
-    }
+    public abstract T value(int slot);
 
-    private int getValueForDoc(int doc) throws IOException {
-      if (currentReaderValues.advanceExact(doc)) {
-        return (int) currentReaderValues.longValue();
-      } else {
-        return missingValue;
-      }
-    }
-        
-    @Override
-    public int compare(int slot1, int slot2) {
-      return Integer.compare(values[slot1], values[slot2]);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      return Integer.compare(bottom, getValueForDoc(doc));
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      values[slot] = getValueForDoc(doc);
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = values[bottom];
-    }
-
-    @Override
-    public void setTopValue(Integer value) {
-      topValue = value;
-    }
-
-    @Override
-    public Integer value(int slot) {
-      return Integer.valueOf(values[slot]);
-    }
-
-    @Override
-    public int compareTop(int doc) throws IOException {
-      return Integer.compare(topValue, getValueForDoc(doc));
-    }
-  }
-
-  /** Parses field's values as long (using {@link
-   *  org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value */
-  public static class LongComparator extends NumericComparator<Long> {
-    private final long[] values;
-    private long bottom;
-    private long topValue;
-
-    /** 
-     * Creates a new comparator based on {@link Long#compare} for {@code numHits}.
-     * When a document has no value for the field, {@code missingValue} is substituted. 
+    /**
+     * Get a per-segment {@link LeafFieldComparator} to collect the given
+     * {@link org.apache.lucene.index.LeafReaderContext}. All docIDs supplied to
+     * this {@link LeafFieldComparator} are relative to the current reader (you
+     * must add docBase if you need to map it to a top-level docID).
+     *
+     * @param context current reader context
+     * @return the comparator to use for this segment
+     * @throws IOException if there is a low-level IO error
+     *                     通过指定上下文  返回一个叶比较对象
      */
-    public LongComparator(int numHits, String field, Long missingValue) {
-      super(field, missingValue != null ? missingValue : 0L);
-      values = new long[numHits];
-    }
+    public abstract LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException;
 
-    private long getValueForDoc(int doc) throws IOException {
-      if (currentReaderValues.advanceExact(doc)) {
-        return currentReaderValues.longValue();
-      } else {
-        return missingValue;
-      }
-    }
-
-    @Override
-    public int compare(int slot1, int slot2) {
-      return Long.compare(values[slot1], values[slot2]);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      return Long.compare(bottom, getValueForDoc(doc));
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      values[slot] = getValueForDoc(doc);
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = values[bottom];
-    }
-
-    @Override
-    public void setTopValue(Long value) {
-      topValue = value;
-    }
-
-    @Override
-    public Long value(int slot) {
-      return Long.valueOf(values[slot]);
-    }
-
-    @Override
-    public int compareTop(int doc) throws IOException {
-      return Long.compare(topValue, getValueForDoc(doc));
-    }
-  }
-
-  /** Sorts by descending relevance.  NOTE: if you are
-   *  sorting only by descending relevance and then
-   *  secondarily by ascending docID, performance is faster
-   *  using {@link TopScoreDocCollector} directly (which {@link
-   *  IndexSearcher#search} uses when no {@link Sort} is
-   *  specified). */
-  public static final class RelevanceComparator extends FieldComparator<Float> implements LeafFieldComparator {
-    private final float[] scores;
-    private float bottom;
-    private Scorable scorer;
-    private float topValue;
-
-    /** Creates a new comparator based on relevance for {@code numHits}. */
-    public RelevanceComparator(int numHits) {
-      scores = new float[numHits];
-    }
-
-    @Override
-    public int compare(int slot1, int slot2) {
-      return Float.compare(scores[slot2], scores[slot1]);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      float score = scorer.score();
-      assert !Float.isNaN(score);
-      return Float.compare(score, bottom);
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      scores[slot] = scorer.score();
-      assert !Float.isNaN(scores[slot]);
-    }
-
-    @Override
-    public LeafFieldComparator getLeafComparator(LeafReaderContext context) {
-      return this;
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = scores[bottom];
-    }
-
-    @Override
-    public void setTopValue(Float value) {
-      topValue = value;
-    }
-
-    @Override
-    public void setScorer(Scorable scorer) {
-      // wrap with a ScoreCachingWrappingScorer so that successive calls to
-      // score() will not incur score computation over and
-      // over again.
-      if (!(scorer instanceof ScoreCachingWrappingScorer)) {
-        this.scorer = new ScoreCachingWrappingScorer(scorer);
-      } else {
-        this.scorer = scorer;
-      }
-    }
-    
-    @Override
-    public Float value(int slot) {
-      return Float.valueOf(scores[slot]);
-    }
-
-    // Override because we sort reverse of natural Float order:
-    @Override
-    public int compareValues(Float first, Float second) {
-      // Reversed intentionally because relevance by default
-      // sorts descending:
-      return second.compareTo(first);
-    }
-
-    @Override
-    public int compareTop(int doc) throws IOException {
-      float docValue = scorer.score();
-      assert !Float.isNaN(docValue);
-      return Float.compare(docValue, topValue);
-    }
-  }
-
-  /** Sorts by ascending docID */
-  public static final class DocComparator extends FieldComparator<Integer> implements LeafFieldComparator {
-    private final int[] docIDs;
-    private int docBase;
-    private int bottom;
-    private int topValue;
-
-    /** Creates a new comparator based on document ids for {@code numHits} */
-    public DocComparator(int numHits) {
-      docIDs = new int[numHits];
-    }
-
-    @Override
-    public int compare(int slot1, int slot2) {
-      // No overflow risk because docIDs are non-negative
-      return docIDs[slot1] - docIDs[slot2];
-    }
-
-    @Override
-    public int compareBottom(int doc) {
-      // No overflow risk because docIDs are non-negative
-      return bottom - (docBase + doc);
-    }
-
-    @Override
-    public void copy(int slot, int doc) {
-      docIDs[slot] = docBase + doc;
-    }
-
-    @Override
-    public LeafFieldComparator getLeafComparator(LeafReaderContext context) {
-      // TODO: can we "map" our docIDs to the current
-      // reader? saves having to then subtract on every
-      // compare call
-      this.docBase = context.docBase;
-      return this;
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = docIDs[bottom];
-    }
-
-    @Override
-    public void setTopValue(Integer value) {
-      topValue = value;
-    }
-
-    @Override
-    public Integer value(int slot) {
-      return Integer.valueOf(docIDs[slot]);
-    }
-
-    @Override
-    public int compareTop(int doc) {
-      int docValue = docBase + doc;
-      return Integer.compare(topValue, docValue);
-    }
-
-    @Override
-    public void setScorer(Scorable scorer) {}
-  }
-  
-  /** Sorts by field's natural Term sort order, using
-   *  ordinals.  This is functionally equivalent to {@link
-   *  org.apache.lucene.search.FieldComparator.TermValComparator}, but it first resolves the string
-   *  to their relative ordinal positions (using the index
-   *  returned by {@link org.apache.lucene.index.LeafReader#getSortedDocValues(String)}), and
-   *  does most comparisons using the ordinals.  For medium
-   *  to large results, this comparator will be much faster
-   *  than {@link org.apache.lucene.search.FieldComparator.TermValComparator}.  For very small
-   *  result sets it may be slower. */
-  public static class TermOrdValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
-    /* Ords for each slot.
-       @lucene.internal */
-    final int[] ords;
-
-    /* Values for each slot.
-       @lucene.internal */
-    final BytesRef[] values;
-    private final BytesRefBuilder[] tempBRs;
-
-    /* Which reader last copied a value into the slot. When
-       we compare two slots, we just compare-by-ord if the
-       readerGen is the same; else we must compare the
-       values (slower).
-       @lucene.internal */
-    final int[] readerGen;
-
-    /* Gen of current reader we are on.
-       @lucene.internal */
-    int currentReaderGen = -1;
-
-    /* Current reader's doc ord/values.
-       @lucene.internal */
-    SortedDocValues termsIndex;
-
-    private final String field;
-
-    /* Bottom slot, or -1 if queue isn't full yet
-       @lucene.internal */
-    int bottomSlot = -1;
-
-    /* Bottom ord (same as ords[bottomSlot] once bottomSlot
-       is set).  Cached for faster compares.
-       @lucene.internal */
-    int bottomOrd;
-
-    /* True if current bottom slot matches the current
-       reader.
-       @lucene.internal */
-    boolean bottomSameReader;
-
-    /* Bottom value (same as values[bottomSlot] once
-       bottomSlot is set).  Cached for faster compares.
-      @lucene.internal */
-    BytesRef bottomValue;
-
-    /** Set by setTopValue. */
-    BytesRef topValue;
-    boolean topSameReader;
-    int topOrd;
-
-    /** -1 if missing values are sorted first, 1 if they are
-     *  sorted last */
-    final int missingSortCmp;
-    
-    /** Which ordinal to use for a missing value. */
-    final int missingOrd;
-
-    /** Creates this, sorting missing values first. */
-    public TermOrdValComparator(int numHits, String field) {
-      this(numHits, field, false);
-    }
-
-    /** Creates this, with control over how missing values
-     *  are sorted.  Pass sortMissingLast=true to put
-     *  missing values at the end. */
-    public TermOrdValComparator(int numHits, String field, boolean sortMissingLast) {
-      ords = new int[numHits];
-      values = new BytesRef[numHits];
-      tempBRs = new BytesRefBuilder[numHits];
-      readerGen = new int[numHits];
-      this.field = field;
-      if (sortMissingLast) {
-        missingSortCmp = 1;
-        missingOrd = Integer.MAX_VALUE;
-      } else {
-        missingSortCmp = -1;
-        missingOrd = -1;
-      }
-    }
-
-    private int getOrdForDoc(int doc) throws IOException {
-      if (termsIndex.advanceExact(doc)) {
-        return termsIndex.ordValue();
-      } else {
-        return -1;
-      }
-    }
-
-    @Override
-    public int compare(int slot1, int slot2) {
-      if (readerGen[slot1] == readerGen[slot2]) {
-        return ords[slot1] - ords[slot2];
-      }
-
-      final BytesRef val1 = values[slot1];
-      final BytesRef val2 = values[slot2];
-      if (val1 == null) {
-        if (val2 == null) {
-          return 0;
-        }
-        return missingSortCmp;
-      } else if (val2 == null) {
-        return -missingSortCmp;
-      }
-      return val1.compareTo(val2);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      assert bottomSlot != -1;
-      int docOrd = getOrdForDoc(doc);
-      if (docOrd == -1) {
-        docOrd = missingOrd;
-      }
-      if (bottomSameReader) {
-        // ord is precisely comparable, even in the equal case
-        return bottomOrd - docOrd;
-      } else if (bottomOrd >= docOrd) {
-        // the equals case always means bottom is > doc
-        // (because we set bottomOrd to the lower bound in
-        // setBottom):
-        return 1;
-      } else {
-        return -1;
-      }
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      int ord = getOrdForDoc(doc);
-      if (ord == -1) {
-        ord = missingOrd;
-        values[slot] = null;
-      } else {
-        assert ord >= 0;
-        if (tempBRs[slot] == null) {
-          tempBRs[slot] = new BytesRefBuilder();
-        }
-        tempBRs[slot].copyBytes(termsIndex.lookupOrd(ord));
-        values[slot] = tempBRs[slot].get();
-      }
-      ords[slot] = ord;
-      readerGen[slot] = currentReaderGen;
-    }
-    
-    /** Retrieves the SortedDocValues for the field in this segment */
-    protected SortedDocValues getSortedDocValues(LeafReaderContext context, String field) throws IOException {
-      return DocValues.getSorted(context.reader(), field);
-    }
-    
-    @Override
-    public LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
-      termsIndex = getSortedDocValues(context, field);
-      currentReaderGen++;
-
-      if (topValue != null) {
-        // Recompute topOrd/SameReader
-        int ord = termsIndex.lookupTerm(topValue);
-        if (ord >= 0) {
-          topSameReader = true;
-          topOrd = ord;
+    /**
+     * Returns a negative integer if first is less than second,
+     * 0 if they are equal and a positive integer otherwise. Default
+     * impl to assume the type implements Comparable and
+     * invoke .compareTo; be sure to override this method if
+     * your FieldComparator's type isn't a Comparable or
+     * if your values may sometimes be null
+     */
+    @SuppressWarnings("unchecked")
+    public int compareValues(T first, T second) {
+        if (first == null) {
+            if (second == null) {
+                return 0;
+            } else {
+                return -1;
+            }
+        } else if (second == null) {
+            return 1;
         } else {
-          topSameReader = false;
-          topOrd = -ord-2;
+            return ((Comparable<T>) first).compareTo(second);
         }
-      } else {
-        topOrd = missingOrd;
-        topSameReader = true;
-      }
-      //System.out.println("  getLeafComparator topOrd=" + topOrd + " topSameReader=" + topSameReader);
-
-      if (bottomSlot != -1) {
-        // Recompute bottomOrd/SameReader
-        setBottom(bottomSlot);
-      }
-
-      return this;
     }
-    
-    @Override
-    public void setBottom(final int bottom) throws IOException {
-      bottomSlot = bottom;
 
-      bottomValue = values[bottomSlot];
-      if (currentReaderGen == readerGen[bottomSlot]) {
-        bottomOrd = ords[bottomSlot];
-        bottomSameReader = true;
-      } else {
-        if (bottomValue == null) {
-          // missingOrd is null for all segments
-          assert ords[bottomSlot] == missingOrd;
-          bottomOrd = missingOrd;
-          bottomSameReader = true;
-          readerGen[bottomSlot] = currentReaderGen;
-        } else {
-          final int ord = termsIndex.lookupTerm(bottomValue);
-          if (ord < 0) {
-            bottomOrd = -ord - 2;
-            bottomSameReader = false;
-          } else {
-            bottomOrd = ord;
-            // exact value match
-            bottomSameReader = true;
-            readerGen[bottomSlot] = currentReaderGen;            
-            ords[bottomSlot] = bottomOrd;
-          }
+
+    /**
+     * Base FieldComparator class for numeric types
+     * SimpleFieldComparator 是一个骨架对象
+     * 该对象代表比较的值都是 numericDocValues 类型
+     */
+    public static abstract class NumericComparator<T extends Number> extends SimpleFieldComparator<T> {
+        protected final T missingValue;
+        /**
+         * 代表比较的域
+         */
+        protected final String field;
+        /**
+         * 该对象提供了api 负责遍历域值
+         */
+        protected NumericDocValues currentReaderValues;
+
+        /**
+         * 指定域名 和 默认值进行初始化
+         *
+         * @param field
+         * @param missingValue
+         */
+        public NumericComparator(String field, T missingValue) {
+            this.field = field;
+            this.missingValue = missingValue;
         }
-      }
-    }
 
-    @Override
-    public void setTopValue(BytesRef value) {
-      // null is fine: it means the last doc of the prior
-      // search was missing this value
-      topValue = value;
-      //System.out.println("setTopValue " + topValue);
-    }
-
-    @Override
-    public BytesRef value(int slot) {
-      return values[slot];
-    }
-
-    @Override
-    public int compareTop(int doc) throws IOException {
-
-      int ord = getOrdForDoc(doc);
-      if (ord == -1) {
-        ord = missingOrd;
-      }
-
-      if (topSameReader) {
-        // ord is precisely comparable, even in the equal
-        // case
-        //System.out.println("compareTop doc=" + doc + " ord=" + ord + " ret=" + (topOrd-ord));
-        return topOrd - ord;
-      } else if (ord <= topOrd) {
-        // the equals case always means doc is < value
-        // (because we set lastOrd to the lower bound)
-        return 1;
-      } else {
-        return -1;
-      }
-    }
-
-    @Override
-    public int compareValues(BytesRef val1, BytesRef val2) {
-      if (val1 == null) {
-        if (val2 == null) {
-          return 0;
+        @Override
+        protected void doSetNextReader(LeafReaderContext context) throws IOException {
+            currentReaderValues = getNumericDocValues(context, field);
         }
-        return missingSortCmp;
-      } else if (val2 == null) {
-        return -missingSortCmp;
-      }
-      return val1.compareTo(val2);
-    }
 
-    @Override
-    public void setScorer(Scorable scorer) {}
-  }
-  
-  /** Sorts by field's natural Term sort order.  All
-   *  comparisons are done using BytesRef.compareTo, which is
-   *  slow for medium to large result sets but possibly
-   *  very fast for very small results sets. */
-  public static class TermValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
-    
-    private final BytesRef[] values;
-    private final BytesRefBuilder[] tempBRs;
-    private BinaryDocValues docTerms;
-    private final String field;
-    private BytesRef bottom;
-    private BytesRef topValue;
-    private final int missingSortCmp;
-
-    /** Sole constructor. */
-    public TermValComparator(int numHits, String field, boolean sortMissingLast) {
-      values = new BytesRef[numHits];
-      tempBRs = new BytesRefBuilder[numHits];
-      this.field = field;
-      missingSortCmp = sortMissingLast ? 1 : -1;
-    }
-
-    private BytesRef getValueForDoc(int doc) throws IOException {
-      if (docTerms.advanceExact(doc)) {
-        return docTerms.binaryValue();
-      } else {
-        return null;
-      }
-    }
-
-    @Override
-    public int compare(int slot1, int slot2) {
-      final BytesRef val1 = values[slot1];
-      final BytesRef val2 = values[slot2];
-      return compareValues(val1, val2);
-    }
-
-    @Override
-    public int compareBottom(int doc) throws IOException {
-      final BytesRef comparableBytes = getValueForDoc(doc);
-      return compareValues(bottom, comparableBytes);
-    }
-
-    @Override
-    public void copy(int slot, int doc) throws IOException {
-      final BytesRef comparableBytes = getValueForDoc(doc);
-      if (comparableBytes == null) {
-        values[slot] = null;
-      } else {
-        if (tempBRs[slot] == null) {
-          tempBRs[slot] = new BytesRefBuilder();
+        /**
+         * Retrieves the NumericDocValues for the field in this segment
+         */
+        // 通过context.reader读取域名对应的域值
+        protected NumericDocValues getNumericDocValues(LeafReaderContext context, String field) throws IOException {
+            return DocValues.getNumeric(context.reader(), field);
         }
-        tempBRs[slot].copyBytes(comparableBytes);
-        values[slot] = tempBRs[slot].get();
-      }
     }
 
-    /** Retrieves the BinaryDocValues for the field in this segment */
-    protected BinaryDocValues getBinaryDocValues(LeafReaderContext context, String field) throws IOException {
-      return DocValues.getBinary(context.reader(), field);
-    }
+    /**
+     * Parses field's values as double (using {@link
+     * org.apache.lucene.index.LeafReader#getNumericDocValues} and sorts by ascending value
+     */
+    // 申明 域值本身是double类型
+    public static class DoubleComparator extends NumericComparator<Double> {
 
-    @Override
-    public LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
-      docTerms = getBinaryDocValues(context, field);
-      return this;
-    }
-    
-    @Override
-    public void setBottom(final int bottom) {
-      this.bottom = values[bottom];
-    }
+        /**
+         * 比较器本身有一个容量 是因为只存储 TopN的数据
+         */
+        private final double[] values;
+        /**
+         * 存放最小的值  这样当values满的时候 每次只要比较最小值就可以
+         */
+        private double bottom;
+        /**
+         * topN的最大值
+         */
+        private double topValue;
 
-    @Override
-    public void setTopValue(BytesRef value) {
-      // null is fine: it means the last doc of the prior
-      // search was missing this value
-      topValue = value;
-    }
-
-    @Override
-    public BytesRef value(int slot) {
-      return values[slot];
-    }
-
-    @Override
-    public int compareValues(BytesRef val1, BytesRef val2) {
-      // missing always sorts first:
-      if (val1 == null) {
-        if (val2 == null) {
-          return 0;
+        /**
+         * Creates a new comparator based on {@link Double#compare} for {@code numHits}.
+         * When a document has no value for the field, {@code missingValue} is substituted.
+         *
+         * @param numHits      topN 的 N值
+         * @param missingValue 默认值
+         */
+        public DoubleComparator(int numHits, String field, Double missingValue) {
+            super(field, missingValue != null ? missingValue : 0.0);
+            // 这里只是初始化数组 还没有赋值
+            values = new double[numHits];
         }
-        return missingSortCmp;
-      } else if (val2 == null) {
-        return -missingSortCmp;
-      }
-      return val1.compareTo(val2);
+
+        /**
+         * 通过指定文档号的方式 获取对应的值
+         *
+         * @param doc
+         * @return
+         * @throws IOException
+         */
+        private double getValueForDoc(int doc) throws IOException {
+            // 确保当前文档号有数据
+            if (currentReaderValues.advanceExact(doc)) {
+                // 将数据读取出来
+                return Double.longBitsToDouble(currentReaderValues.longValue());
+            } else {
+                // 未命中时 使用默认值
+                return missingValue;
+            }
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            return Double.compare(values[slot1], values[slot2]);
+        }
+
+        /**
+         * 看来在遍历的过程中 使用的都是文档号  通过getValueForDoc 找到对应的值 并与bottom作比较
+         *
+         * @param doc that was hit
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            return Double.compare(bottom, getValueForDoc(doc));
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            values[slot] = getValueForDoc(doc);
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = values[bottom];
+        }
+
+        @Override
+        public void setTopValue(Double value) {
+            topValue = value;
+        }
+
+        @Override
+        public Double value(int slot) {
+            return Double.valueOf(values[slot]);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            return Double.compare(topValue, getValueForDoc(doc));
+        }
     }
 
-    @Override
-    public int compareTop(int doc) throws IOException {
-      return compareValues(topValue, getValueForDoc(doc));
+    /**
+     * Parses field's values as float (using {@link
+     * org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value
+     */
+    // 代表域值是 float类型   套路跟上面一致
+    public static class FloatComparator extends NumericComparator<Float> {
+        private final float[] values;
+        private float bottom;
+        private float topValue;
+
+        /**
+         * Creates a new comparator based on {@link Float#compare} for {@code numHits}.
+         * When a document has no value for the field, {@code missingValue} is substituted.
+         */
+        public FloatComparator(int numHits, String field, Float missingValue) {
+            super(field, missingValue != null ? missingValue : 0.0f);
+            values = new float[numHits];
+        }
+
+        private float getValueForDoc(int doc) throws IOException {
+            if (currentReaderValues.advanceExact(doc)) {
+                return Float.intBitsToFloat((int) currentReaderValues.longValue());
+            } else {
+                return missingValue;
+            }
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            return Float.compare(values[slot1], values[slot2]);
+        }
+
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            return Float.compare(bottom, getValueForDoc(doc));
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            values[slot] = getValueForDoc(doc);
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = values[bottom];
+        }
+
+        @Override
+        public void setTopValue(Float value) {
+            topValue = value;
+        }
+
+        @Override
+        public Float value(int slot) {
+            return Float.valueOf(values[slot]);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            return Float.compare(topValue, getValueForDoc(doc));
+        }
     }
 
-    @Override
-    public void setScorer(Scorable scorer) {}
-  }
+    /**
+     * Parses field's values as int (using {@link
+     * org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value
+     */
+    public static class IntComparator extends NumericComparator<Integer> {
+        private final int[] values;
+        private int bottom;                           // Value of bottom of queue
+        private int topValue;
+
+        /**
+         * Creates a new comparator based on {@link Integer#compare} for {@code numHits}.
+         * When a document has no value for the field, {@code missingValue} is substituted.
+         */
+        public IntComparator(int numHits, String field, Integer missingValue) {
+            super(field, missingValue != null ? missingValue : 0);
+            //System.out.println("IntComparator.init");
+            //new Throwable().printStackTrace(System.out);
+            values = new int[numHits];
+        }
+
+        private int getValueForDoc(int doc) throws IOException {
+            if (currentReaderValues.advanceExact(doc)) {
+                return (int) currentReaderValues.longValue();
+            } else {
+                return missingValue;
+            }
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            return Integer.compare(values[slot1], values[slot2]);
+        }
+
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            return Integer.compare(bottom, getValueForDoc(doc));
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            values[slot] = getValueForDoc(doc);
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = values[bottom];
+        }
+
+        @Override
+        public void setTopValue(Integer value) {
+            topValue = value;
+        }
+
+        @Override
+        public Integer value(int slot) {
+            return Integer.valueOf(values[slot]);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            return Integer.compare(topValue, getValueForDoc(doc));
+        }
+    }
+
+    /**
+     * Parses field's values as long (using {@link
+     * org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value
+     */
+    public static class LongComparator extends NumericComparator<Long> {
+        private final long[] values;
+        private long bottom;
+        private long topValue;
+
+        /**
+         * Creates a new comparator based on {@link Long#compare} for {@code numHits}.
+         * When a document has no value for the field, {@code missingValue} is substituted.
+         */
+        public LongComparator(int numHits, String field, Long missingValue) {
+            super(field, missingValue != null ? missingValue : 0L);
+            values = new long[numHits];
+        }
+
+        private long getValueForDoc(int doc) throws IOException {
+            if (currentReaderValues.advanceExact(doc)) {
+                return currentReaderValues.longValue();
+            } else {
+                return missingValue;
+            }
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            return Long.compare(values[slot1], values[slot2]);
+        }
+
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            return Long.compare(bottom, getValueForDoc(doc));
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            values[slot] = getValueForDoc(doc);
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = values[bottom];
+        }
+
+        @Override
+        public void setTopValue(Long value) {
+            topValue = value;
+        }
+
+        @Override
+        public Long value(int slot) {
+            return Long.valueOf(values[slot]);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            return Long.compare(topValue, getValueForDoc(doc));
+        }
+    }
+
+    /**
+     * Sorts by descending relevance.  NOTE: if you are
+     * sorting only by descending relevance and then
+     * secondarily by ascending docID, performance is faster
+     * using {@link TopScoreDocCollector} directly (which {@link
+     * IndexSearcher#search} uses when no {@link Sort} is
+     * specified).
+     */
+    // 该对象会涉及到 分数系统
+    public static final class RelevanceComparator extends FieldComparator<Float> implements LeafFieldComparator {
+        /**
+         * 存储一组分数
+         */
+        private final float[] scores;
+        /**
+         * 当前最小的分数
+         */
+        private float bottom;
+        /**
+         * 该对象负责生成分数
+         */
+        private Scorable scorer;
+        private float topValue;
+
+        /**
+         * Creates a new comparator based on relevance for {@code numHits}.
+         */
+        public RelevanceComparator(int numHits) {
+            scores = new float[numHits];
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            return Float.compare(scores[slot2], scores[slot1]);
+        }
+
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            /// 先计算分数再比较
+            float score = scorer.score();
+            assert !Float.isNaN(score);
+            return Float.compare(score, bottom);
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            scores[slot] = scorer.score();
+            assert !Float.isNaN(scores[slot]);
+        }
+
+        /**
+         * 相当于从最新的索引中计算相关数据的任务都交给了 scorer
+         * @param context current reader context
+         * @return
+         */
+        @Override
+        public LeafFieldComparator getLeafComparator(LeafReaderContext context) {
+            return this;
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = scores[bottom];
+        }
+
+        @Override
+        public void setTopValue(Float value) {
+            topValue = value;
+        }
+
+        /**
+         * 设置打分对象
+         *
+         * @param scorer Scorer instance that you should use to
+         */
+        @Override
+        public void setScorer(Scorable scorer) {
+            // wrap with a ScoreCachingWrappingScorer so that successive calls to
+            // score() will not incur score computation over and
+            // over again.
+            // 生成一个打分对象 避免重复打分
+            if (!(scorer instanceof ScoreCachingWrappingScorer)) {
+                this.scorer = new ScoreCachingWrappingScorer(scorer);
+            } else {
+                this.scorer = scorer;
+            }
+        }
+
+        @Override
+        public Float value(int slot) {
+            return Float.valueOf(scores[slot]);
+        }
+
+        // Override because we sort reverse of natural Float order:
+        @Override
+        public int compareValues(Float first, Float second) {
+            // Reversed intentionally because relevance by default
+            // sorts descending:
+            return second.compareTo(first);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            float docValue = scorer.score();
+            assert !Float.isNaN(docValue);
+            return Float.compare(docValue, topValue);
+        }
+    }
+
+    /**
+     * Sorts by ascending docID
+     */
+    // 基于文档号进行排序
+    public static final class DocComparator extends FieldComparator<Integer> implements LeafFieldComparator {
+        /**
+         * 这里存储的就是文档编号了
+         */
+        private final int[] docIDs;
+        // 看来使用差值存储规则 那么存储的id 就是一个相对值   好处是配合packedInts 可以节省空间
+        private int docBase;
+        private int bottom;
+        private int topValue;
+
+        /**
+         * Creates a new comparator based on document ids for {@code numHits}
+         */
+        public DocComparator(int numHits) {
+            docIDs = new int[numHits];
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            // No overflow risk because docIDs are non-negative
+            return docIDs[slot1] - docIDs[slot2];
+        }
+
+        @Override
+        public int compareBottom(int doc) {
+            // No overflow risk because docIDs are non-negative
+            return bottom - (docBase + doc);
+        }
+
+        @Override
+        public void copy(int slot, int doc) {
+            docIDs[slot] = docBase + doc;
+        }
+
+        @Override
+        public LeafFieldComparator getLeafComparator(LeafReaderContext context) {
+            // TODO: can we "map" our docIDs to the current
+            // reader? saves having to then subtract on every
+            // compare call
+            // 因为该对象不需要直接读取内存中最新的索引数据 只需要保存当前索引的起点就好
+            this.docBase = context.docBase;
+            return this;
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = docIDs[bottom];
+        }
+
+        @Override
+        public void setTopValue(Integer value) {
+            topValue = value;
+        }
+
+        @Override
+        public Integer value(int slot) {
+            return Integer.valueOf(docIDs[slot]);
+        }
+
+        @Override
+        public int compareTop(int doc) {
+            int docValue = docBase + doc;
+            return Integer.compare(topValue, docValue);
+        }
+
+        @Override
+        public void setScorer(Scorable scorer) {
+        }
+    }
+
+    /**
+     * Sorts by field's natural Term sort order, using
+     * ordinals.  This is functionally equivalent to {@link
+     * org.apache.lucene.search.FieldComparator.TermValComparator}, but it first resolves the string
+     * to their relative ordinal positions (using the index
+     * returned by {@link org.apache.lucene.index.LeafReader#getSortedDocValues(String)}), and
+     * does most comparisons using the ordinals.  For medium
+     * to large results, this comparator will be much faster
+     * than {@link org.apache.lucene.search.FieldComparator.TermValComparator}.  For very small
+     * result sets it may be slower.
+     */
+    // 基于词的顺序进行排序
+    public static class TermOrdValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
+        /* Ords for each slot.
+           @lucene.internal */
+        // 存储词的顺序
+        final int[] ords;
+
+        /* Values for each slot.
+           @lucene.internal */
+        // 存储词的内容  每个 Term 实质就是 BytesRef
+        final BytesRef[] values;
+        private final BytesRefBuilder[] tempBRs;
+
+        /* Which reader last copied a value into the slot. When
+           we compare two slots, we just compare-by-ord if the
+           readerGen is the same; else we must compare the
+           values (slower).
+           @lucene.internal
+           记录每个词对应的reader 的年代
+           */
+        final int[] readerGen;
+
+        /* Gen of current reader we are on.
+           @lucene.internal
+           当前读取的年代
+           */
+        int currentReaderGen = -1;
+
+        /* Current reader's doc ord/values.
+           @lucene.internal
+           该对象内部存储了读取出来的数据
+           */
+        SortedDocValues termsIndex;
+
+        /**
+         * 属于同一个域下面的词进行比较
+         */
+        private final String field;
+
+        /* Bottom slot, or -1 if queue isn't full yet
+           @lucene.internal
+           记录当前 bottom值对应的下标
+           */
+        int bottomSlot = -1;
+
+        /* Bottom ord (same as ords[bottomSlot] once bottomSlot
+           is set).  Cached for faster compares.
+           @lucene.internal */
+        int bottomOrd;
+
+        /* True if current bottom slot matches the current
+           reader.
+           @lucene.internal */
+        boolean bottomSameReader;
+
+        /* Bottom value (same as values[bottomSlot] once
+           bottomSlot is set).  Cached for faster compares.
+          @lucene.internal */
+        BytesRef bottomValue;
+
+        /**
+         * Set by setTopValue.
+         */
+        BytesRef topValue;
+        /**
+         * 当更新内存中的索引时  还能否从这块数据中找到 top
+         * 如果 top还没有设置 那么默认为true 并且 topOrd会设置一个无效值
+         */
+        boolean topSameReader;
+        /**
+         * 如果找到了 那么对应的顺序是多少
+         */
+        int topOrd;
+
+        /**
+         * -1 if missing values are sorted first, 1 if they are
+         * sorted last
+         */
+        final int missingSortCmp;
+
+        /**
+         * Which ordinal to use for a missing value.
+         * doc未命中时的顺序
+         */
+        final int missingOrd;
+
+        /**
+         * Creates this, sorting missing values first.
+         */
+        public TermOrdValComparator(int numHits, String field) {
+            this(numHits, field, false);
+        }
+
+        /**
+         * Creates this, with control over how missing values
+         * are sorted.  Pass sortMissingLast=true to put
+         * missing values at the end.
+         * @param sortMissingLast 当未命中时 作为最大值 还是最小值
+         */
+        public TermOrdValComparator(int numHits, String field, boolean sortMissingLast) {
+            ords = new int[numHits];
+            values = new BytesRef[numHits];
+            tempBRs = new BytesRefBuilder[numHits];
+            readerGen = new int[numHits];
+            this.field = field;
+            if (sortMissingLast) {
+                missingSortCmp = 1;
+                missingOrd = Integer.MAX_VALUE;
+            } else {
+                missingSortCmp = -1;
+                missingOrd = -1;
+            }
+        }
+
+        private int getOrdForDoc(int doc) throws IOException {
+            // 代表 docValue中有对应的文档号
+            if (termsIndex.advanceExact(doc)) {
+                // 返回文档的顺序
+                return termsIndex.ordValue();
+            } else {
+                // 未命中时返回-1
+                return -1;
+            }
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            // 年代相同时 直接返回顺序
+            if (readerGen[slot1] == readerGen[slot2]) {
+                return ords[slot1] - ords[slot2];
+            }
+
+            // 年代不同时 不比较顺序了 而是直接比较词的大小
+            final BytesRef val1 = values[slot1];
+            final BytesRef val2 = values[slot2];
+            if (val1 == null) {
+                if (val2 == null) {
+                    return 0;
+                }
+                return missingSortCmp;
+            } else if (val2 == null) {
+                return -missingSortCmp;
+            }
+            return val1.compareTo(val2);
+        }
+
+        /**
+         * 将传入的值与 bottom 作比较
+         * @param doc that was hit
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            assert bottomSlot != -1;
+            // 找到目标文档的 顺序
+            int docOrd = getOrdForDoc(doc);
+            if (docOrd == -1) {
+                docOrd = missingOrd;
+            }
+            // 当前正在使用的reader 与 bottom 是同一个reader
+            // 每当切换reader 的时候 termsIndex 也会不一样 也就是能读取到的数据范围不一样  为了避免一次将太多数据加载到内存 所以采用多个reader的方式 每次切换reader的时候就是更换了内存中读取的数据
+            if (bottomSameReader) {
+                // ord is precisely comparable, even in the equal case
+                return bottomOrd - docOrd;
+            // 如果reader不同 那么即使与bottom一样 也认为小  应该是不想产生额外的操作开销吧
+            } else if (bottomOrd >= docOrd) {
+                // the equals case always means bottom is > doc
+                // (because we set bottomOrd to the lower bound in
+                // setBottom):
+                return 1;
+            } else {
+                return -1;
+            }
+        }
+
+        /**
+         * 将文档号对应的数据 拷贝到对应的槽
+         * @param slot which slot to copy the hit to   指topN数组的槽号
+         * @param doc docID relative to current reader    使用当前reader读取的文档号  读取的结果要存入到TopN数组中
+         * @throws IOException
+         */
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            int ord = getOrdForDoc(doc);
+            // 未命中时 设置null
+            if (ord == -1) {
+                ord = missingOrd;
+                values[slot] = null;
+            } else {
+                assert ord >= 0;
+                // 将数据读取出来 并填充到 ByteRef中
+                if (tempBRs[slot] == null) {
+                    tempBRs[slot] = new BytesRefBuilder();
+                }
+                tempBRs[slot].copyBytes(termsIndex.lookupOrd(ord));
+                values[slot] = tempBRs[slot].get();
+            }
+            // 填充顺序 和 reader的年代信息
+            ords[slot] = ord;
+            readerGen[slot] = currentReaderGen;
+        }
+
+        /**
+         * Retrieves the SortedDocValues for the field in this segment
+         */
+        protected SortedDocValues getSortedDocValues(LeafReaderContext context, String field) throws IOException {
+            return DocValues.getSorted(context.reader(), field);
+        }
+
+        /**
+         * 根据当前上下文信息 切换内存中的索引数据
+         * @param context current reader context
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
+            // 将最新的索引数据加载到内存
+            termsIndex = getSortedDocValues(context, field);
+            // 更新reader的年代
+            currentReaderGen++;
+
+            // 重新读取数据后 要重新查询一次 topValue
+            if (topValue != null) {
+                // Recompute topOrd/SameReader
+                int ord = termsIndex.lookupTerm(topValue);
+                // 代表该值在新的索引中也能找到  并根据所在的下标
+                if (ord >= 0) {
+                    topSameReader = true;
+                    topOrd = ord;
+                } else {
+                    topSameReader = false;
+                    topOrd = -ord - 2;
+                }
+            } else {
+                topOrd = missingOrd;
+                topSameReader = true;
+            }
+            //System.out.println("  getLeafComparator topOrd=" + topOrd + " topSameReader=" + topSameReader);
+
+            // 代表当前bottom 已经设置 需要根据新的索引重新计算   为什么其他几个 Comparator 没有这种重新计算的过程呢
+            if (bottomSlot != -1) {
+                // Recompute bottomOrd/SameReader
+                setBottom(bottomSlot);
+            }
+
+            return this;
+        }
+
+        /**
+         * 基于之前的bottom的下标 重新计算 bottom的下标
+         * @param bottom
+         * @throws IOException
+         */
+        @Override
+        public void setBottom(final int bottom) throws IOException {
+            bottomSlot = bottom;
+
+            // 找到对应的bottom数据
+            bottomValue = values[bottomSlot];
+            // 找到bottom对应的年代 如果与当前的年代一致
+            if (currentReaderGen == readerGen[bottomSlot]) {
+                // 更新顺序标识 和 same标识
+                bottomOrd = ords[bottomSlot];
+                bottomSameReader = true;
+            } else {
+                if (bottomValue == null) {
+                    // missingOrd is null for all segments
+                    assert ords[bottomSlot] == missingOrd;
+                    bottomOrd = missingOrd;
+                    bottomSameReader = true;
+                    readerGen[bottomSlot] = currentReaderGen;
+                } else {
+                    final int ord = termsIndex.lookupTerm(bottomValue);
+                    // 代表bottom的数据在刚载入的索引数据中查找不到
+                    if (ord < 0) {
+                        bottomOrd = -ord - 2;
+                        bottomSameReader = false;
+                    } else {
+                        bottomOrd = ord;
+                        // exact value match
+                        bottomSameReader = true;
+                        readerGen[bottomSlot] = currentReaderGen;
+                        ords[bottomSlot] = bottomOrd;
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void setTopValue(BytesRef value) {
+            // null is fine: it means the last doc of the prior
+            // search was missing this value
+            topValue = value;
+            //System.out.println("setTopValue " + topValue);
+        }
+
+        @Override
+        public BytesRef value(int slot) {
+            return values[slot];
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+
+            // 通过文档号 获取文档的顺序
+            int ord = getOrdForDoc(doc);
+            if (ord == -1) {
+                ord = missingOrd;
+            }
+
+            // 如果当前top 与目标doc 在同一年代 那么直接返回2个顺序的差值就可以
+            if (topSameReader) {
+                // ord is precisely comparable, even in the equal
+                // case
+                //System.out.println("compareTop doc=" + doc + " ord=" + ord + " ret=" + (topOrd-ord));
+                return topOrd - ord;
+            // 在不同年代时 相等也是返回1  应该是想要减少返回0的情况???
+            } else if (ord <= topOrd) {
+                // the equals case always means doc is < value
+                // (because we set lastOrd to the lower bound)
+                return 1;
+            } else {
+                return -1;
+            }
+        }
+
+        @Override
+        public int compareValues(BytesRef val1, BytesRef val2) {
+            if (val1 == null) {
+                if (val2 == null) {
+                    return 0;
+                }
+                return missingSortCmp;
+            } else if (val2 == null) {
+                return -missingSortCmp;
+            }
+            return val1.compareTo(val2);
+        }
+
+        /**
+         * 该对象不存在 分数的概念
+         * @param scorer Scorer instance that you should use to
+         */
+        @Override
+        public void setScorer(Scorable scorer) {
+        }
+    }
+
+    /**
+     * Sorts by field's natural Term sort order.  All
+     * comparisons are done using BytesRef.compareTo, which is
+     * slow for medium to large result sets but possibly
+     * very fast for very small results sets.
+     * 基于词的具体数据来比较
+     */
+    public static class TermValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
+
+        /**
+         * 存储 topN数据的数组
+         */
+        private final BytesRef[] values;
+        private final BytesRefBuilder[] tempBRs;
+        /**
+         * 以二进制的形式存储数据
+         */
+        private BinaryDocValues docTerms;
+        /**
+         * 代表这些词属于哪个 域
+         */
+        private final String field;
+        private BytesRef bottom;
+        private BytesRef topValue;
+        /**
+         * 代表没有找到 doc 对应的数据时 compare函数应该返回的结果
+         */
+        private final int missingSortCmp;
+
+        /**
+         * Sole constructor.
+         */
+        public TermValComparator(int numHits, String field, boolean sortMissingLast) {
+            values = new BytesRef[numHits];
+            tempBRs = new BytesRefBuilder[numHits];
+            this.field = field;
+            missingSortCmp = sortMissingLast ? 1 : -1;
+        }
+
+        private BytesRef getValueForDoc(int doc) throws IOException {
+            if (docTerms.advanceExact(doc)) {
+                return docTerms.binaryValue();
+            } else {
+                return null;
+            }
+        }
+
+        @Override
+        public int compare(int slot1, int slot2) {
+            final BytesRef val1 = values[slot1];
+            final BytesRef val2 = values[slot2];
+            return compareValues(val1, val2);
+        }
+
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            final BytesRef comparableBytes = getValueForDoc(doc);
+            return compareValues(bottom, comparableBytes);
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            final BytesRef comparableBytes = getValueForDoc(doc);
+            if (comparableBytes == null) {
+                values[slot] = null;
+            } else {
+                // 先构建 ByteRef 对象 然后进行深拷贝 之后通过builder 构建 ByteRef 对象
+                if (tempBRs[slot] == null) {
+                    tempBRs[slot] = new BytesRefBuilder();
+                }
+                tempBRs[slot].copyBytes(comparableBytes);
+                values[slot] = tempBRs[slot].get();
+            }
+        }
+
+        /**
+         * Retrieves the BinaryDocValues for the field in this segment
+         * 基于 context.reader 更新内存中加载的索引数据
+         */
+        protected BinaryDocValues getBinaryDocValues(LeafReaderContext context, String field) throws IOException {
+            return DocValues.getBinary(context.reader(), field);
+        }
+
+        @Override
+        public LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
+            docTerms = getBinaryDocValues(context, field);
+            return this;
+        }
+
+        @Override
+        public void setBottom(final int bottom) {
+            this.bottom = values[bottom];
+        }
+
+        @Override
+        public void setTopValue(BytesRef value) {
+            // null is fine: it means the last doc of the prior
+            // search was missing this value
+            topValue = value;
+        }
+
+        @Override
+        public BytesRef value(int slot) {
+            return values[slot];
+        }
+
+        @Override
+        public int compareValues(BytesRef val1, BytesRef val2) {
+            // missing always sorts first:
+            // miss 时 返回 missingSortCmp
+            if (val1 == null) {
+                if (val2 == null) {
+                    return 0;
+                }
+                return missingSortCmp;
+            } else if (val2 == null) {
+                return -missingSortCmp;
+            }
+            return val1.compareTo(val2);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            return compareValues(topValue, getValueForDoc(doc));
+        }
+
+        @Override
+        public void setScorer(Scorable scorer) {
+        }
+    }
 }

@@ -120,7 +120,7 @@ public abstract class Similarity {
    * 
    * @param state current processing state for this field
    * @return computed norm value
-   * 通过这个记录field的状态对象 计算一个规范值
+   * 该方法就是打分的核心方法
    */
   public abstract long computeNorm(FieldInvertState state);
 

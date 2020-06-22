@@ -37,7 +37,7 @@ import org.apache.lucene.util.NamedSPILoader;
  * so SPI can load it.
  * @see ServiceLoader
  * 编解码器本身支持 SPI 加载
- * 默认实现为 Lucene84Codec
+ * 默认实现为 Lucene84Codec  也就代表生成的索引格式是 8.4版本的
  */
 public abstract class Codec implements NamedSPILoader.NamedSPI {
 

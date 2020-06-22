@@ -50,6 +50,7 @@ import java.io.IOException;
  *
  * @see FieldComparator
  * @lucene.experimental
+ * 这个排序对象是这样的  内置一个队列对象 当插入数据时 首先判断队列有没有满  满的情况下就设置bottom   然后有新的数据要插入时 只要与 bottom作比较就可以
  */
 public interface LeafFieldComparator {
 
@@ -60,7 +61,7 @@ public interface LeafFieldComparator {
    * will always be called before {@link #compareBottom}.
    * 
    * @param slot the currently weakest (sorted last) slot in the queue
-   *             设置垫底
+   *             设置最小的数据
    */
   void setBottom(final int slot) throws IOException;
 
@@ -80,6 +81,7 @@ public interface LeafFieldComparator {
    * the bottom entry (not competitive), any {@code N > 0} if the
    * doc's value is sorted before the bottom entry and {@code 0} if
    * they are equal.
+   * 只与最小的值比较
    */
   int compareBottom(int doc) throws IOException;
 
@@ -96,6 +98,7 @@ public interface LeafFieldComparator {
    * the top entry (not competitive), any {@code N > 0} if the
    * doc's value is sorted before the top entry and {@code 0} if
    * they are equal.
+   * 与 最大的值作比较
    */
   int compareTop(int doc) throws IOException;
 
@@ -105,8 +108,8 @@ public interface LeafFieldComparator {
    * that will be required for future comparisons, into the
    * specified slot.
    * 
-   * @param slot which slot to copy the hit to
-   * @param doc docID relative to current reader
+   * @param slot which slot to copy the hit to   指topN数组的槽号
+   * @param doc docID relative to current reader    使用当前reader读取的文档号  读取的结果要存入到TopN数组中
    */
   void copy(int slot, int doc) throws IOException;
 
@@ -115,6 +118,7 @@ public interface LeafFieldComparator {
    * 
    * @param scorer Scorer instance that you should use to
    * obtain the current hit's score, if necessary. */
+  // 如果该文档需要打分 那么支持设置 Scorable
   void setScorer(Scorable scorer) throws IOException;
 
 }

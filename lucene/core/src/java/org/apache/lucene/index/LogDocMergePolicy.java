@@ -22,10 +22,11 @@ import java.io.IOException;
 /** This is a {@link LogMergePolicy} that measures size of a
  *  segment as the number of documents (not taking deletions
  *  into account). */
-
+// 基于segment内部的 doc数量 判断是否要合并
 public class LogDocMergePolicy extends LogMergePolicy {
 
   /** Default minimum segment size.  @see setMinMergeDocs */
+  // 默认情况当存在100个段对象时 进行合并
   public static final int DEFAULT_MIN_MERGE_DOCS = 1000;
 
   /** Sole constructor, setting all settings to their
@@ -35,10 +36,18 @@ public class LogDocMergePolicy extends LogMergePolicy {
     
     // maxMergeSize(ForForcedMerge) are never used by LogDocMergePolicy; set
     // it to Long.MAX_VALUE to disable it
+    // 该对象禁用了这个属性 代表merge 没有上限值
     maxMergeSize = Long.MAX_VALUE;
     maxMergeSizeForForcedMerge = Long.MAX_VALUE;
   }
 
+  /**
+   * 计算内部有多少 doc
+   * @param info
+   * @param mergeContext
+   * @return
+   * @throws IOException
+   */
   @Override
   protected long size(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
     return sizeDocs(info, mergeContext);

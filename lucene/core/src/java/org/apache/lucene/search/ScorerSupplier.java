@@ -21,6 +21,7 @@ import java.io.IOException;
 /**
  * A supplier of {@link Scorer}. This allows to get an estimate of the cost before
  * building the {@link Scorer}.
+ * 用于生成打分对象的提供者
  */
 public abstract class ScorerSupplier {
 

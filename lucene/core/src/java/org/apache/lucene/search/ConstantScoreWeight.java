@@ -27,9 +27,13 @@ import org.apache.lucene.index.LeafReaderContext;
  * meaningful scores and are mostly useful for filtering.
  *
  * @lucene.internal
+ * 代表分数值是一个常数
  */
 public abstract class ConstantScoreWeight extends Weight {
 
+  /**
+   * 分数常量
+   */
   private final float score;
 
   protected ConstantScoreWeight(Query query, float score) {

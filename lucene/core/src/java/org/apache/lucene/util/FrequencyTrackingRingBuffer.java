@@ -30,14 +30,25 @@ import java.util.Map;
  * 28).
  *
  * @lucene.internal
+ * 环形缓冲区 也就是利用了轮式算法
+ * 这个key 应该就是 docId
  */
 public final class FrequencyTrackingRingBuffer implements Accountable {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FrequencyTrackingRingBuffer.class);
 
+  /**
+   * 数组大小
+   */
   private final int maxSize;
+  /**
+   * 轮对象
+   */
   private final int[] buffer;
   private int position;
+  /**
+   * 内部维护2个数组 一个存储key 一个存储key对应的频率  通过线性探测法解决冲突
+   */
   private final IntBag frequencies;
 
   /** Create a new ring buffer that will contain at most <code>maxSize</code> items.
@@ -50,8 +61,10 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
     this.maxSize = maxSize;
     buffer = new int[maxSize];
     position = 0;
+    // 通过指定最大长度 生成存储频率的对象
     frequencies = new IntBag(maxSize);
 
+    // 使用 哨兵填充数组
     Arrays.fill(buffer, sentinel);
     for (int i = 0; i < maxSize; ++i) {
       frequencies.add(sentinel);
@@ -69,17 +82,21 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
   /**
    * Add a new item to this ring buffer, potentially removing the oldest
    * entry from this buffer if it is already full.
+   * 存储某个key 同时增加频率   每次add都会伴随一次remove 频率能上去吗???
    */
   public void add(int i) {
     // remove the previous value
     final int removed = buffer[position];
+    // 目标位置之前是否有存放数据
     final boolean removedFromBag = frequencies.remove(removed);
     assert removedFromBag;
     // add the new value
+    // 正常情况下 每次插入某个值 position 都会增加
     buffer[position] = i;
     frequencies.add(i);
     // increment the position
     position += 1;
+    // 轮式结构  重置为0
     if (position == maxSize) {
       position = 0;
     }
@@ -87,6 +104,7 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
 
   /**
    * Returns the frequency of the provided key in the ring buffer.
+   * 获取某个key的频率
    */
   public int frequency(int key) {
     return frequencies.frequency(key);
@@ -107,13 +125,22 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(IntBag.class);
 
     private final int[] keys;
+    /**
+     * 对应key的频率
+     */
     private final int[] freqs;
+
     private final int mask;
 
+    /**
+     * 执行 bag的大小
+     * @param maxSize
+     */
     IntBag(int maxSize) {
       // load factor of 2/3
       int capacity = Math.max(2, maxSize * 3 / 2);
       // round up to the next power of two
+      // 就是向上取 2^n
       capacity = Integer.highestOneBit(capacity - 1) << 1;
       assert capacity > maxSize;
       keys = new int[capacity];
@@ -129,8 +156,10 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
     }
 
     /** Return the frequency of the give key in the bag. */
+    // 返回key 对应的频率
     int frequency(int key) {
       for (int slot = key & mask; ; slot = (slot + 1) & mask) {
+        // 代表插入该key时 没有发生冲突 所以可以正常获取频率
         if (keys[slot] == key) {
           return freqs[slot];
         } else if (freqs[slot] == 0) {
@@ -141,19 +170,24 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
 
     /** Increment the frequency of the given key by 1 and return its new frequency. */
     int add(int key) {
+      // 首先通过与掩码做 & 运算 获取槽
       for (int slot = key & mask; ; slot = (slot + 1) & mask) {
+        // 占据坑后 设置频率
         if (freqs[slot] == 0) {
           keys[slot] = key;
           return freqs[slot] = 1;
+        // 当前上个占据坑的key 与本次的key 相同 直接增加频率
         } else if (keys[slot] == key) {
           return ++freqs[slot];
         }
+        // 当发现冲突时 使用线性探测法解决冲突
       }
     }
 
     /** Decrement the frequency of the given key by one, or do nothing if the
      *  key is not present in the bag. Returns true iff the key was contained
      *  in the bag. */
+    // 移除掉某个key  应该还要将因为冲突而后移的数据 前移  这样才能确保 frequency() 逻辑正确
     boolean remove(int key) {
       for (int slot = key & mask; ; slot = (slot + 1) & mask) {
         if (freqs[slot] == 0) {
@@ -169,15 +203,21 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
       }
     }
 
+    /**
+     * 调整因线性探测法带来的副作用
+     * @param freeSlot
+     */
     private void relocateAdjacentKeys(int freeSlot) {
       for (int slot = (freeSlot + 1) & mask; ; slot = (slot + 1) & mask) {
         final int freq = freqs[slot];
+        // 代表没有发生冲突 不需要前移
         if (freq == 0) {
           // end of the collision chain, we're done
           break;
         }
         final int key = keys[slot];
         // the slot where <code>key</code> should be if there were no collisions
+        // 找到应该存在的slot
         final int expectedSlot = key & mask;
         // if the free slot is between the expected slot and the slot where the
         // key is, then we can relocate there
@@ -193,12 +233,17 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
 
     /** Given a chain of occupied slots between <code>chainStart</code>
      *  and <code>chainEnd</code>, return whether <code>slot</code> is
-     *  between the start and end of the chain. */
+     *  between the start and end of the chain.
+     * @param chainStart 某个值起始在的位置
+     * @param chainEnd 因冲突导致当前存放的位置
+     * @param slot 当前空缺的位置     目标是将 chainEnd 上的数据移动到 slot上
+     */
     private static boolean between(int chainStart, int chainEnd, int slot) {
       if (chainStart <= chainEnd) {
         return chainStart <= slot && slot <= chainEnd;
       } else {
         // the chain is across the end of the array
+        // 代表跨轮了
         return slot >= chainStart || slot <= chainEnd;
       }
     }

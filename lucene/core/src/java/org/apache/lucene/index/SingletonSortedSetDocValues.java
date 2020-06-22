@@ -26,6 +26,8 @@ import org.apache.lucene.util.BytesRef;
  * <p>
  * This can be used if you want to have one multi-valued implementation
  * that works for single or multi-valued types.
+ * SortedSetDocValues 本身代表由一组 SortedDocValues 组成  而该对象就是一个特例 代表内部只有一个 SortedDocValues
+ * 内部实现都是委托给 in
  */
 final class SingletonSortedSetDocValues extends SortedSetDocValues {
   private final SortedDocValues in;

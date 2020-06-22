@@ -26,6 +26,8 @@ import org.apache.lucene.util.FrequencyTrackingRingBuffer;
  * filters in order to decide on which filters are worth caching.
  *
  * @lucene.experimental
+ * 目前 查询缓存策略只有这一种实现
+ * 该对象内部通过一个 FrequencyTrackingRingBuffer 记录查询次数  并且对外提供查询的api
  */
 public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
 
@@ -54,6 +56,11 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
         isPointQuery(query);
   }
 
+  /**
+   * 判断 query 是否应该被缓存
+   * @param query
+   * @return
+   */
   private static boolean shouldNeverCache(Query query) {
     if (query instanceof TermQuery) {
       // We do not bother caching term queries since they are already plenty fast.
@@ -90,9 +97,13 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
       }
     }
 
+    // 有关打分的对象 都不应该被缓存
     return false;
   }
 
+  /**
+   * 一个记录频率的容器
+   */
   private final FrequencyTrackingRingBuffer recentlyUsedFilters;
 
   /**
@@ -141,6 +152,10 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
     }
   }
 
+  /**
+   * 根据查询对象执行缓存策略
+   * @param query
+   */
   @Override
   public void onUse(Query query) {
     assert query instanceof BoostQuery == false;
@@ -158,6 +173,7 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
     // large queries; this may cause rare false positives, but at worse
     // this just means we cache a query that was not in fact used enough:
     synchronized (this) {
+      // 将某个查询对象的使用记录下来
       recentlyUsedFilters.add(hashCode);
     }
   }
@@ -180,7 +196,9 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
     if (shouldNeverCache(query)) {
       return false;
     }
+    // 找到某个查询对象使用的频率
     final int frequency = frequency(query);
+    // 计算要求的最小使用频率
     final int minFrequency = minFrequencyToCache(query);
     return frequency >= minFrequency;
   }

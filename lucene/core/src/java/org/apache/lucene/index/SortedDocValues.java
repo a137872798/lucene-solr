@@ -31,6 +31,7 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * and sorted into a dictionary of unique values. A pointer to the
  * dictionary value (ordinal) can be retrieved for each document. Ordinals
  * are dense and in increasing sorted order.
+ * 该对象用于从索引中读取数据
  */
 
 public abstract class SortedDocValues extends BinaryDocValues {
@@ -53,7 +54,8 @@ public abstract class SortedDocValues extends BinaryDocValues {
    * so make sure to {@link BytesRef#deepCopyOf(BytesRef) copy it} if you want
    * to keep it around.
    * @param ord ordinal to lookup (must be &gt;= 0 and &lt; {@link #getValueCount()})
-   * @see #ordValue() 
+   * @see #ordValue()
+   * 基于顺序来读取数据
    */
   public abstract BytesRef lookupOrd(int ord) throws IOException;
 
@@ -81,9 +83,11 @@ public abstract class SortedDocValues extends BinaryDocValues {
    *  Arrays.binarySearch}.
    *
    *  @param key Key to look up
+   *             通过二分查找 找到key 对应的数据
    **/
   public int lookupTerm(BytesRef key) throws IOException {
     int low = 0;
+    // 获取当前索引中的数据总量
     int high = getValueCount()-1;
 
     while (low <= high) {

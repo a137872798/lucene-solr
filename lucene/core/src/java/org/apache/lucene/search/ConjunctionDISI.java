@@ -34,6 +34,7 @@ import org.apache.lucene.util.CollectionUtil;
  * This iterates over the doc ids that are present in each given DocIdSetIterator.
  * <br>Public only for use in {@link org.apache.lucene.search.spans}.
  * @lucene.internal
+ * 该对象提供了一些静态方法 用于将多个遍历docId的迭代器进行聚合
  */
 public final class ConjunctionDISI extends DocIdSetIterator {
 
@@ -41,6 +42,7 @@ public final class ConjunctionDISI extends DocIdSetIterator {
    * returned {@link DocIdSetIterator} might leverage two-phase iteration in
    * which case it is possible to retrieve the {@link TwoPhaseIterator} using
    * {@link TwoPhaseIterator#unwrap}. */
+  // 将一组打分器 结合 并生成一个 DISI
   public static DocIdSetIterator intersectScorers(Collection<Scorer> scorers) {
     if (scorers.size() < 2) {
       throw new IllegalArgumentException("Cannot make a ConjunctionDISI of less than 2 iterators");

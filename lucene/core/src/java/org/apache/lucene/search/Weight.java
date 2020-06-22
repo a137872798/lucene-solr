@@ -129,6 +129,7 @@ public abstract class Weight implements SegmentCacheable {
    * before building it. The default implementation calls {@link #scorer} and
    * builds a {@link ScorerSupplier} wrapper around it.
    * @see #scorer
+   * 每个权重对象可以生成一个打分对象
    */
   public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
     final Scorer scorer = scorer(context);

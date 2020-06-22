@@ -67,6 +67,7 @@ import java.io.IOException;
  * of hits would skip it.</p>
  *
  * @lucene.experimental
+ * 该对象代表从叶(segment)中采集数据
  */
 public interface LeafCollector {
 
@@ -91,7 +92,7 @@ public interface LeafCollector {
    * implementations of this method should not call {@link IndexSearcher#doc(int)} or
    * {@link org.apache.lucene.index.IndexReader#document(int)} on every hit.
    * Doing so can slow searches by an order of magnitude or more.
-   * 将某个文档采集过来
+   * 采集某个docId
    */
   void collect(int doc) throws IOException;
 

@@ -42,6 +42,7 @@ import java.util.Set;
  * the segment.  {@link LogByteSizeMergePolicy} is another
  * subclass that measures size as the total byte size of the
  * file(s) for the segment.</p>
+ * 索引的合并策略   可以往一个段中添加多个文档  并且在flush时 同属与一个段的文档将会合并
  */
 
 public abstract class LogMergePolicy extends MergePolicy {
@@ -62,19 +63,23 @@ public abstract class LogMergePolicy extends MergePolicy {
 
   /** Default noCFSRatio.  If a merge's size is {@code >= 10%} of
    *  the index, then we disable compound file for it.
+   *  当合并生成的 cfs 文件(复合文件) 超过总索引大小的10%时 不生成复合文件
    *  @see MergePolicy#setNoCFSRatio */
   public static final double DEFAULT_NO_CFS_RATIO = 0.1;
 
   /** How many segments to merge at a time. */
+  // 一次最多合并多少个段
   protected int mergeFactor = DEFAULT_MERGE_FACTOR;
 
   /** Any segments whose size is smaller than this value
    *  will be rounded up to this value.  This ensures that
    *  tiny segments are aggressively merged. */
+  // 小于该长度的段 将会被提升到该值 确保多而小的段会参与到合并中
   protected long minMergeSize;
 
   /** If the size of a segment exceeds this value then it
    *  will never be merged. */
+  // 当段超过这个大小时 就不会被合并
   protected long maxMergeSize;
 
   // Although the core MPs set it explicitly, we must default in case someone
@@ -85,10 +90,12 @@ public abstract class LogMergePolicy extends MergePolicy {
 
   /** If a segment has more than this many documents then it
    *  will never be merged. */
+  // 当内部的文档数超过这个值时 不会被合并
   protected int maxMergeDocs = DEFAULT_MAX_MERGE_DOCS;
 
   /** If true, we pro-rate a segment's size by the
    *  percentage of non-deleted documents. */
+  // 代表在计算大小时 是否需要先除开在合并过程中被删除的大小
   protected boolean calibrateSizeByDeletes = true;
 
   /** Sole constructor. (For invocation by subclass 
@@ -135,12 +142,16 @@ public abstract class LogMergePolicy extends MergePolicy {
    *  SegmentCommitInfo}, pro-rated by percentage of
    *  non-deleted documents if {@link
    *  #setCalibrateSizeByDeletes} is set. */
+  // 返回内部 doc的数量
   protected long sizeDocs(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
+    // 需要考虑 合并后会删除的数量
     if (calibrateSizeByDeletes) {
+      // 计算在merge过程中 会删除多少doc
       int delCount = mergeContext.numDeletesToMerge(info);
       assert assertDelCount(delCount, info);
       return (info.info.maxDoc() - (long)delCount);
     } else {
+      // maxDoc 就代表着 内部有多少 doc 每个段的doc 应该都是从1 开始的
       return info.info.maxDoc();
     }
   }
@@ -149,10 +160,14 @@ public abstract class LogMergePolicy extends MergePolicy {
    *  SegmentCommitInfo}, pro-rated by percentage of
    *  non-deleted documents if {@link
    *  #setCalibrateSizeByDeletes} is set. */
+  // 估算某个段的大小
   protected long sizeBytes(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
+    // 如果需要考虑被删除的文档 那么需要额外传入一个  mergeContext  该对象内部包含了 delete的信息
+    // 这样返回的值  在原有的大小外 除开了在合并过程中删除的大小
     if (calibrateSizeByDeletes) {
       return super.size(info, mergeContext);
     }
+    // 该方法就是找到段所在的 directory 下关联的所有文件 对应的 fileLength
     return info.sizeInBytes();
   }
   
@@ -414,8 +429,15 @@ public abstract class LogMergePolicy extends MergePolicy {
     return spec;
   }
 
+  /**
+   * 该对象内部包含了 段信息以及 level 信息
+   */
   private static class SegmentInfoAndLevel implements Comparable<SegmentInfoAndLevel> {
+
     SegmentCommitInfo info;
+    /**
+     * 合并过程中会将不同的段分为不同的级别 这里是描述段信息 以及level信息
+     */
     float level;
     
     public SegmentInfoAndLevel(SegmentCommitInfo info, float level) {
@@ -436,24 +458,33 @@ public abstract class LogMergePolicy extends MergePolicy {
    *  #setMergeFactor} segments at a given level.  When
    *  multiple levels have too many segments, this method
    *  will return multiple merges, allowing the {@link
-   *  MergeScheduler} to use concurrency. */
+   *  MergeScheduler} to use concurrency.
+   *  先寻找哪些 数据需要被合并
+   * @param mergeTrigger 定义merge的触发时机
+   */
   @Override
   public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos infos, MergeContext mergeContext) throws IOException {
 
+    // 找到内部共有多少个段
     final int numSegments = infos.size();
+    // 理解为是否打印日志
     if (verbose(mergeContext)) {
       message("findMerges: " + numSegments + " segments", mergeContext);
     }
 
     // Compute levels, which is just log (base mergeFactor)
     // of the size of each segment
+    // 为每个segment 维护 一个SegmentInfoAndLevel 对象
     final List<SegmentInfoAndLevel> levels = new ArrayList<>(numSegments);
+    // 返回以 E 为底的对数值
     final float norm = (float) Math.log(mergeFactor);
 
+    // 返回当前正在 merge中的 段对象
     final Set<SegmentCommitInfo> mergingSegments = mergeContext.getMergingSegments();
 
     for(int i=0;i<numSegments;i++) {
       final SegmentCommitInfo info = infos.info(i);
+      // 计算每个段的大小
       long size = size(info, mergeContext);
 
       // Floor tiny segments
@@ -461,9 +492,11 @@ public abstract class LogMergePolicy extends MergePolicy {
         size = 1;
       }
 
+      // 通过特殊的方式计算出了一个 level   能够得到的就是 size 越大  计算出来的level 也会越大
       final SegmentInfoAndLevel infoLevel = new SegmentInfoAndLevel(info, (float) Math.log(size)/norm);
       levels.add(infoLevel);
 
+      // 打印日志信息
       if (verbose(mergeContext)) {
         final long segBytes = sizeBytes(info, mergeContext);
         String extra = mergingSegments.contains(info) ? " [merging]" : "";
@@ -474,7 +507,9 @@ public abstract class LogMergePolicy extends MergePolicy {
       }
     }
 
+    // 上面的步骤就是将 segment 计算level 并包装成 SegmentInfoAndLevel 对象
     final float levelFloor;
+    // 这里代表 merge 的起点
     if (minMergeSize <= 0)
       levelFloor = (float) 0.0;
     else
@@ -489,14 +524,18 @@ public abstract class LogMergePolicy extends MergePolicy {
 
     MergeSpecification spec = null;
 
+    // 总计有多少个段需要被合并
     final int numMergeableSegments = levels.size();
 
     int start = 0;
+    // 这里会选取符合条件的 segment 并且写入到 spec中
     while(start < numMergeableSegments) {
 
       // Find max level of all segments not already
       // quantized.
+      // 这里先找到最大的 level
       float maxLevel = levels.get(start).level;
+      // 每次 maxLevel的选取范围都在减小
       for(int i=1+start;i<numMergeableSegments;i++) {
         final float level = levels.get(i).level;
         if (level > maxLevel) {
@@ -506,14 +545,17 @@ public abstract class LogMergePolicy extends MergePolicy {
 
       // Now search backwards for the rightmost segment that
       // falls into this level:
-      float levelBottom;
+      float levelBottom;  // 这个值是一个选取的起点  所有level超过该值的 segment都会被纳入本次的merge操作中
+      // 代表每个 segment的大小都很小 都处在允许被merge的范围内
       if (maxLevel <= levelFloor) {
         // All remaining segments fall into the min level
         levelBottom = -1.0F;
       } else {
+        // 这里选取的level 区间为 0.75
         levelBottom = (float) (maxLevel - LEVEL_LOG_SPAN);
 
         // Force a boundary at the level floor
+        // bottom < floor < max  更新bottom  这里反而选择提高了下限 这样只有更少的segment 允许被merge
         if (levelBottom < levelFloor && maxLevel >= levelFloor) {
           levelBottom = levelFloor;
         }

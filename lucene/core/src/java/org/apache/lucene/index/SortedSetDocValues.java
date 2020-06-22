@@ -29,6 +29,8 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * and sorted into a dictionary of unique values. A pointer to the
  * dictionary value (ordinal) can be retrieved for each document. Ordinals
  * are dense and in increasing sorted order.
+ * SortedDocValues 用于从索引中读取数据 并且携带一个 ord顺序属性
+ * 而该对象由一组 SortedDocValues 组成
  */
 public abstract class SortedSetDocValues extends DocValuesIterator {
   

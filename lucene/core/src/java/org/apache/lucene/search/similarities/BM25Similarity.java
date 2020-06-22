@@ -33,6 +33,7 @@ import org.apache.lucene.util.SmallFloat;
  * Susan Jones, Micheline Hancock-Beaulieu, and Mike Gatford. Okapi at TREC-3.
  * In Proceedings of the Third <b>T</b>ext <b>RE</b>trieval <b>C</b>onference (TREC 1994).
  * Gaithersburg, USA, November 1994.
+ * 基于 BM25打分规则的对象
  */
 public class BM25Similarity extends Similarity {
   private final float k1;

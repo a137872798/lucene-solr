@@ -22,6 +22,7 @@ import java.io.IOException;
 /**
  * A constant-scoring {@link Scorer}.
  * @lucene.internal
+ * 一个常量打分对象  打分对象一般就是内部有一个 docId迭代器 然后读取各个doc 并打分
  */
 public final class ConstantScoreScorer extends Scorer {
 
@@ -54,10 +55,16 @@ public final class ConstantScoreScorer extends Scorer {
     }
   }
 
+  /**
+   * 该对象的分数是 固定的 可以看到没有修改分数的入口
+   */
   private final float score;
   private final ScoreMode scoreMode;
   private final DocIdSetIterator approximation;
   private final TwoPhaseIterator twoPhaseIterator;
+  /**
+   * 该对象用于迭代内部的 docId
+   */
   private final DocIdSetIterator disi;
 
   /** Constructor based on a {@link DocIdSetIterator} which will be used to

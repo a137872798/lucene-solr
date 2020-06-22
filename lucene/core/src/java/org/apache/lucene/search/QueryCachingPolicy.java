@@ -27,6 +27,7 @@ import java.io.IOException;
  * @see UsageTrackingQueryCachingPolicy
  * @see LRUQueryCache
  * @lucene.experimental
+ * 采用的缓存策略
  */
 // TODO: add APIs for integration with IndexWriter.IndexReaderWarmer
 public interface QueryCachingPolicy {
@@ -42,6 +43,7 @@ public interface QueryCachingPolicy {
    *  If it is not cached yet and this method returns <code>true</code> then a
    *  cache entry will be generated. Otherwise an uncached scorer will be
    *  returned. */
+  // 检测某个query 是否应该被缓存
   boolean shouldCache(Query query) throws IOException;
 
 }

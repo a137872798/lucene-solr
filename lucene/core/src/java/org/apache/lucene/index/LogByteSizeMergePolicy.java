@@ -21,28 +21,38 @@ import java.io.IOException;
 
 /** This is a {@link LogMergePolicy} that measures size of a
  *  segment as the total byte size of the segment's files. */
+// 该类只是定义了一些以 byte类型设置 merge大小的api   这样判断是否需要合并时 就是根据这些大小来判断
 public class LogByteSizeMergePolicy extends LogMergePolicy {
 
-  /** Default minimum segment size.  @see setMinMergeMB */
+  /** Default minimum segment size.  @see setMinMergeMB 默认情况每个段文件的最小长度 */
   public static final double DEFAULT_MIN_MERGE_MB = 1.6;
 
   /** Default maximum segment size.  A segment of this size
-   *  or larger will never be merged.  @see setMaxMergeMB */
+   *  or larger will never be merged.  @see setMaxMergeMB 每个段文件的最大长度 */
   public static final double DEFAULT_MAX_MERGE_MB = 2048;
 
   /** Default maximum segment size.  A segment of this size
    *  or larger will never be merged during forceMerge.  @see setMaxMergeMBForForceMerge */
+  // 当段的大小超过该值时 将不会参数合并
   public static final double DEFAULT_MAX_MERGE_MB_FOR_FORCED_MERGE = Long.MAX_VALUE;
 
   /** Sole constructor, setting all settings to their
    *  defaults. */
   public LogByteSizeMergePolicy() {
+    // 转换成 byte 长度
     minMergeSize = (long) (DEFAULT_MIN_MERGE_MB*1024*1024);
     maxMergeSize = (long) (DEFAULT_MAX_MERGE_MB*1024*1024);
     // NOTE: in Java, if you cast a too-large double to long, as we are doing here, then it becomes Long.MAX_VALUE
     maxMergeSizeForForcedMerge = (long) (DEFAULT_MAX_MERGE_MB_FOR_FORCED_MERGE*1024*1024);
   }
-  
+
+  /**
+   * 估算 段的大小   如果设置了 calibrateSizeByDeletes  那么在获取大小时 会排除在之后merge过程中被删除的大小
+   * @param info
+   * @param mergeContext
+   * @return
+   * @throws IOException
+   */
   @Override
   protected long size(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
     return sizeBytes(info, mergeContext);
@@ -59,6 +69,7 @@ public class LogByteSizeMergePolicy extends LogMergePolicy {
    *  <p>Note that {@link #setMaxMergeDocs} is also
    *  used to check whether a segment is too large for
    *  merging (it's either or).</p>*/
+  // 以mb 为单位设置 maxMergeMB 和 miMergeMB
   public void setMaxMergeMB(double mb) {
     maxMergeSize = (long) (mb*1024*1024);
   }

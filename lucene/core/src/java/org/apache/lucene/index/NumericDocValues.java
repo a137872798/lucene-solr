@@ -21,6 +21,7 @@ import java.io.IOException;
 
 /**
  * A per-document numeric value.
+ * 记录每个文档 以数字方式记录的值
  */
 public abstract class NumericDocValues extends DocValuesIterator {
   
@@ -33,6 +34,8 @@ public abstract class NumericDocValues extends DocValuesIterator {
    * It is illegal to call this method after {@link #advanceExact(int)}
    * returned {@code false}.
    * @return numeric value
+   * 配合 advanceExact() 使用
+   * 前一个方法判断指定偏移量是否有值  该方法获取当前指针指向的值
    */
   public abstract long longValue() throws IOException;
 

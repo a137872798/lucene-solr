@@ -459,7 +459,7 @@ public abstract class MergePolicy {
      * A MergeSpecification instance provides the information
      * necessary to perform multiple merges.  It simply
      * contains a list of {@link OneMerge} instances.
-     * 实际上是一个 OneMerge的列表
+     * 描述某次参数merge的所有片段
      */
     public static class MergeSpecification {
 
@@ -560,6 +560,7 @@ public abstract class MergePolicy {
      * If the size of the merge segment exceeds this ratio of
      * the total index size then it will remain in
      * non-compound format
+     * 当合并的大小超过一定值时 不进行合并
      */
     protected double noCFSRatio = DEFAULT_NO_CFS_RATIO;
 
@@ -668,11 +669,12 @@ public abstract class MergePolicy {
      * Return the byte size of the provided {@link
      * SegmentCommitInfo}, pro-rated by percentage of
      * non-deleted documents is set.
-     * 计算写入的数据长度
+     * 计算写入的数据长度   需要考虑 删除的数据长度
      */
     protected long size(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
+        // 先获取该段原始长度
         long byteSize = info.sizeInBytes();
-        // 获取一个将被删除的长度
+        // 计算segment 在merge过程中会删除多少数据
         int delCount = mergeContext.numDeletesToMerge(info);
         assert assertDelCount(delCount, info);
         // 计算被删除的数据占用的 百分比
@@ -825,7 +827,7 @@ public abstract class MergePolicy {
          *
          * @param info the segment to get the number of deletes for
          * @see MergePolicy#numDeletesToMerge(SegmentCommitInfo, int, org.apache.lucene.util.IOSupplier)
-         * 计算该segment 在merge过程中需要删除多少数据
+         * 计算该segment 在merge过程中需要删除多少doc
          */
         int numDeletesToMerge(SegmentCommitInfo info) throws IOException;
 

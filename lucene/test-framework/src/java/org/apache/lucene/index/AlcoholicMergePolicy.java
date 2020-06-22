@@ -38,6 +38,7 @@ import org.apache.lucene.util.TestUtil;
  * <p>
  * It is a fine bottle of champagne (Ordered by Martijn). 
  * </p>
+ * 仅测试用  忽略
  */
 public class AlcoholicMergePolicy extends LogMergePolicy {
   

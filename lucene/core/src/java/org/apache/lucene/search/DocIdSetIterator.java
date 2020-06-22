@@ -146,6 +146,7 @@ public abstract class DocIdSetIterator {
   /**
    * When returned by {@link #nextDoc()}, {@link #advance(int)} and
    * {@link #docID()} it means there are no more docs in the iterator.
+   * 代表已经迭代到 docId的末尾
    */
   public static final int NO_MORE_DOCS = Integer.MAX_VALUE;
 
@@ -207,12 +208,13 @@ public abstract class DocIdSetIterator {
    * <p>
    *
    * @since 2.9
+  * 将光标移动到 首个 >= target 的位置
    */
   public abstract int advance(int target) throws IOException;
 
   /** Slow (linear) implementation of {@link #advance} relying on
    *  {@link #nextDoc()} to advance beyond the target position. */
-  // 这里多次触发nextDoc 直到当前指针达到 target的位置
+  // 这里不断迭代到达目标地点   advance 是直接跳跃过去
   protected final int slowAdvance(int target) throws IOException {
     assert docID() < target;
     int doc;

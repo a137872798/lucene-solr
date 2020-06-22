@@ -25,6 +25,7 @@ import org.apache.lucene.util.ByteBlockPool;
  * Class to write byte streams into slices of shared
  * byte[].  This is used by DocumentsWriter to hold the
  * posting list for many terms in RAM.
+ * 不同于 IntBlockPool   分片写入和读取对象是分离出来的
  */
 
 final class ByteSliceWriter extends DataOutput {
@@ -44,13 +45,10 @@ final class ByteSliceWriter extends DataOutput {
 
   /**
    * Set up the writer to write at address.
-   * address 在通过位运算后 获得了一个下标
    */
   public void init(int address) {
-    // 定位到一个 byte[]
     slice = pool.buffers[address >> ByteBlockPool.BYTE_BLOCK_SHIFT];
     assert slice != null;
-    // 这好像是一个写入的起点  为什么要这样定义
     upto = address & ByteBlockPool.BYTE_BLOCK_MASK;
     offset0 = address;
     assert upto < slice.length;
@@ -60,14 +58,12 @@ final class ByteSliceWriter extends DataOutput {
   @Override
   public void writeByte(byte b) {
     assert slice != null;
-    // 代表起点已经被写入了某个值
     if (slice[upto] != 0) {
       upto = pool.allocSlice(slice, upto);
       slice = pool.buffer;
       offset0 = pool.byteOffset;
       assert slice != null;
     }
-    // 最终结果就是 将值写入到 byte[] 中 上面应该是申请空位的
     slice[upto++] = b;
     assert upto != slice.length;
   }

@@ -27,12 +27,16 @@ import org.apache.lucene.search.DocIdSetIterator;
  * It is cacheable and supports random-access if the underlying set is
  * cacheable and supports random-access.
  * @lucene.internal
+ * 一个取反的位图对象
  */
 public final class NotDocIdSet extends DocIdSet {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(NotDocIdSet.class);
 
   private final int maxDoc;
+  /**
+   * 实际存储位图的对象
+   */
   private final DocIdSet in;
 
   /** Sole constructor. */
@@ -73,6 +77,9 @@ public final class NotDocIdSet extends DocIdSet {
     return new DocIdSetIterator() {
 
       int doc = -1;
+      /**
+       * 实际上是 in下个存在的位  这里反而需要跳过这个位
+       */
       int nextSkippedDoc = -1;
 
       @Override
@@ -91,6 +98,7 @@ public final class NotDocIdSet extends DocIdSet {
             return doc = NO_MORE_DOCS;
           }
           assert doc <= nextSkippedDoc;
+          // 只要能被 in找到的就必然存在 所以这里要反向找到不存在于位图的
           if (doc != nextSkippedDoc) {
             return doc;
           }

@@ -183,6 +183,7 @@ public final class SegmentInfo {
 
   /** Returns number of documents in this segment (deletions
    *  are not taken into account). */
+  // 每个段对象 会直接记录最大的doc
   public int maxDoc() {
     if (this.maxDoc == -1) {
       throw new IllegalStateException("maxDoc isn't set yet");

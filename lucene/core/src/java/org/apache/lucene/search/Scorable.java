@@ -64,8 +64,8 @@ public abstract class Scorable {
 
   /** A child Scorer and its relationship to its parent.
    * the meaning of the relationship depends upon the parent query.
+   * 声明了 原本的打分对象 与目标对象的关系    详见 {@link ScoreCachingWrappingScorer#getChildren}
    * @lucene.experimental */
-  // scorable的包装对象
   public static class ChildScorable {
     /**
      * Child Scorer. (note this is typically a direct child, and may

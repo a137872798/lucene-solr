@@ -22,6 +22,7 @@ package org.apache.lucene.util;
  *
  * <p>Pulled from <a href="http://www.javapuzzlers.com">Java Puzzlers</a>.</p>
  * @see <a href="http://www.amazon.com/Java-Puzzlers-Traps-Pitfalls-Corner/dp/032133678X">http://www.amazon.com/Java-Puzzlers-Traps-Pitfalls-Corner/dp/032133678X</a>
+ * 重新抛出某个异常
  */
 public final class Rethrow {
   private Rethrow() {}

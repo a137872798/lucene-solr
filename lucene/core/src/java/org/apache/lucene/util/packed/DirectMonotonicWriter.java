@@ -30,7 +30,8 @@ import org.apache.lucene.util.ArrayUtil;
  * {@link DirectWriter}.
  * 
  * @see DirectMonotonicReader
- * @lucene.internal 
+ * @lucene.internal
+ * 按照单调趋势写入数据 (单调递增 or 单调递减)
  */
 public final class DirectMonotonicWriter {
 

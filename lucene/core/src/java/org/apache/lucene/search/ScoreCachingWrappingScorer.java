@@ -31,11 +31,22 @@ import java.util.Collections;
  * if the collector requests it. Some collectors may need to use the score in
  * several places, however all they have in hand is a {@link Scorer} object, and
  * might end up computing the score of a document more than once.
+ * 为打分对象追加缓存功能
  */
 public final class ScoreCachingWrappingScorer extends Scorable {
 
+  /**
+   * 当前指向的文档号
+   */
   private int curDoc = -1;
+
+  /**
+   * 当前文档得出的分数
+   */
   private float curScore;
+  /**
+   * 内部实际工作的对象
+   */
   private final Scorable in;
 
   /** Creates a new instance by wrapping the given scorer. */
@@ -43,6 +54,11 @@ public final class ScoreCachingWrappingScorer extends Scorable {
     this.in = scorer;
   }
 
+  /**
+   * 如果当前指向的doc 就是 上次使用过的 那么直接返回已经打好的分数 避免重复打分 (这是一个耗时的过程)
+   * @return
+   * @throws IOException
+   */
   @Override
   public float score() throws IOException {
     int doc = in.docID();
@@ -54,6 +70,11 @@ public final class ScoreCachingWrappingScorer extends Scorable {
     return curScore;
   }
 
+  /**
+   * 设置一个最小的分数  类似默认值
+   * @param minScore
+   * @throws IOException
+   */
   @Override
   public void setMinCompetitiveScore(float minScore) throws IOException {
     in.setMinCompetitiveScore(minScore);

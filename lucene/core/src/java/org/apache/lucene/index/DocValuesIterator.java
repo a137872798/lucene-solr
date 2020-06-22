@@ -20,6 +20,9 @@ import java.io.IOException;
 
 import org.apache.lucene.search.DocIdSetIterator;
 
+/**
+ * 该对象用于遍历文档的值
+ */
 abstract class DocValuesIterator extends DocIdSetIterator {
 
   /** Advance the iterator to exactly {@code target} and return whether
@@ -28,6 +31,7 @@ abstract class DocValuesIterator extends DocIdSetIterator {
    *  {@link #docID() doc ID} and must be a valid doc ID, ie. &ge; 0 and
    *  &lt; {@code maxDoc}.
    *  After this method returns, {@link #docID()} returns {@code target}. */
+  // 判断指定的位置是否有值
   public abstract boolean advanceExact(int target) throws IOException;
 
 }
