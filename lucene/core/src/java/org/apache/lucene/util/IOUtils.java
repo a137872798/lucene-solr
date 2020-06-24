@@ -489,6 +489,7 @@ public final class IOUtils {
    *  else, true.
    *
    *  @throws IOException if {@code path} does not exist.
+   *  检测当前目录是否是 一个 FS 目录 (FileSystem)
    *
    *  @lucene.internal */
   public static boolean spins(Directory dir) throws IOException {
@@ -513,6 +514,7 @@ public final class IOUtils {
    *  @param path a location to check which must exist. the mount point will be determined from this location.
    *  @return false if the storage is non-rotational (e.g. an SSD), or true if it is spinning or could not be determined
    *  @throws IOException if {@code path} does not exist.
+   *  通过路径可以判断 当前操作系统使用的是机械硬盘还是固态硬盘
    *
    *  @lucene.internal */
   public static boolean spins(Path path) throws IOException {
@@ -520,6 +522,7 @@ public final class IOUtils {
     path = path.toRealPath();
     
     // Super cowboy approach, but seems to work!
+    // 如果不是linux 系统无法进行检测 就默认是机械硬盘
     if (!Constants.LINUX) {
       return true; // no detection
     }

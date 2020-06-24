@@ -23,12 +23,18 @@ import java.io.IOException;
  * A {@link RateLimiter rate limiting} {@link IndexOutput}
  * 
  * @lucene.internal
- * 代表该输出流 还具备限流的功能
+ * 对磁盘IO 做限流的 输出流
  */
 
 public final class RateLimitedIndexOutput extends IndexOutput {
-  
+
+  /**
+   * 负责干活的对象
+   */
   private final IndexOutput delegate;
+  /**
+   * 限流器
+   */
   private final RateLimiter rateLimiter;
 
   /** How many bytes we've written since we last called rateLimiter.pause. */
@@ -37,6 +43,7 @@ public final class RateLimitedIndexOutput extends IndexOutput {
   
   /** Cached here not not always have to call RateLimiter#getMinPauseCheckBytes()
    * which does volatile read. */
+  // 每写入多少时检测一次
   private long currentMinPauseCheckBytes;
 
   public RateLimitedIndexOutput(final RateLimiter rateLimiter, final IndexOutput delegate) {
@@ -51,6 +58,10 @@ public final class RateLimitedIndexOutput extends IndexOutput {
     delegate.close();
   }
 
+  /**
+   * 获取当前文件写入的偏移量
+   * @return
+   */
   @Override
   public long getFilePointer() {
     return delegate.getFilePointer();
@@ -61,6 +72,11 @@ public final class RateLimitedIndexOutput extends IndexOutput {
     return delegate.getChecksum();
   }
 
+  /**
+   * 在写入前 增加 lastPause 的值  并且判断是否 需要暂停
+   * @param b
+   * @throws IOException
+   */
   @Override
   public void writeByte(byte b) throws IOException {
     bytesSinceLastPause++;
@@ -80,6 +96,7 @@ public final class RateLimitedIndexOutput extends IndexOutput {
     if (bytesSinceLastPause > currentMinPauseCheckBytes) {
       rateLimiter.pause(bytesSinceLastPause);
       bytesSinceLastPause = 0;
+      // 推荐每写入多少 检测一次
       currentMinPauseCheckBytes = rateLimiter.getMinPauseCheckBytes();
     }    
   }

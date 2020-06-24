@@ -102,7 +102,7 @@ public abstract class MergeScheduler implements Closeable {
 
     /**
      * Does finishing for a merge.
-     * 当某个 merge动作完成时触发钩子函数
+     * 当某个 merge动作完成时触发钩子函数  可能成功也可能失败
      */
     void onMergeFinished(MergePolicy.OneMerge merge);
 

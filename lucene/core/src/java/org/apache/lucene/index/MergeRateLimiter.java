@@ -43,7 +43,7 @@ public class MergeRateLimiter extends RateLimiter {
    */
   private volatile double mbPerSec;
   /**
-   * 每写入多少数据检测是否需要调用 pause
+   * 推荐每写入多少数据进行一次检测
    */
   private volatile long minPauseCheckBytes;
 
@@ -82,7 +82,7 @@ public class MergeRateLimiter extends RateLimiter {
       assert minPauseCheckBytes >= 0;
     }
 
-    // 唤醒被阻塞的所有线程
+    // 唤醒被阻塞的所有线程  之前可能很多线程因为旧的阀值被限流了 比如设置0 就是一直沉睡  所以当更新阀值后需要手动去唤醒这些线程
     mergeProgress.wakeup();
   }
 

@@ -560,7 +560,7 @@ public abstract class MergePolicy {
      * If the size of the merge segment exceeds this ratio of
      * the total index size then it will remain in
      * non-compound format
-     * 当合并的大小超过一定值时 不进行合并
+     * 如果段相关的索引信息超过一定的大小 那么不采用 cfs格式存储
      */
     protected double noCFSRatio = DEFAULT_NO_CFS_RATIO;
 
