@@ -36,6 +36,7 @@ import org.apache.lucene.util.SuppressForbidden;
  *  not work with non-default filesystem providers. It is only
  *  provided for applications that relied on the fact that 
  *  RandomAccessFile's IO was not interruptible.
+ *  内部是一个 RandomAccessFile
  */
 @SuppressForbidden(reason = "java.io.File: RAFDirectory is legacy API")
 public class RAFDirectory extends FSDirectory {

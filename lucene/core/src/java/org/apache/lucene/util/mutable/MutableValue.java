@@ -19,13 +19,20 @@ package org.apache.lucene.util.mutable;
 /**
  * Base class for all mutable values.
  *  
- * @lucene.internal 
+ * @lucene.internal
+ * 代表内部的值是可变的
+ * MutableValue 本身可以理解为值的一个包装
  */
 public abstract class MutableValue implements Comparable<MutableValue> {
+
+  /**
+   * 理解为该包装内部的值是否已经设置
+   */
   public boolean exists = true;
 
   public abstract void copy(MutableValue source);
   public abstract MutableValue duplicate();
+  // 与同类型数据进行比较  和 判断同类型数据是否相等
   public abstract boolean equalsSameType(Object other);
   public abstract int compareSameType(Object other);
   public abstract Object toObject();

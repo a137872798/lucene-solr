@@ -65,6 +65,7 @@ import org.apache.lucene.util.SuppressForbidden;
  * tested!  Use at your own risk.
  *
  * @lucene.experimental
+ * 该对象能够直接调用 native 方法  先不管吧
  */
 public class NativeUnixDirectory extends FSDirectory {
 

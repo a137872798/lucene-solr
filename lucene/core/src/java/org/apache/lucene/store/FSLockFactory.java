@@ -23,8 +23,7 @@ import java.io.IOException;
  * Base class for file system based locking implementation.
  * This class is explicitly checking that the passed {@link Directory}
  * is an {@link FSDirectory}.
- * 通过指定一个目录和 锁名 会返回一个锁对象
- * 这里专门返回针对文件系统的锁
+ * 基于文件系统的锁工厂  返回的对象具备抢占文件锁的能力  而操作系统基本上在文件锁上都是实现了进程级别的隔离的
  */
 public abstract class FSLockFactory extends LockFactory {
   
@@ -36,6 +35,13 @@ public abstract class FSLockFactory extends LockFactory {
     return NativeFSLockFactory.INSTANCE;
   }
 
+  /**
+   * 基于文件锁的对象 要求目录必须是  文件系统目录
+   * @param dir
+   * @param lockName name of the lock to be created.
+   * @return
+   * @throws IOException
+   */
   @Override
   public final Lock obtainLock(Directory dir, String lockName) throws IOException {
     if (!(dir instanceof FSDirectory)) {

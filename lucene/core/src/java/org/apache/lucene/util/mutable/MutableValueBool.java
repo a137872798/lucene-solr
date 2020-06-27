@@ -21,8 +21,12 @@ package org.apache.lucene.util.mutable;
  * When mutating instances of this object, the caller is responsible for ensuring 
  * that any instance where <code>exists</code> is set to <code>false</code> must also 
  * <code>value</code> set to <code>false</code> for proper operation.
+ * 代表一个可变的 boolean值
  */
 public class MutableValueBool extends MutableValue {
+  /**
+   * 内部具体的数据
+   */
   public boolean value;
 
   @Override

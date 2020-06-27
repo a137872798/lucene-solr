@@ -52,7 +52,12 @@ import org.apache.lucene.util.RamUsageEstimator;
 
 /** Default general purpose indexing chain, which handles
  *  indexing all types of fields. */
+// 该对象会从doc 中解析相关信息并生成索引
 final class DefaultIndexingChain extends DocConsumer {
+
+  /**
+   * 记录当前使用了多少byte
+   */
   final Counter bytesUsed;
   final DocumentsWriterPerThread.DocState docState;
   final DocumentsWriterPerThread docWriter;
@@ -381,6 +386,10 @@ final class DefaultIndexingChain extends DocConsumer {
     }
   }
 
+  /**
+   * 处理当前读取到的 doc 并生成索引
+   * @throws IOException
+   */
   @Override
   public void processDocument() throws IOException {
 

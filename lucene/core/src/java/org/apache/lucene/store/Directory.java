@@ -46,7 +46,7 @@ import org.apache.lucene.util.IOUtils;
  * @see FSDirectory
  * @see ByteBuffersDirectory
  * @see FilterDirectory
- * 代表一个目录   在使用lucene时 先打开一个目录 然后使用 IndexWriter 将文本信息写入到 document中 再使用writer 将docment写入到 directory中
+ * 存放/读取 索引的目录
  */
 public abstract class Directory implements Closeable {
   /**

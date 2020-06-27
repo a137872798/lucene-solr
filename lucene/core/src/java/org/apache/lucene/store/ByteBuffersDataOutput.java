@@ -39,12 +39,15 @@ import org.apache.lucene.util.UnicodeUtil;
 /**
  * A {@link DataOutput} storing data in a list of {@link ByteBuffer}s.
  * 通过 byteBuffer 来存储数据
- * 而 DataOutput抽象的含义是普通的数据输出流    IndexOutput 代表是 lucene的索引输出流
+ * 而 DataOutput抽象的含义是一个写入各种类型数据的模板  核心的 writeByte 由子类实现
  */
 public final class ByteBuffersDataOutput extends DataOutput implements Accountable {
   private final static ByteBuffer EMPTY = ByteBuffer.allocate(0);
   private final static byte [] EMPTY_BYTE_ARRAY = {};
 
+  /**
+   * 该函数负责创建需要的BB
+   */
   public final static IntFunction<ByteBuffer> ALLOCATE_BB_ON_HEAP = ByteBuffer::allocate;
 
   /**
@@ -93,21 +96,20 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
     }
   }
 
-  /**
-   * 代表以 2的10次位 为一个block
-   */
+  // 这里描述了  block的最大/最小尺寸要求
   public final static int DEFAULT_MIN_BITS_PER_BLOCK = 10; // 1024 B
   public final static int DEFAULT_MAX_BITS_PER_BLOCK = 26; //   64 MB
 
   /**
    * Maximum number of blocks at the current {@link #blockBits} block size
    * before we increase the block size (and thus decrease the number of blocks).
+   * 当此时缓存的 block数量超过这个值时 允许对block进行扩容 当然不能超过 maxBitsPerBlock
    */
   final static int MAX_BLOCKS_BEFORE_BLOCK_EXPANSION = 100;
 
   /**
    * Maximum block size: {@code 2^bits}.
-   * 每个块最多会使用多少位
+   * 允许扩容到的最大值
    */
   private final int maxBitsPerBlock;
 
@@ -123,7 +125,6 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
 
   /**
    * Current block size: {@code 2^bits}.
-   * 当前block 已经写入了多少bit
    */
   private int blockBits;
 
@@ -140,7 +141,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
   /**
    * 基由一个预估的大小来创建 输出流    这里的输出流内部维护了一组 BB 对象 每次写入数据就是往BB 写入
    * 这里 block 等同于 BB
-   * @param expectedSize   预计每次存入的数据大小至少是
+   * @param expectedSize  预计总计占用多少内存
    */
   public ByteBuffersDataOutput(long expectedSize) {
     this(computeBlockSizeBitsFor(expectedSize), DEFAULT_MAX_BITS_PER_BLOCK, ALLOCATE_BB_ON_HEAP, NO_REUSE);
@@ -409,7 +410,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
   }
 
   /**
-   * 如果写入的是字符串类型
+   * 如果写入的是字符串类型  这里字符串默认是 UTF-16
    * @param v
    */
   @Override
@@ -429,9 +430,10 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
         // 这里才是将 v内部的数据 拷贝到内部的 BB列表
         writeBytes(utf8.bytes, utf8.offset, utf8.length);
       } else {
-        // 下面还没理解
+        // 代表数据无法用一个  BytesRef 来填装
         writeVInt(UnicodeUtil.calcUTF16toUTF8Length(v, 0, v.length()));
 
+        // 这里分多次写入
         final byte [] buf = new byte [UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR * MAX_CHARS_PER_WINDOW];
         UTF16toUTF8(v, 0, v.length(), buf, (len) -> {
           writeBytes(buf, 0, len);
@@ -513,17 +515,18 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
    * 创建一个新的 block
    */
   private void appendBlock() {
+    // 在block数量没有达到100 前 直接创建 blockBits大小的block  当超过100时 优先考虑对之间的block进行扩容 当block本身 达到扩容上限时 又允许重新创建block了
+
     // 首先判断当前的block 是否超过了某个阈值   如果超过的话 那么就优先尝试将之前已经存在的block扩容 具体做法就是 将位数 + 1
     if (blocks.size() >= MAX_BLOCKS_BEFORE_BLOCK_EXPANSION && blockBits < maxBitsPerBlock) {
       rewriteToBlockSize(blockBits + 1);
+      // 代表此时 又有空间了
       if (blocks.getLast().hasRemaining()) {
         return;
       }
     }
 
-    // 按照当前blockBits 创建新的 block   如果当前每个block的大小都达到 maxBitsPerBlock的话 那么就无限制的创建新的block
     final int requiredBlockSize = 1 << blockBits;
-    //
     currentBlock = blockAllocate.apply(requiredBlockSize);
     assert currentBlock.capacity() == requiredBlockSize;
     blocks.add(currentBlock);
@@ -531,7 +534,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
 
   /**
    * 将原先的数据填充到一个新的size的 block中
-   * @param targetBlockBits
+   * @param targetBlockBits  新block的大小
    */
   private void rewriteToBlockSize(int targetBlockBits) {
     assert targetBlockBits <= maxBitsPerBlock;
@@ -539,7 +542,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
     // We copy over data blocks to an output with one-larger block bit size.
     // We also discard references to blocks as we're copying to allow GC to
     // clean up partial results in case of memory pressure.
-    // 以一个新的位数大小来创建 输出流
+    // 这里只是一个临时容器
     ByteBuffersDataOutput cloned = new ByteBuffersDataOutput(targetBlockBits, targetBlockBits, blockAllocate, NO_REUSE);
     ByteBuffer block;
     // 将当前所有 block的数据 都转移到 cloned 中   因为新的dataOutput容量更大 所以一般情况能够容纳数据
@@ -551,7 +554,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
       }
     }
 
-    // 将该对象的内部指针指向新的对象  原来的空间就会被GC回收
+    // 将临时容器 已经处理完的数据 再填充到该对象  这样就完成了一次拷贝
     assert blocks.isEmpty();
     this.blockBits = targetBlockBits;
     blocks.addAll(cloned.blocks);

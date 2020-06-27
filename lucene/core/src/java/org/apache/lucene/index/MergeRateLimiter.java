@@ -30,16 +30,17 @@ import org.apache.lucene.index.MergePolicy.OneMergeProgress.PauseReason;
  *  give {@link MergeScheduler}s ionice like control.
  *
  *  @lucene.internal */
-
+// 限流器  SimpleRateLimiter 是针对 IO 进行限流   这个对象是专门针对merge操作进行限流
 public class MergeRateLimiter extends RateLimiter {
 
   private final static int MIN_PAUSE_CHECK_MSEC = 25;
-  
+
+  // 一个最小的暂停时间 低于这个值 忽略暂停
   private final static long MIN_PAUSE_NS = TimeUnit.MILLISECONDS.toNanos(2);
   private final static long MAX_PAUSE_NS = TimeUnit.MILLISECONDS.toNanos(250);
 
   /**
-   * 限定每秒处理多少 mb数据
+   * 限定每秒处理多少 mb数据  如果设置成 0.0 那么触发parse时 传入的person 是 stop
    */
   private volatile double mbPerSec;
   /**
@@ -55,7 +56,7 @@ public class MergeRateLimiter extends RateLimiter {
   private AtomicLong totalBytesWritten = new AtomicLong();
 
   /**
-   * 该对象负责融合索引
+   * 该对象会记录因各种原因导致的merge 暂停时间 类似一个协调者
    */
   private final OneMergeProgress mergeProgress;
 
@@ -82,7 +83,7 @@ public class MergeRateLimiter extends RateLimiter {
       assert minPauseCheckBytes >= 0;
     }
 
-    // 唤醒被阻塞的所有线程
+    // 因为重置了相关参数  选择先唤醒阻塞的线程
     mergeProgress.wakeup();
   }
 
@@ -111,6 +112,7 @@ public class MergeRateLimiter extends RateLimiter {
     // is changed while we were pausing:
     long paused = 0;
     long delta;
+    // 暂停并累加总的暂停时间
     while ((delta = maybePause(bytes, System.nanoTime())) >= 0) {
       // Keep waiting.
       paused += delta;
@@ -137,6 +139,7 @@ public class MergeRateLimiter extends RateLimiter {
    */
   private long maybePause(long bytes, long curNS) throws MergePolicy.MergeAbortedException {
     // Now is a good time to abort the merge:
+    // 如果merge 任务已经被终止了 直接抛出异常就好
     if (mergeProgress.isAborted()) {
       throw new MergePolicy.MergeAbortedException("Merge aborted.");
     }
@@ -153,6 +156,7 @@ public class MergeRateLimiter extends RateLimiter {
     long curPauseNS = targetNS - curNS;
 
     // We don't bother with thread pausing if the pause is smaller than 2 msec.
+    // 这是一个最小的 暂停的值 低于这个值  就忽略parse  也是的 连续的短时间暂停只会收到更多的上下文切换带来的性能影响
     if (curPauseNS <= MIN_PAUSE_NS) {
       // Set to curNS, not targetNS, to enforce the instant rate, not
       // the "averaged over all history" rate:
@@ -162,6 +166,7 @@ public class MergeRateLimiter extends RateLimiter {
 
     // Defensive: don't sleep for too long; the loop above will call us again if
     // we should keep sleeping and the rate may be adjusted in between.
+    // 不能超过上限值
     if (curPauseNS > MAX_PAUSE_NS) {
       curPauseNS = MAX_PAUSE_NS;
     }

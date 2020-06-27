@@ -28,6 +28,8 @@ import org.apache.lucene.store.Directory;
  * {@link NoMergeScheduler} you also ensure that no unnecessary code of any
  * {@link MergeScheduler} implementation is ever executed. Hence it is
  * recommended to use both if you want to disable merges from ever happening.
+ * 一个不进行merge操作的空对象
+ * 注意一个细节  就是这种特化的类 一般都是配合final 修饰 确保使用者不会瞎搞  以后工具类都要加 final
  */
 public final class NoMergeScheduler extends MergeScheduler {
 

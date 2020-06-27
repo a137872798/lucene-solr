@@ -27,7 +27,11 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 
+/**
+ * 该对象专门负责创建临时文件
+ */
 final class TrackingTmpOutputDirectoryWrapper extends FilterDirectory {
+  // 维护目标文件与临时文件的映射关系
   private final Map<String,String> fileNames = new HashMap<>();
 
   TrackingTmpOutputDirectoryWrapper(Directory in) {

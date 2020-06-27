@@ -19,7 +19,7 @@ package org.apache.lucene.store;
 /**
  * <p>A MergeInfo provides information required for a MERGE context.
  *  It is used as part of an {@link IOContext} in case of MERGE context.</p>
- *  整合 上下文的信息对象  就是一个简单的bean对象
+ *  简单的bean 对象  描述merge信息
  */
 
 public class MergeInfo {

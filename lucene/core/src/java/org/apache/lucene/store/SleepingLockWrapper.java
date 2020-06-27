@@ -26,6 +26,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * if obtaining the lock fails.
  * <p>
  * This is not a good idea.
+ * 该对象增强了获取锁的逻辑  没有获取到时 通过sleep一段时间后进行重试
  */
 public final class SleepingLockWrapper extends FilterDirectory {
  
@@ -76,6 +77,7 @@ public final class SleepingLockWrapper extends FilterDirectory {
   @Override
   public Lock obtainLock(String lockName) throws IOException {
     LockObtainFailedException failureReason = null;
+    // 比值就是重试次数
     long maxSleepCount = lockWaitTimeout / pollInterval;
     long sleepCount = 0;
     

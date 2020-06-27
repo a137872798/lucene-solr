@@ -29,6 +29,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 
 /** An in-place update to a DocValues field. */
+// 代表更新文档的值
 abstract class DocValuesUpdate {
   
   /* Rough logic: OBJ_HEADER + 3*PTR + INT
@@ -39,13 +40,24 @@ abstract class DocValuesUpdate {
    * T: OBJ_HEADER
    */
   private static final int RAW_SIZE_IN_BYTES = 8*NUM_BYTES_OBJECT_HEADER + 8*NUM_BYTES_OBJECT_REF + 8*Integer.BYTES;
-  
+
+  /**
+   * 该文档的类型
+   */
   final DocValuesType type;
+  /**
+   * 对应的哪个term
+   */
   final Term term;
+  /**
+   * 该词属于哪个域
+   */
   final String field;
   // used in BufferedDeletes to apply this update only to a slice of docs. It's initialized to BufferedUpdates.MAX_INT
   // since it's safe and most often used this way we safe object creations.
+  // term对应的文档号
   final int docIDUpto;
+  // 本对象是否已经声明了更新的值
   final boolean hasValue;
 
   /**
@@ -89,6 +101,7 @@ abstract class DocValuesUpdate {
   }
   
   /** An in-place update to a binary DocValues field */
+  // 指明了 更新的类型是  二进制数据流
   static final class BinaryDocValuesUpdate extends DocValuesUpdate {
     private final BytesRef value;
 
@@ -126,13 +139,26 @@ abstract class DocValuesUpdate {
       return value;
     }
 
+    /**
+     * 将数值写入到 输出流中
+     * @param out
+     * @throws IOException
+     */
     @Override
     void writeTo(DataOutput out) throws IOException {
       assert hasValue;
+      // 这里使用 lucene自定义的数据类型
       out.writeVInt(value.length);
       out.writeBytes(value.bytes, value.offset, value.length);
     }
 
+    /**
+     * 从输入流中 读取数据 并填写到  bytesRef中
+     * @param in
+     * @param scratch
+     * @return
+     * @throws IOException
+     */
     static BytesRef readFrom(DataInput in, BytesRef scratch) throws IOException {
       scratch.length = in.readVInt();
       if (scratch.bytes.length < scratch.length) {

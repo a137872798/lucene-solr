@@ -33,6 +33,7 @@ import java.io.OutputStream;
  *
  * @see LockVerifyServer
  * @see LockStressTest
+ * 该对象只是一层包装类  实际上实现加锁功能的还是内部的  LockFactory
  */
 
 public final class VerifyingLockFactory extends LockFactory {
@@ -41,6 +42,9 @@ public final class VerifyingLockFactory extends LockFactory {
   final InputStream in;
   final OutputStream out;
 
+  /**
+   * 返回的锁对象会被包装
+   */
   private class CheckedLock extends Lock {
     private final Lock lock;
 
@@ -62,6 +66,10 @@ public final class VerifyingLockFactory extends LockFactory {
       }
     }
 
+    /**
+     * @param message
+     * @throws IOException
+     */
     private void verify(byte message) throws IOException {
       out.write(message);
       out.flush();

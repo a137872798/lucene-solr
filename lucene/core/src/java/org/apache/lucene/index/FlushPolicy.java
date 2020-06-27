@@ -44,8 +44,13 @@ import org.apache.lucene.util.InfoStream;
  * @see DocumentsWriterPerThread
  * @see IndexWriterConfig#setFlushPolicy(FlushPolicy)
  * 代表刷盘策略
+ * 是这样的  在DocumentWriter 中每次针对doc的操作都会涉及到一个刷盘的问题   至于如何规定这个刷盘动作 则是由 FlushPolicy 决定的
  */
 abstract class FlushPolicy {
+
+  /**
+   * 该config 对象中可以挂载 policy 
+   */
   protected LiveIndexWriterConfig indexWriterConfig;
   protected InfoStream infoStream;
 
@@ -69,6 +74,7 @@ abstract class FlushPolicy {
    * Note: This method is called  synchronized on the given
    * {@link DocumentsWriterFlushControl} and it is guaranteed that the calling
    * thread holds the lock on the given {@link DocumentsWriterPerThread}
+   * 可以看到 实际上更新被拆分成2个动作   delete + insert
    */
   public void onUpdate(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
     onInsert(control, perThread);
@@ -104,11 +110,17 @@ abstract class FlushPolicy {
       DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
     assert perThread.getNumDocsInRAM() > 0;
     // the dwpt which needs to be flushed eventually
+    // 通过总控对象找到 最后一个 写入线程 并返回
     DocumentsWriterPerThread maxRamUsingWriter = control.findLargestNonPendingWriter();
     assert assertMessage("set largest ram consuming thread pending on lower watermark");
     return maxRamUsingWriter;
   }
-  
+
+  /**
+   * 检测是否支持打印日志
+   * @param s
+   * @return
+   */
   private boolean assertMessage(String s) {
     if (infoStream.isEnabled("FP")) {
       infoStream.message("FP", s);

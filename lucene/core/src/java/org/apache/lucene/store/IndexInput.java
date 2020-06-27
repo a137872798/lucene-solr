@@ -38,7 +38,7 @@ import java.io.IOException;
  * any <code>readXXX</code> methods will throw {@link AlreadyClosedException}.
  *
  * @see Directory
- * 从 directory下的文件中读取数据
+ * 代表一个从Directory读取数据的输入流
  */
 public abstract class IndexInput extends DataInput implements Cloneable,Closeable {
 

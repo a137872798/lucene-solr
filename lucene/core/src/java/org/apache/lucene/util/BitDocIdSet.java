@@ -23,11 +23,15 @@ import org.apache.lucene.search.DocIdSetIterator;
 /**
  * Implementation of the {@link DocIdSet} interface on top of a {@link BitSet}.
  * @lucene.internal
+ * 该对象基于位图来存储docId
  */
 public class BitDocIdSet extends DocIdSet {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(BitDocIdSet.class);
 
+  /**
+   * 数据存储容器
+   */
   private final BitSet set;
   private final long cost;
 

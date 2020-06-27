@@ -544,9 +544,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       IndexWriter.this.onTragicEvent(event, message);
     }
 
+    /**
+     * 将更新数据写入 磁盘   indexWriter 会创建一个 DocumentsWriter 并将本对象作为监听器设置到内部  每当针对doc的更新操作积累到一定量时 触发对应事件
+     */
     @Override
     public void onDeletesApplied() {
-      // 添加一个异步事件 用于发布segment
       eventQueue.add(w -> {
           try {
             w.publishFlushedSegments(true);

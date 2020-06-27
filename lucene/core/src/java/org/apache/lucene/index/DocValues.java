@@ -24,7 +24,7 @@ import org.apache.lucene.util.BytesRef;
 
 /** 
  * This class contains utility methods and constants for DocValues
- * 该静态类 可以提供一些常用的 DocValues 实现类    这些DocValues的作用是为查询结果提供一个排序规则
+ * 描述文档数据的类型
  */
 public final class DocValues {
 

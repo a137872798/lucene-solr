@@ -62,7 +62,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
  *  disk for backwards compatibility.  To enable default
  *  settings for spinning or solid state disks for such
  *  operating systems, use {@link #setDefaultMaxMergesAndThreads(boolean)}.
- *  并发merge 对象
+ *  每个 oneMerge 对应一条后台线程  并行合并
  */ 
 public class ConcurrentMergeScheduler extends MergeScheduler {
 
@@ -93,6 +93,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   // ones run, up until maxMergeCount merges at which point
   // we forcefully pause incoming threads (that presumably
   // are the ones causing so much merging).
+  // merge 并行度  这个代表默认情况不做限制吗
   private int maxThreadCount = AUTO_DETECT_MERGES_AND_THREADS;
 
   // Max number of merges we accept before forcefully
@@ -633,6 +634,10 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     return thread;
   }
 
+  /**
+   * 当merge 操作结束时触发
+   * @param mergeSource
+   */
   synchronized void runOnMergeFinished(MergeSource mergeSource) {
     // the merge call as well as the merge thread handling in the finally
     // block must be sync'd on CMS otherwise stalling decisions might cause
@@ -655,15 +660,20 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   }
 
   /** Runs a merge thread to execute a single merge, then exits. */
+  // 该线程负责实际的 merge工作  而 整个Scheduler 作为一个调节者  一个线程只执行一个merge任务
   protected class MergeThread extends Thread implements Comparable<MergeThread> {
+    // 应该是多线程共用该对象
     final MergeSource mergeSource;
+    // 应该是当前merge的对象
     final OneMerge merge;
+    // merge限流器
     final MergeRateLimiter rateLimiter;
 
     /** Sole constructor. */
     public MergeThread(MergeSource mergeSource, OneMerge merge) {
       this.mergeSource = mergeSource;
       this.merge = merge;
+      // rateLimiter 通过操作 progress 来操控 MergeThread 进而暂停merge动作
       this.rateLimiter = new MergeRateLimiter(merge.getMergeProgress());
     }
 
@@ -680,11 +690,13 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
           message("  merge thread: start");
         }
 
+        // 默认 操作是  MergeSource.merge()  MergeSource 默认实现就是最核心的 IndexWriter
         doMerge(mergeSource, merge);
 
         if (verbose()) {
           message("  merge thread: done");
         }
+        // 触发钩子
         runOnMergeFinished(mergeSource);
       } catch (Throwable exc) {
         if (exc instanceof MergePolicy.MergeAbortedException) {

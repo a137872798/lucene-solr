@@ -42,7 +42,10 @@ import java.io.IOException;
  * @see LockVerifyServer
  * @see LockStressTest
  * @see VerifyingLockFactory
- * 锁工厂  通过指定一个目录 和一个标明锁的名称 返回一个锁对象
+ * 锁工厂  通过指定一个目录 和一个标明锁的名称 返回一个锁对象    注意锁的范围分为线程锁和进程锁    进程锁一般是基于对文件的原子操作来实现的  因为一般的操作系统都能够
+ * 保证文件锁同一时间只有一个进程可以持有 所以能够实现进程隔离
+ * 该对象在lucene的意义就是 同一时间只有一个IndexWriter可以往目录中写入索引    而如果在多线程中使用同一个IndexWriter(该writer已经获取了进程锁)  那么就需要借助JVM提供的线程锁
+ * 来实现线程隔离 比如 synchronized 关键字 或者 juc.Lock 实现类
  */
 
 public abstract class LockFactory {
@@ -53,6 +56,7 @@ public abstract class LockFactory {
    * @throws LockObtainFailedException (optional specific exception) if the lock could
    *         not be obtained because it is currently held elsewhere.
    * @throws IOException if any i/o error occurs attempting to gain the lock
+   * 抢占指定目录的锁
    */
   public abstract Lock obtainLock(Directory dir, String lockName) throws IOException;
 

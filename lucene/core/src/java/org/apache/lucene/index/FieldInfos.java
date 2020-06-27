@@ -34,12 +34,14 @@ import org.apache.lucene.util.ArrayUtil;
 /** 
  * Collection of {@link FieldInfo}s (accessible by number or by name).
  *  @lucene.experimental
+ *  内部包含 一组域的描述信息
  */
 public class FieldInfos implements Iterable<FieldInfo> {
 
   /** An instance without any fields. */
   public final static FieldInfos EMPTY = new FieldInfos(new FieldInfo[0]);
 
+  // 这个域索引是否有以下的属性
   private final boolean hasFreq;
   private final boolean hasProx;
   private final boolean hasPayloads;
@@ -261,7 +263,10 @@ public class FieldInfos implements Iterable<FieldInfo> {
       this.dimensionNumBytes = dimensionNumBytes;
     }
   }
-  
+
+  /**
+   * 存储了域相关的 映射信息
+   */
   static final class FieldNumbers {
     
     private final Map<Integer,String> numberToName;
@@ -457,10 +462,20 @@ public class FieldInfos implements Iterable<FieldInfo> {
       dimensions.put(name, new FieldDimensions(dimensionCount, indexDimensionCount, dimensionNumBytes));
     }
   }
-  
+
+  /**
+   * 该对象用于构建 一组 域信息对象
+   */
   static final class Builder {
+    /**
+     * 这里按域的名称 存储了一组域信息
+     */
     private final HashMap<String,FieldInfo> byName = new HashMap<>();
+    /**
+     * 存储了一组 域的数字信息
+     */
     final FieldNumbers globalFieldNumbers;
+
     private boolean finished;
 
     /**

@@ -30,7 +30,7 @@ import java.util.zip.Checksum;
  */
 public final class ByteBuffersIndexOutput extends IndexOutput {
   /**
-   * 该对象用于释放 代理对象
+   * 当输出流关闭时触发
    */
   private final Consumer<ByteBuffersDataOutput> onClose;
   
@@ -44,6 +44,9 @@ public final class ByteBuffersIndexOutput extends IndexOutput {
    */
   private long lastChecksum;
 
+  /**
+   * 数据会通过该对象完成写入
+   */
   private ByteBuffersDataOutput delegate;
 
   public ByteBuffersIndexOutput(ByteBuffersDataOutput delegate, String resourceDescription, String name) {

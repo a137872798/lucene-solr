@@ -42,6 +42,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * deletes/updates are write-once, so we shift to more memory efficient data
  * structure to hold them.  We don't hold docIDs because these are applied on
  * flush.
+ * 该对象 根 FieldUpdatesBuffer 一样是描述 域的更新信息的  不同点是 该对象无法再追加新的信息
  */
 final class FrozenBufferedUpdates {
 
@@ -53,6 +54,7 @@ final class FrozenBufferedUpdates {
   final static int BYTES_PER_DEL_QUERY = RamUsageEstimator.NUM_BYTES_OBJECT_REF + Integer.BYTES + 24;
   
   // Terms, in sorted order:
+  // 该对象采用 共享公共前缀的方式减少了 内存开销  并且可以在迭代器中还原之前的term
   final PrefixCodedTerms deleteTerms;
 
   // Parallel array of deleted query, and the docIDUpto for each
@@ -62,6 +64,9 @@ final class FrozenBufferedUpdates {
   /** Counts down once all deletes/updates have been applied */
   public final CountDownLatch applied = new CountDownLatch(1);
   private final ReentrantLock applyLock = new ReentrantLock();
+  /**
+   * 以 field 为单位存储了每个 field内部数据的更新情况
+   */
   private final Map<String, FieldUpdatesBuffer> fieldUpdates;
 
   /** How many total documents were deleted/updated. */
@@ -78,18 +83,28 @@ final class FrozenBufferedUpdates {
                                    // only have Queries and doc values updates
   private final InfoStream infoStream;
 
+  /**
+   * 该对象 主要就是通过一个 BufferedUpdates 对象进行初始化
+   * @param infoStream
+   * @param updates  该对象内部 包含多个 FieldUpdatesBuffer 对象 它们以field 作为分界线
+   * @param privateSegment   该对象可以为null
+   */
   public FrozenBufferedUpdates(InfoStream infoStream, BufferedUpdates updates, SegmentCommitInfo privateSegment) {
     this.infoStream = infoStream;
     this.privateSegment = privateSegment;
     assert privateSegment == null || updates.deleteTerms.isEmpty() : "segment private packet should only have del queries";
+    // 读取内部所有更新的term
     Term termsArray[] = updates.deleteTerms.keySet().toArray(new Term[updates.deleteTerms.size()]);
+    // 用了什么  timSort 算法  反正也是进行排序
     ArrayUtil.timSort(termsArray);
+    // 构建公共前缀对象
     PrefixCodedTerms.Builder builder = new PrefixCodedTerms.Builder();
     for (Term term : termsArray) {
       builder.add(term);
     }
     deleteTerms = builder.finish();
-    
+
+    // 当以 query 作为update条件时 存储相关数据    value 对应docId
     deleteQueries = new Query[updates.deleteQueries.size()];
     deleteQueryLimits = new int[updates.deleteQueries.size()];
     int upto = 0;
@@ -102,6 +117,7 @@ final class FrozenBufferedUpdates {
     // so that it maps to all fields it affects, sorted by their docUpto, and traverse
     // that Term only once, applying the update to all fields that still need to be
     // updated.
+    // 冻结内部的数据 使得整个 BufferedUpdates 无法再改动
     updates.fieldUpdates.values().forEach(FieldUpdatesBuffer::finish);
     this.fieldUpdates = Map.copyOf(updates.fieldUpdates);
     this.fieldUpdatesCount = updates.numFieldUpdates.get();
@@ -141,7 +157,7 @@ final class FrozenBufferedUpdates {
   }
 
   /**
-   * Returns true iff this buffered updates instance was already applied
+   * Returns true if this buffered updates instance was already applied
    */
   boolean isApplied() {
     assert applyLock.isHeldByCurrentThread();

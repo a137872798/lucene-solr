@@ -23,6 +23,7 @@ import java.util.List;
  * An {@link IndexDeletionPolicy} which keeps all index commits around, never
  * deleting them. This class is a singleton and can be accessed by referencing
  * {@link #INSTANCE}.
+ * 不删除旧数据
  */
 public final class NoDeletionPolicy extends IndexDeletionPolicy {
 

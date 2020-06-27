@@ -53,6 +53,7 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
   @Override
   public final byte readByte() throws IOException {
     if (buffer.hasRemaining() == false) {
+      // 读取下一批数据 填充到buffer中
       refill();
     }
     return buffer.get();

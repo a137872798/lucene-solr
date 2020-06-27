@@ -113,7 +113,7 @@ public class SparseFixedBitSet extends BitSet implements Bits, Accountable {
   }
 
   /**
-   * 这里支持计算近似值  这个方法就不看了
+   * 预估消耗多少空间  这个方法就不看了
    * @return
    */
   @Override

@@ -37,9 +37,14 @@ import org.apache.lucene.util.BytesRef;
  * <i>not</i> available in documents retrieved from the index, e.g. with {@link
  * ScoreDoc#doc} or {@link IndexReader#document(int)}.
  */
-// 一个doc对象本身就是由多个 索引字段组成的
+// 一个文档内部包含多个域  通过设置一个doc 对象 并追加各种域后  通过 IndexWriter 将结果写入到索引中 在期间会生成各种结构 （包括倒排索引）
+// 而查询数据的过程就是将参数包装成Query对象 之后使用 IndexSearcher 包装Query 最后使用 IndexReader 读取索引的数据
+// 该对象只是提供了一个访问 fields 的入口
 public final class Document implements Iterable<IndexableField> {
 
+  /**
+   * 内部存储了该文档相关的域
+   */
   private final List<IndexableField> fields = new ArrayList<>();
 
   /** Constructs a new document with no fields. */
@@ -59,7 +64,7 @@ public final class Document implements Iterable<IndexableField> {
    * be used to change the content of an existing index! In order to achieve this,
    * a document has to be deleted from an index and a new changed version of that
    * document has to be added.</p>
-   * 为当前doc 添加一个索引字段
+   * 为当前doc 添加一个域
    */
   public final void add(IndexableField field) {
     fields.add(field);

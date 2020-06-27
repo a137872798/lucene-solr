@@ -29,6 +29,7 @@ abstract class FieldTermIterator implements BytesRefIterator {
   /** Returns current field.  This method should not be called
    *  after iteration is done.  Note that you may use == to
    *  detect a change in field. */
+  // 获取当前数据的 field  因为每个term都有一个所属的 field
   abstract String field();
 
   /** Del gen of the current term. */

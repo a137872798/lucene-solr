@@ -44,11 +44,21 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * Once a {@link DocumentsWriterPerThread} is selected for flush the {@link DocumentsWriterPerThread} will
  * be checked out of the thread pool and won't be reused for indexing. See {@link #checkout(DocumentsWriterPerThread)}.
  * </p>
+ * 可以理解为一个线程池对象  内部维护多个DocumentsWriterPerThread 对象
  */
 final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerThread>, Closeable {
 
+  /**
+   * 内部维护了一组线程
+   */
   private final Set<DocumentsWriterPerThread> dwpts = Collections.newSetFromMap(new IdentityHashMap<>());
+  /**
+   * 此时空闲的线程
+   */
   private final Deque<DocumentsWriterPerThread> freeList = new ArrayDeque<>();
+  /**
+   * 类似于 threadFactory
+   */
   private final IOSupplier<DocumentsWriterPerThread> dwptFactory;
   private int takenWriterPermits = 0;
   private boolean closed;
@@ -65,6 +75,9 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
     return dwpts.size();
   }
 
+  /**
+   * 调用该方法后会增加一个计数器  在该计数值归零之前 不能成功调用 newWriter方法
+   */
   synchronized void lockNewWriters() {
     // this is similar to a semaphore - we need to acquire all permits ie. takenWriterPermits must be == 0
     // any call to lockNewWriters() must be followed by unlockNewWriters() otherwise we will deadlock at some
@@ -77,6 +90,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
     assert takenWriterPermits > 0;
     takenWriterPermits--;
     if (takenWriterPermits == 0) {
+      // 唤醒之前调用 newWriter而阻塞的线程
       notifyAll();
     }
   }
@@ -85,6 +99,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
    * Returns a new already locked {@link DocumentsWriterPerThread}
    *
    * @return a new {@link DocumentsWriterPerThread}
+   * 创建一个新的线程对象
    */
   private synchronized DocumentsWriterPerThread newWriter() throws IOException {
     assert takenWriterPermits >= 0;
@@ -97,6 +112,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
       }
     }
     DocumentsWriterPerThread dwpt = dwptFactory.get();
+    // 在存入到能够被其他线程访问到的容器前 先抢占这个对象
     dwpt.lock(); // lock so nobody else will get this DWPT
     dwpts.add(dwpt);
     return dwpt;
@@ -114,6 +130,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
       // Important that we are LIFO here! This way if number of concurrent indexing threads was once high,
       // but has now reduced, we only use a limited number of DWPTs. This also guarantees that if we have suddenly
       // a single thread indexing
+      // 先尝试从freeList中获取
       final Iterator<DocumentsWriterPerThread> descendingIterator = freeList.descendingIterator();
       while (descendingIterator.hasNext()) {
         DocumentsWriterPerThread perThread = descendingIterator.next();
@@ -123,10 +140,12 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
         }
       }
       // DWPT is already locked before return by this method:
+      // 没有旧对象可用 创建一个新对象
       return newWriter();
     }
   }
 
+  // 将某个 thread 存放到freeList中
   void marksAsFreeAndUnlock(DocumentsWriterPerThread state) {
     synchronized (this) {
       assert dwpts.contains(state) : "we tried to add a DWPT back to the pool but the pool doesn't know aobut this DWPT";
@@ -144,6 +163,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
    * Filters all DWPTs the given predicate applies to and that can be checked out of the pool via
    * {@link #checkout(DocumentsWriterPerThread)}. All DWPTs returned from this method are already locked
    * and {@link #isRegistered(DocumentsWriterPerThread)} will return <code>true</code> for all returned DWPTs
+   * 将满足条件的对象上锁
    */
   List<DocumentsWriterPerThread> filterAndLock(Predicate<DocumentsWriterPerThread> predicate) {
     List<DocumentsWriterPerThread> list = new ArrayList<>();
@@ -165,6 +185,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
   /**
    * Removes the given DWPT from the pool unless it's already been removed before.
    * @return <code>true</code> iff the given DWPT has been removed. Otherwise <code>false</code>
+   * 释放目标对象
    */
   synchronized boolean checkout(DocumentsWriterPerThread perThread) {
    assert perThread.isHeldByCurrentThread();

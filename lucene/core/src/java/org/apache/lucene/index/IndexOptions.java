@@ -20,34 +20,34 @@ package org.apache.lucene.index;
 /**
  * Controls how much information is stored in the postings lists.
  * @lucene.experimental
- * 代表索引中应该存储什么信息
+ * 域的哪些信息会存储到索引中
  */
 
 public enum IndexOptions { 
   // NOTE: order is important here; FieldInfo uses this
   // order to merge two conflicting IndexOptions (always
   // "downgrades" by picking the lowest).
-  /** Not indexed */
+  /** Not indexed */  // 不会将域的任何信息存储到索引中  这样就不能通过域来检索到目标文档
   NONE,
   /** 
    * Only documents are indexed: term frequencies and positions are omitted.
    * Phrase and other positional queries on the field will throw an exception, and scoring
    * will behave as if any term in the document appears only once.
-   * 索引中只存储文档信息
+   * 域所属的文档号会被写入到索引中
    */
   DOCS,
   /** 
    * Only documents and term frequencies are indexed: positions are omitted. 
    * This enables normal scoring, except Phrase and other positional queries
    * will throw an exception.
-   * 文档和词的频率都将被索引
+   * 将域所属的文档号 以及词频写入到 索引中   但是没有写入位置信息     当使用有关位置的query对象进行搜索时 会抛出异常
    */  
   DOCS_AND_FREQS,
   /** 
    * Indexes documents, frequencies and positions.
    * This is a typical default for full-text search: full scoring is enabled
    * and positional queries are supported.
-   * 文档/频率/pos都将被存储   这是一个典型的全文本查询
+   * 文档/频率/pos都将被存储  这是支持全文搜索的默认配置
    */
   DOCS_AND_FREQS_AND_POSITIONS,
   /** 

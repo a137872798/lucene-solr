@@ -24,11 +24,11 @@ import org.apache.lucene.analysis.Analyzer; // javadocs
 /** 
  * Describes the properties of a field.
  * @lucene.experimental
- * 代表索引中某个字段的类型
+ * 代表支持被索引的 域对象
  */
 public interface IndexableFieldType {
 
-  /** True if the field's value should be stored */ // 该字段是否应该被排序
+  /** True if the field's value should be stored */ // 这个域是否设置了排序信息
   public boolean stored();
   
   /** 
@@ -39,7 +39,7 @@ public interface IndexableFieldType {
    * IndexOptions.NONE.
    */
   // TODO: shouldn't we remove this?  Whether/how a field is
-  // tokenized is an impl detail under Field?   该字段是否需要被分析
+  // tokenized is an impl detail under Field?   是否需要被分词 如果支持被分词 就是每个分词都可以查询到数据 否则就是整体匹配
   public boolean tokenized();
 
   /** 
@@ -72,7 +72,7 @@ public interface IndexableFieldType {
    * <p>
    * This option is illegal if term vectors are not enabled for the field
    * ({@link #storeTermVectors()} is false).
-   * 指针是否应该被保存  指针和偏移量的区别是什么???
+   * 是否保存位置信息
    */
   public boolean storeTermVectorPositions();
   
@@ -82,7 +82,7 @@ public interface IndexableFieldType {
    * <p>
    * This option is illegal if term vector positions are not enabled 
    * for the field ({@link #storeTermVectors()} is false).
-   * token负载的东西是否应该被保存
+   * 该向量携带的 payload 是否应该被保存
    */
   public boolean storeTermVectorPayloads();
 
@@ -91,7 +91,7 @@ public interface IndexableFieldType {
    * <p>
    * This saves memory, but at the expense of scoring quality (length normalization
    * will be disabled), and if you omit norms, you cannot use index-time boosts.
-   * 是否省略规范化
+   * 是否省略标准因子
    */
   public boolean omitNorms();
 
@@ -108,6 +108,7 @@ public interface IndexableFieldType {
 
   /**
    * If this is positive (representing the number of point dimensions), the field is indexed as a point.
+   * 对应的点数据维度   多维度相关的是BKD树
    */
   public int pointDimensionCount();
 
@@ -119,7 +120,6 @@ public interface IndexableFieldType {
 
   /**
    * The number of bytes in each dimension's values.
-   * 维度的字节数
    */
   public int pointNumBytes();
 
@@ -128,7 +128,7 @@ public interface IndexableFieldType {
    *
    * Attributes are not thread-safe, user must not add attributes while other threads are indexing documents
    * with this field type.
-   *
+   * 一组自定义属性 由用户设置
    * @return Map
    */
   public Map<String, String> getAttributes();

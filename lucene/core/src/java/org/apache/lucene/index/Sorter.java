@@ -37,6 +37,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * Sorts documents of a given index by returning a permutation on the document
  * IDs.
  * @lucene.experimental
+ * 该对象负责对doc进行排序
  */
 final class Sorter {
   final Sort sort;

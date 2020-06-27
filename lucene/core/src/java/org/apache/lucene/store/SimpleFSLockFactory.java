@@ -56,7 +56,8 @@ import java.nio.file.attribute.FileTime;
  * <p>This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
- * 一个简单的文件锁工厂对象
+ * 一个简单的文件锁工厂对象  这个实现不涉及 FileLock  哪个线程先创建的文件就认为抢占锁成功 并且创建文件是在进程级别做隔离的
+ * 他的缺点是 JVM 异常退出时 不会删除锁文件 那么之后就无法正常获取锁了
  */
 
 public final class SimpleFSLockFactory extends FSLockFactory {

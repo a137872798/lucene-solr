@@ -34,7 +34,7 @@ import org.apache.lucene.search.similarities.Similarity;
 /**
  * A Query that matches documents containing a term. This may be combined with
  * other terms with a {@link BooleanQuery}.
- * 基于域/词进行查询的对象
+ * 指定词 并找到包含该词的文档
  */
 public class TermQuery extends Query {
 

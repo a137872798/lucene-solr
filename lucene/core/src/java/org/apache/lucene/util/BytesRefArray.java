@@ -33,9 +33,23 @@ import java.util.function.IntBinaryOperator;
  * 内部存放一组有顺序的 ref
  */
 public final class BytesRefArray implements SortableBytesRefArray {
+
+  /**
+   * 该对象可以看作一个大内存对象 内部有多个 bytesRef   一开始无法正常估算 或者说 提前预分配过大的内存会有弊端  所以lucene 通过池化对象 并以二维数组的形式
+   * 将多个bytesRef 连接在一起 形成了一个逻辑上的大内存
+   */
   private final ByteBlockPool pool;
+  /**
+   * 这里记录了每个 bytes 的偏移量
+   */
   private int[] offsets = new int[1];
+  /**
+   * 记录写入了多少数据
+   */
   private int lastElement = 0;
+  /**
+   * 首个 bytes的起始偏移量为 0
+   */
   private int currentOffset = 0;
   private final Counter bytesUsed;
 
@@ -43,8 +57,10 @@ public final class BytesRefArray implements SortableBytesRefArray {
    * Creates a new {@link BytesRefArray} with a counter to track allocated bytes
    */
   public BytesRefArray(Counter bytesUsed) {
+    // 每次使用这个pool对象时  当分配内存的时候 都会间接操作 counter对象 更新数值
     this.pool = new ByteBlockPool(new ByteBlockPool.DirectTrackingAllocator(
         bytesUsed));
+    // 创建首个 buffer
     pool.nextBuffer();
     bytesUsed.addAndGet(RamUsageEstimator.NUM_BYTES_ARRAY_HEADER * Integer.BYTES);
     this.bytesUsed = bytesUsed;
@@ -65,7 +81,8 @@ public final class BytesRefArray implements SortableBytesRefArray {
   /**
    * Appends a copy of the given {@link BytesRef} to this {@link BytesRefArray}.
    * @param bytes the bytes to append
-   * @return the index of the appended bytes
+   * @return the index of the appended bytes   返回值是写入的下标 从0开始
+   * 将 bytes的数据 写入到 pool 中
    */
   @Override
   public int append(BytesRef bytes) {
@@ -74,8 +91,10 @@ public final class BytesRefArray implements SortableBytesRefArray {
       offsets = ArrayUtil.grow(offsets, offsets.length + 1);
       bytesUsed.addAndGet((offsets.length - oldLen) * Integer.BYTES);
     }
+    // 将bytes 内部的数据写入到  pool 中
     pool.append(bytes);
     offsets[lastElement++] = currentOffset;
+    // 更新偏移量 作为下个 bytes的起点 并在下次写入时 存入到 offsets[] 中
     currentOffset += bytes.length;
     return lastElement-1;
   }
@@ -110,8 +129,10 @@ public final class BytesRefArray implements SortableBytesRefArray {
    *  is contained in a single block in the byte block pool. */
   private void setBytesRef(BytesRefBuilder spare, BytesRef result, int index) {
     Objects.checkIndex(index, lastElement);
+    // 这个offset 对应某次写入的 bytes的起始偏移量
     int offset = offsets[index];
     int length;
+    // 计算写入bytes的长度
     if (index == lastElement - 1) {
       length = currentOffset - offset;
     } else {
@@ -125,10 +146,12 @@ public final class BytesRefArray implements SortableBytesRefArray {
    * Returns a {@link SortState} representing the order of elements in this array. This is a non-destructive operation.
    */
   public SortState sort(final Comparator<BytesRef> comp, final IntBinaryOperator tieComparator) {
+    // size() 对应当前写入的 bytes 数量
     final int[] orderedEntries = new int[size()];
     for (int i = 0; i < orderedEntries.length; i++) {
       orderedEntries[i] = i;
     }
+    // 该对象使用快速排序算法
     new IntroSorter() {
       @Override
       protected void swap(int i, int j) {
@@ -136,10 +159,18 @@ public final class BytesRefArray implements SortableBytesRefArray {
         orderedEntries[i] = orderedEntries[j];
         orderedEntries[j] = o;
       }
-      
+
+      /**
+       * 将基于下标值的比较 转换成 内部数据值的比较
+       * @param i
+       * @param j
+       * @return
+       */
       @Override
       protected int compare(int i, int j) {
+        // 获取存储的 下标值
         final int idx1 = orderedEntries[i], idx2 = orderedEntries[j];
+        // 从pool 中将数据读取出来 并设置到 scratchBytes1 ， scratchBytes2 内
         setBytesRef(scratch1, scratchBytes1, idx1);
         setBytesRef(scratch2, scratchBytes2, idx2);
         return compare(idx1, scratchBytes1, idx2, scratchBytes2);
@@ -158,6 +189,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
         return compare(pivotIndex, pivot, index, scratchBytes2);
       }
 
+      // 先根据 偏移量获取到 写入的值 在比较写入的值之后  当相同时 转而比较 docId
       private int compare(int i1, BytesRef b1, int i2, BytesRef b2) {
         int res = comp.compare(b1, b2);
         return res == 0 ? tieComparator.applyAsInt(i1, i2) : res;
@@ -171,6 +203,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
       private final BytesRefBuilder scratch1 = new BytesRefBuilder();
       private final BytesRefBuilder scratch2 = new BytesRefBuilder();
     }.sort(0, size());
+    // 存储排序结果
     return new SortState(orderedEntries);
   }
   
@@ -204,11 +237,14 @@ public final class BytesRefArray implements SortableBytesRefArray {
    * Returns an {@link IndexedBytesRefIterator} with point in time semantics. The iterator provides access to all
    * so far appended {@link BytesRef} instances. If a non-null sortState is specified then the iterator will iterate
    * the byte values in the order of the sortState; otherwise, the order is the same as the values were appended.
+   * @param sortState  定义了 读取数据的 偏移量顺序
    */
   public IndexedBytesRefIterator iterator(final SortState sortState) {
     final int size = size();
     final int[] indices = sortState == null ? null : sortState.indices;
     assert indices == null || indices.length == size : indices.length + " != " + size;
+
+    // 这2个对象是 从pool 读取数据的搬运工
     final BytesRefBuilder spare = new BytesRefBuilder();
     final BytesRef result = new BytesRef();
 
@@ -219,6 +255,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
       public BytesRef next() {
         ++pos;
         if (pos < size) {
+          // 当 indices 为 null 时 使用自然顺序
           ord = indices == null ? pos : indices[pos];
           setBytesRef(spare, result, ord);
           return result;
@@ -226,6 +263,10 @@ public final class BytesRefArray implements SortableBytesRefArray {
         return null;
       }
 
+      /**
+       * 获取当前的顺序
+       * @return
+       */
       @Override
       public int ord() {
         return ord;

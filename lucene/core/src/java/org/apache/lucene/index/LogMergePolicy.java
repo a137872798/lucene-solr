@@ -71,10 +71,12 @@ public abstract class LogMergePolicy extends MergePolicy {
   /** Any segments whose size is smaller than this value
    *  will be rounded up to this value.  This ensures that
    *  tiny segments are aggressively merged. */
+  // 满足merge的最小大小
   protected long minMergeSize;
 
   /** If the size of a segment exceeds this value then it
    *  will never be merged. */
+  // 针对单个段的 最大长度
   protected long maxMergeSize;
 
   // Although the core MPs set it explicitly, we must default in case someone
@@ -85,6 +87,7 @@ public abstract class LogMergePolicy extends MergePolicy {
 
   /** If a segment has more than this many documents then it
    *  will never be merged. */
+  // 针对单个段包含的doc数量
   protected int maxMergeDocs = DEFAULT_MAX_MERGE_DOCS;
 
   /** If true, we pro-rate a segment's size by the
@@ -160,12 +163,15 @@ public abstract class LogMergePolicy extends MergePolicy {
    *  merging is less than or equal to the specified {@code
    *  maxNumSegments}. */
   protected boolean isMerged(SegmentInfos infos, int maxNumSegments, Map<SegmentCommitInfo,Boolean> segmentsToMerge, MergeContext mergeContext) throws IOException {
+    // 本次传入的 segment总数
     final int numSegments = infos.size();
     int numToMerge = 0;
     SegmentCommitInfo mergeInfo = null;
     boolean segmentIsOriginal = false;
+    // 当此时还没有遍历到 segment的尾部 且 还没有达到merge要求的上限时
     for(int i=0;i<numSegments && numToMerge <= maxNumSegments;i++) {
       final SegmentCommitInfo info = infos.info(i);
+      // 从该容器中判断 该segment 是否已经合并了
       final Boolean isOriginal = segmentsToMerge.get(info);
       if (isOriginal != null) {
         segmentIsOriginal = isOriginal;
@@ -185,6 +191,8 @@ public abstract class LogMergePolicy extends MergePolicy {
    * constraints, that more than that number of segments will remain in the
    * index. Also, this method does not guarantee that exactly {@code
    * maxNumSegments} will remain, but &lt;= that number.
+   * @param last 从0到(last-1)之内的数据是考察范围
+   * 当超过长度限制时 采取的强制合并
    */
   private MergeSpecification findForcedMergesSizeLimit(
       SegmentInfos infos, int last, MergeContext mergeContext) throws IOException {
@@ -194,28 +202,37 @@ public abstract class LogMergePolicy extends MergePolicy {
     int start = last - 1;
     while (start >= 0) {
       SegmentCommitInfo info = infos.info(start);
+      // 如果长度超过了 强制合并的长度 打印日志
       if (size(info, mergeContext) > maxMergeSizeForForcedMerge || sizeDocs(info, mergeContext) > maxMergeDocs) {
         if (verbose(mergeContext)) {
           message("findForcedMergesSizeLimit: skip segment=" + info + ": size is > maxMergeSize (" + maxMergeSizeForForcedMerge + ") or sizeDocs is > maxMergeDocs (" + maxMergeDocs + ")", mergeContext);
         }
         // need to skip that segment + add a merge for the 'right' segments,
         // unless there is only 1 which is merged.
+        // 当 last 与 start的跨度超过1(至少为2)时  即使不满足mergeFactor 也会包装成OneMerge对象 并尝试合并   在findMerge方法中 要求每个OneMerge内的segment数量必须达到mergeFactor
         if (last - start - 1 > 1 || (start != last - 1 && !isMerged(infos, infos.info(start + 1), mergeContext))) {
           // there is more than 1 segment to the right of
           // this one, or a mergeable single segment.
+          // 这里生成的merge 对象实际内部值包含了一个 segment    此时 start对应的segment的长度超标 所以start+1 实际上是跳过了这个segment
           spec.add(new OneMerge(segments.subList(start + 1, last)));
         }
+        // 如果 last - start - 1 = 0 代表刚好扫描到的segment是大块的 由于subList 含头不含尾  不能写成(start,last) 所以就不需要进行合并
+        // 这样就会跳过大块的 segment
         last = start;
+      // 当长度没有超标时 必须确保之间的差值大小满足mergeFactor
       } else if (last - start == mergeFactor) {
         // mergeFactor eligible segments were found, add them as a merge.
         spec.add(new OneMerge(segments.subList(start, last)));
         last = start;
       }
+      // 增加差值
       --start;
     }
 
     // Add any left-over segments, unless there is just 1
     // already fully merged
+    // 代表最后剩余的量 不足 mergeFactor   并且差值大于1 也就是超过一个segment 或者 单个segment 还没有被merge 那么将范围内的segment merge
+    //
     if (last > 0 && (++start + 1 < last || !isMerged(infos, infos.info(start), mergeContext))) {
       spec.add(new OneMerge(segments.subList(start, last)));
     }
@@ -227,6 +244,7 @@ public abstract class LogMergePolicy extends MergePolicy {
    * Returns the merges necessary to forceMerge the index. This method constraints
    * the returned merges only by the {@code maxNumSegments} parameter, and
    * guaranteed that exactly that number of segments will remain in the index.
+   * 进入该方法前已经确定了 整个infos 中没有长度超标的对象
    */
   private MergeSpecification findForcedMergesMaxNumSegments(SegmentInfos infos, int maxNumSegments, int last, MergeContext mergeContext) throws IOException {
     MergeSpecification spec = new MergeSpecification();
@@ -234,6 +252,7 @@ public abstract class LogMergePolicy extends MergePolicy {
 
     // First, enroll all "full" merges (size
     // mergeFactor) to potentially be run concurrently:
+    // 确保保留 超过 maxNumSegments 数量的segment
     while (last - maxNumSegments + 1 >= mergeFactor) {
       spec.add(new OneMerge(segments.subList(last - mergeFactor, last)));
       last -= mergeFactor;
@@ -241,14 +260,17 @@ public abstract class LogMergePolicy extends MergePolicy {
 
     // Only if there are no full merges pending do we
     // add a final partial (< mergeFactor segments) merge:
+    // 代表长度 不满足mergeFactor
     if (0 == spec.merges.size()) {
       if (maxNumSegments == 1) {
 
         // Since we must merge down to 1 segment, the
         // choice is simple:
+        // 将所有segment 作为待merge对象
         if (last > 1 || !isMerged(infos, infos.info(0), mergeContext)) {
           spec.add(new OneMerge(segments.subList(0, last)));
         }
+      // 当此时剩余数量超过 maxNumSegments 时  按照这个数量进行merge
       } else if (last > maxNumSegments) {
 
         // Take care to pick a partial merge that is
@@ -266,8 +288,10 @@ public abstract class LogMergePolicy extends MergePolicy {
         long bestSize = 0;
         int bestStart = 0;
 
+        // 代表从0 遍历到 maxNumSegments
         for(int i=0;i<last-finalMergeSize+1;i++) {
           long sumSize = 0;
+          // TODO ???
           for(int j=0;j<finalMergeSize;j++) {
             sumSize += size(infos.info(j+i), mergeContext);
           }
@@ -277,6 +301,7 @@ public abstract class LogMergePolicy extends MergePolicy {
           }
         }
 
+        // 这里只合并 finalMergeSize 长度的数据
         spec.add(new OneMerge(segments.subList(bestStart, bestStart + finalMergeSize)));
       }
     }
@@ -292,10 +317,14 @@ public abstract class LogMergePolicy extends MergePolicy {
    *  compound file format if the current useCompoundFile
    *  setting is true.  This method returns multiple merges
    *  (mergeFactor at a time) so the {@link MergeScheduler}
-   *  in use may make use of concurrency. */
+   *  in use may make use of concurrency.
+   *  找到需要强制合并的对象
+   */
   @Override
-  public MergeSpecification findForcedMerges(SegmentInfos infos,
-                                             int maxNumSegments, Map<SegmentCommitInfo,Boolean> segmentsToMerge, MergeContext mergeContext) throws IOException {
+  public MergeSpecification findForcedMerges(SegmentInfos infos,   // 候选的segment
+                                             int maxNumSegments,   // 这些数量的 segment 好像不能被merge
+                                             Map<SegmentCommitInfo,Boolean> segmentsToMerge,
+                                             MergeContext mergeContext) throws IOException {
 
     assert maxNumSegments > 0;
     if (verbose(mergeContext)) {
@@ -304,6 +333,7 @@ public abstract class LogMergePolicy extends MergePolicy {
 
     // If the segments are already merged (e.g. there's only 1 segment), or
     // there are <maxNumSegments:.
+    // 判断对象是否已经被merge  如果已经被merge了 就返回null
     if (isMerged(infos, maxNumSegments, segmentsToMerge, mergeContext)) {
       if (verbose(mergeContext)) {
         message("already merged; skip", mergeContext);
@@ -323,6 +353,7 @@ public abstract class LogMergePolicy extends MergePolicy {
       }
     }
 
+    // 如果 map内都没有设置数据返回null
     if (last == 0) {
       if (verbose(mergeContext)) {
         message("last == 0; skip", mergeContext);
@@ -331,6 +362,7 @@ public abstract class LogMergePolicy extends MergePolicy {
     }
     
     // There is only one segment already, and it is merged
+    // 如果只有一个segment 并且已经merged了 也是返回null
     if (maxNumSegments == 1 && last == 1 && isMerged(infos, infos.info(0), mergeContext)) {
       if (verbose(mergeContext)) {
         message("already 1 seg; skip", mergeContext);
@@ -339,6 +371,7 @@ public abstract class LogMergePolicy extends MergePolicy {
     }
 
     // Check if there are any segments above the threshold
+    // 检测当前符合 条件的segment中 是否超过了merge的最大值限制
     boolean anyTooLarge = false;
     for (int i = 0; i < last; i++) {
       SegmentCommitInfo info = infos.info(i);
@@ -348,6 +381,7 @@ public abstract class LogMergePolicy extends MergePolicy {
       }
     }
 
+    // 当超过长度限制时  依然强制进行合并
     if (anyTooLarge) {
       return findForcedMergesSizeLimit(infos, last, mergeContext);
     } else {
@@ -414,6 +448,9 @@ public abstract class LogMergePolicy extends MergePolicy {
     return spec;
   }
 
+  /**
+   * 该对象内部包含了 段的描述信息 以及通过一个 Len 计算出来的 对数值
+   */
   private static class SegmentInfoAndLevel implements Comparable<SegmentInfoAndLevel> {
     SegmentCommitInfo info;
     float level;
@@ -506,21 +543,26 @@ public abstract class LogMergePolicy extends MergePolicy {
 
       // Now search backwards for the rightmost segment that
       // falls into this level:
+      // 当所有level 都小于 floor时 bottom 为负数 也就代表不对level 做限制
       float levelBottom;
       if (maxLevel <= levelFloor) {
         // All remaining segments fall into the min level
         levelBottom = -1.0F;
       } else {
+        // 默认选取的范围 是 max往下0.75 范围内
         levelBottom = (float) (maxLevel - LEVEL_LOG_SPAN);
 
         // Force a boundary at the level floor
+        // 当bottom 小于 floor时 强制使用floor作为下限
         if (levelBottom < levelFloor && maxLevel >= levelFloor) {
           levelBottom = levelFloor;
         }
       }
 
+      // 刚好变成list的下标
       int upto = numMergeableSegments-1;
       while(upto >= start) {
+        // 从上往下 一旦发现超过 bottom的跳出循环
         if (levels.get(upto).level >= levelBottom) {
           break;
         }
@@ -531,13 +573,20 @@ public abstract class LogMergePolicy extends MergePolicy {
       }
 
       // Finally, record all merges that are viable at this level:
+      // 记录 从start开始 直到满足merge的数量要求时 下标是多少
       int end = start + mergeFactor;
+
+      // 如果mergeFactor 值较小 就会分多次生成多个 OneMerge对象 每个对象对应一条merge线程
+      // 当end 一开始就超过 upto+1 时 更新start 并进入下一轮
       while(end <= 1+upto) {
         boolean anyTooLarge = false;
         boolean anyMerging = false;
+        // 从start 开始遍历每个 段信息对象
         for(int i=start;i<end;i++) {
           final SegmentCommitInfo info = levels.get(i).info;
+          // 如果该段的长度超过预定值 或者内含的文档数超过预定值  认为无法被merge
           anyTooLarge |= (size(info, mergeContext) >= maxMergeSize || sizeDocs(info, mergeContext) >= maxMergeDocs);
+          // 如果当前段 已经在merge中了
           if (mergingSegments.contains(info)) {
             anyMerging = true;
             break;
@@ -546,7 +595,9 @@ public abstract class LogMergePolicy extends MergePolicy {
 
         if (anyMerging) {
           // skip
+          // 只有 这种情况会正常处理   否则只是打印日志
         } else if (!anyTooLarge) {
+          // 初始化本次合并的描述信息
           if (spec == null)
             spec = new MergeSpecification();
           final List<SegmentCommitInfo> mergeInfos = new ArrayList<>(end-start);
@@ -557,11 +608,13 @@ public abstract class LogMergePolicy extends MergePolicy {
           if (verbose(mergeContext)) {
             message("  add merge=" + segString(mergeContext, mergeInfos) + " start=" + start + " end=" + end, mergeContext);
           }
+          // 将参与合并的 merge对象整个包装成 单次合并对象 OneMerge 并设置到 MergeSpecification 中
           spec.add(new OneMerge(mergeInfos));
         } else if (verbose(mergeContext)) {
           message("    " + start + " to " + end + ": contains segment over maxMergeSize or maxMergeDocs; skipping", mergeContext);
         }
 
+        // 实际上每次都是生成多个merge任务 并行执行  每个任务包含了多个 segment
         start = end;
         end = start + mergeFactor;
       }
@@ -569,6 +622,7 @@ public abstract class LogMergePolicy extends MergePolicy {
       start = 1+upto;
     }
 
+    // 将所有段对象 分组后 合并成OneMerge对象 并填充到MergeSpecification 中 返回
     return spec;
   }
 
@@ -586,6 +640,8 @@ public abstract class LogMergePolicy extends MergePolicy {
    * LogByteSizeMergePolicy}) also allows you to set this
    * limit by net size (in MB) of the segment, using {@link
    * LogByteSizeMergePolicy#setMaxMergeMB}.</p>
+   * 设置merge的有关文档数的限制条件 (segment文档数量不能超过这个值)   也就是说 大块的segment是不推荐合并的  可能比较耗时的关系??? 并且segment过大也会增加
+   * 单次加载到内存中的开销 以及降低检索速度
    */
   public void setMaxMergeDocs(int maxMergeDocs) {
     this.maxMergeDocs = maxMergeDocs;

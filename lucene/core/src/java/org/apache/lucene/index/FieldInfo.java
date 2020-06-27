@@ -39,7 +39,7 @@ public final class FieldInfo {
 
   private DocValuesType docValuesType = DocValuesType.NONE;
 
-  // True if any document indexed term vectors
+  // True if any document indexed term vectors  是否存储了向量
   private boolean storeTermVector;
 
   private boolean omitNorms; // omit norms associated with indexed fields  

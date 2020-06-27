@@ -30,7 +30,7 @@ import java.io.IOException;
  * @see Directory#obtainLock(String)
  *
  * @lucene.internal
- * 代表 lucene的文件锁  避免多线程同时操作索引 导致并发问题
+ * 代表 lucene的文件锁  避免多进程同时操作索引 导致并发问题
  */
 public abstract class Lock implements Closeable {
 

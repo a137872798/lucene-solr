@@ -52,12 +52,20 @@ package org.apache.lucene.index;
  * largest ram consuming {@link DocumentsWriterPerThread} will be marked as
  * pending iff the global active RAM consumption is {@code >=} the configured max RAM
  * buffer.
+ * 当前  FlushPolicy 只有这一个实现类
  */
 class FlushByRamOrCountsPolicy extends FlushPolicy {
 
+  /**
+   * 代表 通过 DocumentsWriter 对象 触发了 delete 方法
+   * @param control  DW 对象先是转发给 ctl 对象 之后ctl 又将本次请求转发到了  flushPolicy 对象
+   * @param perThread
+   */
   @Override
   public void onDelete(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
+    // 允许先将删除操作写入到内存  并且 当前用于记录更新操作的 deleteQueue 已经存放了太多的更新数据
     if ((flushOnRAM() && control.getDeleteBytesUsed() > 1024*1024*indexWriterConfig.getRAMBufferSizeMB())) {
+      // 触发刷盘操作
       control.setApplyAllDeletes();
       if (infoStream.isEnabled("FP")) {
         infoStream.message("FP", "force apply deletes bytesUsed=" + control.getDeleteBytesUsed() + " vs ramBufferMB=" + indexWriterConfig.getRAMBufferSizeMB());
@@ -109,6 +117,7 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
    * Returns <code>true</code> if this {@link FlushPolicy} flushes on
    * {@link IndexWriterConfig#getRAMBufferSizeMB()}, otherwise
    * <code>false</code>.
+   * 只要正确设置了 RamBufferSize 就允许先将数据修改写入到 内存
    */
   protected boolean flushOnRAM() {
     return indexWriterConfig.getRAMBufferSizeMB() != IndexWriterConfig.DISABLE_AUTO_FLUSH;

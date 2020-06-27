@@ -21,6 +21,7 @@ import java.io.IOException;
 
 /** A {@link MergeScheduler} that simply does each merge
  *  sequentially, using the current thread. */
+// 在单线程中 排队执行任务
 public class SerialMergeScheduler extends MergeScheduler {
 
   /** Sole constructor. */
@@ -29,10 +30,13 @@ public class SerialMergeScheduler extends MergeScheduler {
 
   /** Just do the merges in sequence. We do this
    * "synchronized" so that even if the application is using
-   * multiple threads, only one merge may run at a time. */
+   * multiple threads, only one merge may run at a time.
+   *
+   */
   @Override
   synchronized public void merge(MergeSource mergeSource, MergeTrigger trigger) throws IOException {
     while(true) {
+      // 实际上都是委托  注意这里在单线程中循环调用 nextMerge 获取下一个准备好的OneMerge 对象
       MergePolicy.OneMerge merge = mergeSource.getNextMerge();
       if (merge == null) {
         break;

@@ -70,8 +70,8 @@ import org.apache.lucene.util.IOUtils;
  * <p>This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
- * 本地文件锁工厂
- * SimpleFSLockFactory 只是简单创建一个文件就好
+ * 可能文件锁本身还有多种实现 这里是基于本地文件锁实现
+ * 该对象相比于  SimpleFSLockFactory   当JVM 异常退出时  操作系统会自动释放文件锁 这样其他进程(或者重启lucene应用)可以正常尝试抢占文件锁
  */
 
 public final class NativeFSLockFactory extends FSLockFactory {
@@ -82,7 +82,8 @@ public final class NativeFSLockFactory extends FSLockFactory {
   public static final NativeFSLockFactory INSTANCE = new NativeFSLockFactory();
 
   /**
-   * 记录当前哪些 path 被锁定
+   * 静态属性 代表进程级别唯一
+   * 记录当前哪些 path 被锁定   锁忘了释放怎么办 ???
    */
   private static final Set<String> LOCK_HELD = Collections.synchronizedSet(new HashSet<String>());
 
@@ -97,12 +98,15 @@ public final class NativeFSLockFactory extends FSLockFactory {
    */
   @Override
   protected Lock obtainFSLock(FSDirectory dir, String lockName) throws IOException {
+    // 获取对应的目录路径
     Path lockDir = dir.getDirectory();
     
     // Ensure that lockDir exists and is a directory.
     // note: this will fail if lockDir is a symlink
+    // 确保当前目录已创建
     Files.createDirectories(lockDir);
-    
+
+    // 将锁名转换成一个路径对象   这个Path 就是标识已经上锁的意思
     Path lockFile = lockDir.resolve(lockName);
 
     IOException creationException = null;
@@ -117,6 +121,7 @@ public final class NativeFSLockFactory extends FSLockFactory {
     // fails if the lock file does not exist
     final Path realPath;
     try {
+      // 代表创建文件失败了 判定此次上锁失败 抛出异常
       realPath = lockFile.toRealPath();
     } catch (IOException e) {
       // if we couldn't resolve the lock file, it might be because we couldn't create it.
@@ -128,34 +133,40 @@ public final class NativeFSLockFactory extends FSLockFactory {
     }
     
     // used as a best-effort check, to see if the underlying file has changed
+    // 获取当前锁文件的创建时间
     final FileTime creationTime = Files.readAttributes(realPath, BasicFileAttributes.class).creationTime();
 
-    // 这里相比 SimpleFSLockFactory 复杂些
+    // 首次加入代表本lock对象上锁成功   这里只是获得JVM 级别的锁对象 并没有确保进程隔离
     if (LOCK_HELD.add(realPath.toString())) {
       FileChannel channel = null;
       FileLock lock = null;
       try {
-        // 通过文件channel 创建锁  这个锁是由内核来创建的  所以又叫 nativeFSLock
+        // 这里开始尝试获取进程级别的锁
         channel = FileChannel.open(realPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         lock = channel.tryLock();
         if (lock != null) {
+          // 包装文件锁对象
           return new NativeFSLock(lock, channel, realPath, creationTime);
         } else {
+          // 抢占进程锁失败
           throw new LockObtainFailedException("Lock held by another program: " + realPath);
         }
       } finally {
         if (lock == null) { // not successful - clear up and move out
+          // 本线程 抢占失败的话 就没有必要维持通往该文件的管道了  (只是关闭管道 不会影响到已经获取到锁的进程)
           IOUtils.closeWhileHandlingException(channel); // TODO: addSuppressed
+          // 在 Set中的锁 意味着 线程间抢占成功了  这里释放掉 之后其他线程才能有重新竞争锁的资格 否则在判断 .add() 的地方总是返回false
           clearLockHeld(realPath);  // clear LOCK_HELD last 
         }
       }
+      // 代表JVM 级别的锁抢占失败(线程级别)
     } else {
       throw new LockObtainFailedException("Lock held by this virtual machine: " + realPath);
     }
   }
 
   /**
-   * 释放锁
+   * 该进程释放文件锁  这样其他进程还有抢占锁的权利
    * @param path
    * @throws IOException
    */
@@ -169,7 +180,13 @@ public final class NativeFSLockFactory extends FSLockFactory {
   // TODO: kind of bogus we even pass channel:
   // FileLock has an accessor, but mockfs doesnt yet mock the locks, too scary atm.
 
+  /**
+   * 内部是文件锁对象  当某个线程获取到该 Lock对象时 代表已经实现了（进程&&线程）隔离了
+   */
   static final class NativeFSLock extends Lock {
+    /**
+     * 文件锁 对象  维护引用便于在使用完锁后进行释放
+     */
     final FileLock lock;
     final FileChannel channel;
     final Path path;
@@ -196,12 +213,14 @@ public final class NativeFSLockFactory extends FSLockFactory {
       if (!LOCK_HELD.contains(path.toString())) {
         throw new AlreadyClosedException("Lock path unexpectedly cleared from map: " + this);
       }
-      // check our lock wasn't invalidated.
+      // check our lock wasn't invalidated.   锁对象本身具备一个 检测是否有效的方法
+      // 操作系统的某些操作可能可以让文件锁强制失效
       if (!lock.isValid()) {
         throw new AlreadyClosedException("FileLock invalidated by an external force: " + this);
       }
       // try to validate the underlying file descriptor.
       // this will throw IOException if something is wrong.
+      // 用于生成文件锁的文件 不应该写入数据
       long size = channel.size();
       if (size != 0) {
         throw new AlreadyClosedException("Unexpected lock file size: " + size + ", (lock=" + this + ")");
@@ -209,12 +228,17 @@ public final class NativeFSLockFactory extends FSLockFactory {
       // try to validate the backing file name, that it still exists,
       // and has the same creation time as when we obtained the lock. 
       // if it differs, someone deleted our lock file (and we are ineffective)
+      // 当创建时间发生了变化 代表在中途发生了某些不可控情况 (操作系统级别)
       FileTime ctime = Files.readAttributes(path, BasicFileAttributes.class).creationTime(); 
       if (!creationTime.equals(ctime)) {
         throw new AlreadyClosedException("Underlying file changed by an external force at " + ctime + ", (lock=" + this + ")");
       }
     }
 
+    /**
+     * 释放文件锁
+     * @throws IOException
+     */
     @Override
     public synchronized void close() throws IOException {
       if (closed) {
@@ -228,6 +252,7 @@ public final class NativeFSLockFactory extends FSLockFactory {
         assert channel != null;
       } finally {
         closed = true;
+        // 清除本进程内 抢占成功的标记  这样其他线程又具备抢占资格
         clearLockHeld(path);
       }
     }

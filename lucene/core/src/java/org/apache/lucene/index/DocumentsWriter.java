@@ -98,16 +98,20 @@ import org.apache.lucene.util.InfoStream;
  * When this happens, we immediately mark the document as
  * deleted so that the document is always atomically ("all
  * or none") added to the index.
+ * 这个对象负责将文档写入文件中
  */
 
 final class DocumentsWriter implements Closeable, Accountable {
   private final AtomicLong pendingNumDocs;
 
   /**
-   * 一个监听器对象
+   * 由外部设置的监听器  监听writer的动作
    */
   private final FlushNotifications flushNotifications;
 
+  /**
+   * 当前writer是否被关闭
+   */
   private volatile boolean closed;
 
   /**
@@ -123,7 +127,12 @@ final class DocumentsWriter implements Closeable, Accountable {
   private final AtomicInteger numDocsInRAM = new AtomicInteger(0);
 
   // TODO: cut over to BytesRefHash in BufferedDeletes
+  // 这里记录了所有 term的变化信息
   volatile DocumentsWriterDeleteQueue deleteQueue;
+
+  /**
+   * 该对象存储了 多个待刷盘的动作
+   */
   private final DocumentsWriterFlushQueue ticketQueue = new DocumentsWriterFlushQueue();
   /*
    * we preserve changes during a full flush since IW might not checkout before
@@ -133,28 +142,57 @@ final class DocumentsWriter implements Closeable, Accountable {
    */
   private volatile boolean pendingChangesInCurrentFullFlush;
 
+  /**
+   * 该对象可以创建多个 thread
+   */
   final DocumentsWriterPerThreadPool perThreadPool;
+  /**
+   * 刷盘动作本身是 依赖这个控制器来做的   FlushQueue 只是辅助对象
+   */
   final DocumentsWriterFlushControl flushControl;
 
+  /**
+   *
+   * @param flushNotifications  初始化过程中就可以 指定监听器对象
+   * @param indexCreatedVersionMajor   代表索引的主版本 用于判断文件是否兼容吧  现在应该是8  (lucene 8.4)
+   * @param pendingNumDocs   当前有多少待写入的 doc
+   * @param enableTestPoints
+   * @param segmentNameSupplier   该对象创建 segment的名字
+   * @param config
+   * @param directoryOrig   这里指定了原始目录
+   * @param directory     此次文档将会写入的目录
+   * @param globalFieldNumberMap   该对象内部包含了各种容器 用于存储 各种信息
+   */
   DocumentsWriter(FlushNotifications flushNotifications, int indexCreatedVersionMajor, AtomicLong pendingNumDocs, boolean enableTestPoints,
                   Supplier<String> segmentNameSupplier, LiveIndexWriterConfig config, Directory directoryOrig, Directory directory,
                   FieldInfos.FieldNumbers globalFieldNumberMap) {
     this.config = config;
     this.infoStream = config.getInfoStream();
     this.deleteQueue = new DocumentsWriterDeleteQueue(infoStream);
+
     this.perThreadPool = new DocumentsWriterPerThreadPool(() -> {
+      // 传入的参数就是线程工厂
       final FieldInfos.Builder infos = new FieldInfos.Builder(globalFieldNumberMap);
+      // 每次创建的线程 会携带这些参数
       return new DocumentsWriterPerThread(indexCreatedVersionMajor,
           segmentNameSupplier.get(), directoryOrig,
           directory, config, infoStream, deleteQueue, infos,
           pendingNumDocs, enableTestPoints);
     });
     this.pendingNumDocs = pendingNumDocs;
+    // 这里创建刷盘相关的总控对象
     flushControl = new DocumentsWriterFlushControl(this, config);
     this.flushNotifications = flushNotifications;
   }
-  
+
+  /**
+   * 将符合查询条件的文档都删除
+   * @param queries
+   * @return
+   * @throws IOException
+   */
   long deleteQueries(final Query... queries) throws IOException {
+    // 这里的操作 实际上就是 调用  deleteQueue.addDelete(Query... q) 也就是缓存了删除动作
     return applyDeleteOrUpdate(q -> q.addDelete(queries));
   }
 
@@ -166,13 +204,22 @@ final class DocumentsWriter implements Closeable, Accountable {
     return applyDeleteOrUpdate(q -> q.addDocValuesUpdates(updates));
   }
 
+  /**
+   * 追加了一个新的 update/delete 动作  信息将会追加到 queue中
+   * @param function
+   * @return
+   * @throws IOException
+   */
   private synchronized long applyDeleteOrUpdate(ToLongFunction<DocumentsWriterDeleteQueue> function) throws IOException {
     // This method is synchronized to make sure we don't replace the deleteQueue while applying this update / delete
     // otherwise we might lose an update / delete if this happens concurrently to a full flush.
     final DocumentsWriterDeleteQueue deleteQueue = this.deleteQueue;
+    // 当处理完毕后生成了一个序列号
     long seqNo = function.applyAsLong(deleteQueue);
+    // 主要就是判断当前记录的 删除数据是否已经超过某个阈值  超过的话 会在 ctl对象中设置一个标识
     flushControl.doOnDelete();
     if (applyAllDeletes()) {
+      // 当flush后 会返回一个负数
       seqNo = -seqNo;
     }
     return seqNo;
@@ -181,10 +228,13 @@ final class DocumentsWriter implements Closeable, Accountable {
   /** If buffered deletes are using too much heap, resolve them and write disk and return true. */
   private boolean applyAllDeletes() throws IOException {
     final DocumentsWriterDeleteQueue deleteQueue = this.deleteQueue;
+    // fullFlush 代表正在进行刷盘操作 那么 选择忽略本次动作   否则将更改写入到磁盘中
     if (flushControl.isFullFlush() == false // never apply deletes during full flush this breaks happens before relationship
         && deleteQueue.isOpen() // if it's closed then it's already fully applied and we have a new delete queue
-        && flushControl.getAndResetApplyAllDeletes()) {
+        && flushControl.getAndResetApplyAllDeletes()  // 该标识为true 就代表在  flushControl.doOnDelete 中因为deleteQueue已经存放了太多数据 导致需要将更新写入磁盘
+    ) {
       if (ticketQueue.addDeletes(deleteQueue)) {
+        // 触发监听器   看来刷盘动作实际上是这个监听器做的
         flushNotifications.onDeletesApplied(); // apply deletes event forces a purge
         return true;
       }
@@ -192,8 +242,15 @@ final class DocumentsWriter implements Closeable, Accountable {
     return false;
   }
 
+  /**
+   * 强制执行刷盘任务
+   * @param forced
+   * @param consumer
+   * @throws IOException
+   */
   void purgeFlushTickets(boolean forced, IOUtils.IOConsumer<DocumentsWriterFlushQueue.FlushTicket> consumer)
       throws IOException {
+    // 使用consumer 处理内部所有的  FlushTicket 对象
     if (forced) {
       ticketQueue.forcePurge(consumer);
     } else {
@@ -202,6 +259,7 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
 
   /** Returns how many docs are currently buffered in RAM. */
+  // 记录当前改动了多少 doc
   int getNumDocs() {
     return numDocsInRAM.get();
   }
@@ -216,21 +274,26 @@ final class DocumentsWriter implements Closeable, Accountable {
    *  updating the index files) and must discard all
    *  currently buffered docs.  This resets our state,
    *  discarding any docs added since last flush. */
+  // 禁用该对象 这样其他线程无法使用该对象 修改doc
   synchronized void abort() throws IOException {
     boolean success = false;
     try {
+      // 舍弃之前缓存的所有更新信息
       deleteQueue.clear();
       if (infoStream.isEnabled("DW")) {
         infoStream.message("DW", "abort");
       }
+      // 为所有线程上锁
       for (final DocumentsWriterPerThread perThread : perThreadPool.filterAndLock(x -> true)) {
         try {
+          // 一旦抢占到这个线程后 就禁用目标线程
           abortDocumentsWriterPerThread(perThread);
         } finally {
           perThread.unlock();
         }
       }
       flushControl.abortPendingFlushes();
+      // 这里应该是  等待刷盘动作完成 (将当前已经存在的一些 更新动作持久化到磁盘)
       flushControl.waitForFlush();
       assert perThreadPool.size() == 0
           : "There are still active DWPT in the pool: " + perThreadPool.size();
@@ -246,6 +309,11 @@ final class DocumentsWriter implements Closeable, Accountable {
     }
   }
 
+  /**
+   * 仅对单个  FlushTicket 执行刷盘操作
+   * @return
+   * @throws IOException
+   */
   final boolean flushOneDWPT() throws IOException {
     if (infoStream.isEnabled("DW")) {
       infoStream.message("DW", "startFlushOneDWPT");
@@ -324,9 +392,11 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
   
   /** Returns how many documents were aborted. */
+  // 禁用  DocumentsWriterPerThread
   private void abortDocumentsWriterPerThread(final DocumentsWriterPerThread perThread) throws IOException {
     assert perThread.isHeldByCurrentThread();
     try {
+      // 将 docNum  -  该thread 采集到的更新数量
       subtractFlushedNumDocs(perThread.getNumDocsInRAM());
       perThread.abort();
     } finally {
@@ -570,7 +640,7 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
 
   /**
-   * 类似一个监听器   该对象负责监听 docWriter的刷盘动作
+   * 外部设置的监听器对象
    */
   interface FlushNotifications { // TODO maybe we find a better name for this?
 

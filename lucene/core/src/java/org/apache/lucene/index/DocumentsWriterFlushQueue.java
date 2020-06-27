@@ -26,26 +26,40 @@ import org.apache.lucene.index.DocumentsWriterPerThread.FlushedSegment;
 import org.apache.lucene.util.IOUtils;
 
 /**
- * @lucene.internal 
+ * @lucene.internal
+ * 内部存储了多个 待刷盘的实体
  */
 final class DocumentsWriterFlushQueue {
+
+  /**
+   * 每个 flushTicket 代表一个待刷盘动作
+   */
   private final Queue<FlushTicket> queue = new LinkedList<>();
   // we track tickets separately since count must be present even before the ticket is
   // constructed ie. queue.size would not reflect it.
   private final AtomicInteger ticketCount = new AtomicInteger();
   private final ReentrantLock purgeLock = new ReentrantLock();
 
+  /**
+   * 这里添加一个维护了多个term变化的队列对象
+   * @param deleteQueue
+   * @return
+   * @throws IOException
+   */
   synchronized boolean addDeletes(DocumentsWriterDeleteQueue deleteQueue) throws IOException {
+    // 每个刷盘对象对应一组更新
     incTickets();// first inc the ticket count - freeze opens
                  // a window for #anyChanges to fail
     boolean success = false;
     try {
+      // 冻结内部的数据
       FrozenBufferedUpdates frozenBufferedUpdates = deleteQueue.maybeFreezeGlobalBuffer();
       if (frozenBufferedUpdates != null) { // no need to publish anything if we don't have any frozen updates
         queue.add(new FlushTicket(frozenBufferedUpdates, false));
         success = true;
       }
     } finally {
+      // 代表该对象已经被处理过了 忽略 同时记得减少误加的值
       if (!success) {
         decTickets();
       }
@@ -63,6 +77,12 @@ final class DocumentsWriterFlushQueue {
     assert numTickets >= 0;
   }
 
+  /**
+   * 通过 传入 thread 的方式来增加 flushTicket   以这种方式创建的 flushTicket （hasSegment == true）
+   * @param dwpt
+   * @return
+   * @throws IOException
+   */
   synchronized FlushTicket addFlushTicket(DocumentsWriterPerThread dwpt) throws IOException {
     // Each flush is assigned a ticket in the order they acquire the ticketQueue
     // lock
@@ -80,7 +100,12 @@ final class DocumentsWriterFlushQueue {
       }
     }
   }
-  
+
+  /**
+   * 为某个 待刷盘任务设置 段信息
+   * @param ticket
+   * @param segment
+   */
   synchronized void addSegment(FlushTicket ticket, FlushedSegment segment) {
     assert ticket.hasSegment;
     // the actual flush is done asynchronously and once done the FlushedSegment
@@ -88,17 +113,27 @@ final class DocumentsWriterFlushQueue {
     ticket.setSegment(segment);
   }
 
+  /**
+   * 标记某个刷盘动作失败了
+   * @param ticket
+   */
   synchronized void markTicketFailed(FlushTicket ticket) {
     assert ticket.hasSegment;
     // to free the queue we mark tickets as failed just to clean up the queue.
     ticket.setFailed();
   }
 
+
   boolean hasTickets() {
     assert ticketCount.get() >= 0 : "ticketCount should be >= 0 but was: " + ticketCount.get();
     return ticketCount.get() != 0;
   }
 
+  /**
+   * 使用该消费者处理内部所有 待flush 对象
+   * @param consumer
+   * @throws IOException
+   */
   private void innerPurge(IOUtils.IOConsumer<FlushTicket> consumer) throws IOException {
     assert purgeLock.isHeldByCurrentThread();
     while (true) {
@@ -106,6 +141,7 @@ final class DocumentsWriterFlushQueue {
       final boolean canPublish;
       synchronized (this) {
         head = queue.peek();
+        // 检测当前能否刷盘
         canPublish = head != null && head.canPublish(); // do this synced 
       }
       if (canPublish) {
@@ -133,6 +169,11 @@ final class DocumentsWriterFlushQueue {
     }
   }
 
+  /**
+   * 传入的是一个处理 FT 对象的消费者
+   * @param consumer
+   * @throws IOException
+   */
   void forcePurge(IOUtils.IOConsumer<FlushTicket> consumer) throws IOException {
     assert !Thread.holdsLock(this);
     purgeLock.lock();
@@ -158,9 +199,18 @@ final class DocumentsWriterFlushQueue {
     return ticketCount.get();
   }
 
+  /**
+   * 每个 flushTicket 代表一个刷盘动作
+   */
   static final class FlushTicket {
+    /**
+     * 该对象内部 存储了 多次term的更新信息  现在要将这些变化持久化
+     */
     private final FrozenBufferedUpdates frozenUpdates;
     private final boolean hasSegment;
+    /**
+     * 描述一个刷盘完成的段的信息
+     */
     private FlushedSegment segment;
     private boolean failed = false;
     private boolean published = false;

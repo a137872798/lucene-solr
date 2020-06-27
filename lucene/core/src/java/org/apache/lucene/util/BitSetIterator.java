@@ -27,6 +27,13 @@ import org.apache.lucene.search.DocIdSetIterator;
  */
 public class BitSetIterator extends DocIdSetIterator {
 
+  /**
+   * 将迭代器转换成 具体的实体
+   * @param iterator
+   * @param clazz
+   * @param <T>
+   * @return
+   */
   private static <T extends BitSet> T getBitSet(DocIdSetIterator iterator, Class<? extends T> clazz) {
     if (iterator instanceof BitSetIterator) {
       BitSet bits = ((BitSetIterator) iterator).bits;

@@ -24,6 +24,7 @@ import java.util.Set;
 /**
  * An {@link IndexInput} implementing {@link RandomAccessInput} and backed
  * by a {@link ByteBuffersDataInput}.
+ * 该对象只是作为 ByteBuffersDataInput 的包装对象 实际上各个api都是转发
  */
 public final class ByteBuffersIndexInput extends IndexInput implements RandomAccessInput {
   private ByteBuffersDataInput in;
