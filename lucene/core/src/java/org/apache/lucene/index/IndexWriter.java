@@ -535,7 +535,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 转发到 writer
+     * 当检测到异常时
      * @param event
      * @param message
      */

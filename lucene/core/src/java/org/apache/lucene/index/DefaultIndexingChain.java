@@ -124,6 +124,12 @@ final class DefaultIndexingChain extends DocConsumer {
     return sorter.sort(state.segmentInfo.maxDoc(), comparators.toArray(new Sorter.DocComparator[comparators.size()]));
   }
 
+  /**
+   * 根据 携带的描述信息 执行刷盘动作
+   * @param state
+   * @return
+   * @throws IOException
+   */
   @Override
   public Sorter.DocMap flush(SegmentWriteState state) throws IOException {
 
@@ -907,6 +913,11 @@ final class DefaultIndexingChain extends DocConsumer {
     }
   }
 
+  /**
+   * 找到包含某个域的所有doc
+   * @param field
+   * @return
+   */
   @Override
   DocIdSetIterator getHasDocValues(String field) {
     PerField perField = getPerField(field);

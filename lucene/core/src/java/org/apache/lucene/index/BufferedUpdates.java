@@ -197,7 +197,7 @@ class BufferedUpdates implements Accountable {
         numFieldUpdates.incrementAndGet();
     }
 
-    // 重置一些相关属性
+    // 当delete动作刷盘后 允许重置这些容器内的数据
     void clearDeleteTerms() {
         numTermDeletes.set(0);
         termsBytesUsed.addAndGet(-termsBytesUsed.get());

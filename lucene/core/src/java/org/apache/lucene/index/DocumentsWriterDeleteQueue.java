@@ -186,7 +186,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     /**
      * invariant for document update
-     * 插入一个节点的同时 同步 slice.tail 属性
+     * 将节点插入到 slice 末尾
      */
     long add(Node<?> deleteNode, DeleteSlice slice) {
         long seqNo = add(deleteNode);

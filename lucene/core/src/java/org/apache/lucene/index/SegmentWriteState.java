@@ -27,6 +27,7 @@ import org.apache.lucene.util.InfoStream;
 /**
  * Holder class for common parameters used during write.
  * @lucene.experimental
+ * 存储一些公共参数
  */
 public class SegmentWriteState {
 
@@ -48,9 +49,11 @@ public class SegmentWriteState {
 
   /** Number of deleted documents set while flushing the
    *  segment. */
+  // 记录本次刷盘动作 会删除多少doc
   public int delCountOnFlush;
   /** Number of only soft deleted documents set while flushing the
    *  segment. */
+  // 本次刷盘中  有关软删除的doc数量
   public int softDelCountOnFlush;
   /**
    * Deletes and updates to apply while we are flushing the segment. A Term is
@@ -62,6 +65,7 @@ public class SegmentWriteState {
 
   /** {@link FixedBitSet} recording live documents; this is
    *  only set if there is one or more deleted documents. */
+  // 这个位图对象记录了 需要保留的 doc  如果不需要保留 对应的位置会置0
   public FixedBitSet liveDocs;
 
   /** Unique suffix for any postings files written for this

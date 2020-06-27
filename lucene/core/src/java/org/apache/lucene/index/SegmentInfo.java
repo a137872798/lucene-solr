@@ -62,7 +62,7 @@ public final class SegmentInfo {
   public final String name;
 
   /**
-   * 该段携带多少个 doc
+   * 当前段记录的最大文档号
    */
   private int maxDoc;         // number of docs in seg
 
@@ -295,7 +295,7 @@ public final class SegmentInfo {
   private Set<String> setFiles;
 
   /** Sets the files written for this segment. */
-  // 代表该片段对应的文件数量   应该是这样 一个doc 对应一个文件 然后一个segment 对应多个file(doc)
+  // 设置本次操作段对象 所写入的全部文件
   public void setFiles(Collection<String> files) {
     setFiles = new HashSet<>();
     addFiles(files);
