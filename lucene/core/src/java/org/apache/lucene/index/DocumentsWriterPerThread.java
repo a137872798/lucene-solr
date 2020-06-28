@@ -244,6 +244,8 @@ final class DocumentsWriterPerThread {
     final DocumentsWriterDeleteQueue deleteQueue;
     private final DeleteSlice deleteSlice;
     private final NumberFormat nf = NumberFormat.getInstance(Locale.ROOT);
+
+    // 该对象还指定了 内存分配器
     final Allocator byteBlockAllocator;
     final IntBlockPool.Allocator intBlockAllocator;
     private final AtomicLong pendingNumDocs;

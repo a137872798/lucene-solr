@@ -40,6 +40,7 @@ import org.apache.lucene.store.DataOutput;
  *   output.close();
  * </pre>
  * @see DirectReader
+ * 该对象将数据 以 packed 的方式写入到内存中
  */
 public final class DirectWriter {
   final int bitsPerValue;
@@ -55,11 +56,18 @@ public final class DirectWriter {
   final long[] nextValues;
   final BulkOperation encoder;
   final int iterations;
-  
+
+  /**
+   *
+   * @param output  标明数据要写入到哪里
+   * @param numValues   总计要写入多少数据
+   * @param bitsPerValue   每个数据占用多少位
+   */
   DirectWriter(DataOutput output, long numValues, int bitsPerValue) {
     this.output = output;
     this.numValues = numValues;
     this.bitsPerValue = bitsPerValue;
+    // 生成编码器对象
     encoder = BulkOperation.of(PackedInts.Format.PACKED, bitsPerValue);
     iterations = encoder.computeIterations((int) Math.min(numValues, Integer.MAX_VALUE), PackedInts.DEFAULT_BUFFER_SIZE);
     nextBlocks = new byte[iterations * encoder.byteBlockCount()];

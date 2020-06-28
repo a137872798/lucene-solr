@@ -39,6 +39,10 @@ class StoredFieldsConsumer {
     this.lastDoc = -1;
   }
 
+  /**
+   * 惰性初始化
+   * @throws IOException
+   */
   protected void initStoredFieldsWriter() throws IOException {
     if (writer == null) {
       this.writer =
@@ -47,6 +51,11 @@ class StoredFieldsConsumer {
     }
   }
 
+  /**
+   * 代表此时正在处理一个新的 doc
+   * @param docID  该doc对应的id
+   * @throws IOException
+   */
   void startDocument(int docID) throws IOException {
     assert lastDoc < docID;
     initStoredFieldsWriter();

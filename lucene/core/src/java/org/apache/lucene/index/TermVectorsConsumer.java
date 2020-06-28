@@ -34,11 +34,17 @@ import org.apache.lucene.util.RamUsageEstimator;
  * 该对象用于处理 词向量
  */
 class TermVectorsConsumer extends TermsHash {
+  /**
+   * 该对象负责将词向量写入索引文件
+   */
   TermVectorsWriter writer;
 
   /** Scratch term used by TermVectorsConsumerPerField.finishDocument. */
   final BytesRef flushTerm = new BytesRef();
 
+  /**
+   * 该对象是由哪个线程写入的
+   */
   final DocumentsWriterPerThread docWriter;
 
   /** Used by TermVectorsConsumerPerField when serializing
@@ -47,15 +53,33 @@ class TermVectorsConsumer extends TermsHash {
   final ByteSliceReader vectorSliceReaderOff = new ByteSliceReader();
 
   boolean hasVectors;
+  /**
+   * 每当chain 处理一个新的 doc时 会重置该值
+   */
   int numVectorFields;
   int lastDocID;
+  /**
+   * 每次 reset时 会置空这个数组
+   */
   private TermVectorsConsumerPerField[] perFields = new TermVectorsConsumerPerField[1];
 
+  /**
+   * 该对象在创建时 不会携带下游对象
+   * @param docWriter
+   */
   public TermVectorsConsumer(DocumentsWriterPerThread docWriter) {
     super(docWriter, false, null);
     this.docWriter = docWriter;
   }
 
+  /**
+   * 这里将 相关信息写入到索引中
+   * @param fieldsToFlush
+   * @param state
+   * @param sortMap
+   * @param norms
+   * @throws IOException
+   */
   @Override
   void flush(Map<String, TermsHashPerField> fieldsToFlush, final SegmentWriteState state, Sorter.DocMap sortMap, NormsProducer norms) throws IOException {
     if (writer != null) {
@@ -77,6 +101,7 @@ class TermVectorsConsumer extends TermsHash {
 
   /** Fills in no-term-vectors for all docs we haven't seen
    *  since the last doc that had term vectors. */
+  // 从0 开始直到填充到 docId 不断地调用 startDocument 和 finishDocument
   void fill(int docID) throws IOException {
     while(lastDocID < docID) {
       writer.startDocument(0);
@@ -85,6 +110,10 @@ class TermVectorsConsumer extends TermsHash {
     }
   }
 
+  /**
+   * 初始化 writer对象
+   * @throws IOException
+   */
   void initTermVectorsWriter() throws IOException {
     if (writer == null) {
       IOContext context = new IOContext(new FlushInfo(docWriter.getNumDocsInRAM(), docWriter.bytesUsed()));
@@ -135,11 +164,20 @@ class TermVectorsConsumer extends TermsHash {
     }
   }
 
+  /**
+   * 重置内部的域信息
+   */
   void resetFields() {
     Arrays.fill(perFields, null); // don't hang onto stuff from previous doc
     numVectorFields = 0;
   }
 
+  /**
+   * 词向量对象 在插入一个域时 会生成 一个  TermVectorsConsumerPerField
+   * @param invertState
+   * @param fieldInfo
+   * @return
+   */
   @Override
   public TermsHashPerField addField(FieldInvertState invertState, FieldInfo fieldInfo) {
     return new TermVectorsConsumerPerField(invertState, this, fieldInfo);
@@ -156,6 +194,9 @@ class TermVectorsConsumer extends TermsHash {
     perFields[numVectorFields++] = fieldToFlush;
   }
 
+  /**
+   * 当 chain 处理新的doc时 触发该方法
+   */
   @Override
   void startDocument() {
     resetFields();

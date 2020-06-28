@@ -28,7 +28,12 @@ import org.apache.lucene.util.ByteBlockPool;
  * each slice until we hit the end of that slice at which
  * point we read the forwarding address of the next slice
  * and then jump to it.*/
+// 该对象负责从 pool中读取分片数据
 final class ByteSliceReader extends DataInput {
+
+  /**
+   * 分片被创建在这个 pool 中
+   */
   ByteBlockPool pool;
   int bufferUpto;
   byte[] buffer;

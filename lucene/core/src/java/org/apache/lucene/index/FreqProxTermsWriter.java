@@ -35,6 +35,11 @@ import org.apache.lucene.util.IOUtils;
  */
 final class FreqProxTermsWriter extends TermsHash {
 
+  /**
+   * 在DefaultIndexingChain 中 该对象初始化时  还传入了一个 词向量对象 作为 下游对象
+   * @param docWriter
+   * @param termVectors
+   */
   public FreqProxTermsWriter(DocumentsWriterPerThread docWriter, TermsHash termVectors) {
     super(docWriter, true, termVectors);
   }

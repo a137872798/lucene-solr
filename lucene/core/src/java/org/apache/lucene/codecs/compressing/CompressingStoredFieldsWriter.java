@@ -51,12 +51,15 @@ import org.apache.lucene.util.packed.PackedInts;
 /**
  * {@link StoredFieldsWriter} impl for {@link CompressingStoredFieldsFormat}.
  * @lucene.experimental
+ * 该对象配合压缩算法  负责将 域信息存储到 索引文件种
  */
 public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
   /** Extension of stored fields file */
+  // 存储数据的索引文件拓展名
   public static final String FIELDS_EXTENSION = "fdt";
   /** Extension of stored fields index */
+  // 存储index 的索引文件拓展名
   public static final String INDEX_EXTENSION_PREFIX = "fd";
   /** Codec name for the index. */
   public static final String INDEX_CODEC_NAME = "Lucene85FieldsIndex";
@@ -80,7 +83,13 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
   private FieldsIndexWriter indexWriter;
   private IndexOutput fieldsStream;
 
+  /**
+   * 执行压缩工作的 压缩器  基于LZ4算法
+   */
   private Compressor compressor;
+  /**
+   * 这里指定了压缩格式
+   */
   private final CompressionMode compressionMode;
   private final int chunkSize;
   private final int maxDocsPerChunk;
@@ -104,6 +113,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     this.chunkSize = chunkSize;
     this.maxDocsPerChunk = maxDocsPerChunk;
     this.docBase = 0;
+    // 这里创建了一个  可回收内存的 BBDataOutput 对象
     this.bufferedDocs = ByteBuffersDataOutput.newResettableInstance();
     this.numStoredFields = new int[16];
     this.endOffsets = new int[16];
@@ -111,7 +121,9 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
     boolean success = false;
     try {
+      // 创建输出流
       fieldsStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, FIELDS_EXTENSION), context);
+      // 写入文件头
       CodecUtil.writeIndexHeader(fieldsStream, formatName, VERSION_CURRENT, si.getId(), segmentSuffix);
       assert CodecUtil.indexHeaderLength(formatName, segmentSuffix) == fieldsStream.getFilePointer();
 

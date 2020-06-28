@@ -23,6 +23,9 @@ import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.codecs.TermVectorsWriter;
 import org.apache.lucene.util.BytesRef;
 
+/**
+ *
+ */
 final class TermVectorsConsumerPerField extends TermsHashPerField {
 
   private TermVectorsPostingsArray termVectorsPostingsArray;
@@ -38,6 +41,12 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
   PayloadAttribute payloadAttribute;
   boolean hasPayloads; // if enabled, and we actually saw any for this field
 
+  /**
+   *
+   * @param invertState  记录field的某些信息
+   * @param termsWriter  该对象是由哪个对象创建的
+   * @param fieldInfo
+   */
   public TermVectorsConsumerPerField(FieldInvertState invertState, TermVectorsConsumer termsWriter, FieldInfo fieldInfo) {
     super(2, invertState, termsWriter, null, fieldInfo);
     this.termsWriter = termsWriter;

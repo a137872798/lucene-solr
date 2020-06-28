@@ -81,6 +81,7 @@ public final class CodecUtil {
    * @param version Version number
    * @throws IOException If there is an I/O error writing to the underlying medium.
    * @throws IllegalArgumentException If the codec name is not simple ASCII, or is more than 127 characters in length
+   *
    */
   public static void writeHeader(DataOutput out, String codec, int version) throws IOException {
     BytesRef bytes = new BytesRef(codec);

@@ -30,8 +30,14 @@ import org.apache.lucene.util.IntBlockPool;
 abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
   private static final int HASH_INIT_SIZE = 4;
 
+  /**
+   * 该对象存储于哪个 hash桶
+   */
   final TermsHash termsHash;
 
+  /**
+   * 该对象以链表形式组成
+   */
   final TermsHashPerField nextPerField;
   protected final DocumentsWriterPerThread.DocState docState;
   protected final FieldInvertState fieldState;

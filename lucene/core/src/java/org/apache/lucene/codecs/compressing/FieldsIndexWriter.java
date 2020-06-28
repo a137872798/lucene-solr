@@ -43,6 +43,7 @@ import org.apache.lucene.util.packed.DirectMonotonicWriter;
  * index is used to look up the start pointer in the
  * {@link DirectMonotonicReader} that records start pointers.
  * @lucene.internal
+ * 该对象 负责将 域信息写入到索引文件中
  */
 public final class FieldsIndexWriter implements Closeable {
 
@@ -55,16 +56,38 @@ public final class FieldsIndexWriter implements Closeable {
   static final int VERSION_START = 0;
   static final int VERSION_CURRENT = 0;
 
+  /**
+   * 代表数据会写入到哪个目录
+    */
   private final Directory dir;
+  /**
+   * 段名
+   */
   private final String name;
+  /**
+   * 段后缀
+   */
   private final String suffix;
+  /**
+   * 文件拓展名
+   */
   private final String extension;
+  /**
+   * "Lucene85FieldsIndex"
+   */
   private final String codecName;
+  /**
+   * 段id
+   */
   private final byte[] id;
   private final int blockShift;
   private final IOContext ioContext;
+  // 这里2个输出流 对应2个临时文件
   private IndexOutput docsOut;
   private IndexOutput filePointersOut;
+  /**
+   * 记录总计写入了多少 doc
+   */
   private int totalDocs;
   private int totalChunks;
   private long previousFP;
@@ -79,52 +102,78 @@ public final class FieldsIndexWriter implements Closeable {
     this.id = id;
     this.blockShift = blockShift;
     this.ioContext = ioContext;
+    // 这里创建临时文件
     this.docsOut = dir.createTempOutput(name, codecName + "-doc_ids", ioContext);
     boolean success = false;
     try {
+      // 写入文件头
       CodecUtil.writeHeader(docsOut, codecName + "Docs", VERSION_CURRENT);
+      // 创建临时文件 + 写入文件头
       filePointersOut = dir.createTempOutput(name, codecName + "file_pointers", ioContext);
       CodecUtil.writeHeader(filePointersOut, codecName + "FilePointers", VERSION_CURRENT);
       success = true;
     } finally {
       if (success == false) {
+        // 创建失败时  释放文件句柄 删除临时文件
         close();
       }
     }
   }
 
+  /**
+   * 将信息写入到索引中
+   * @param numDocs
+   * @param startPointer
+   * @throws IOException
+   */
   void writeIndex(int numDocs, long startPointer) throws IOException {
     assert startPointer >= previousFP;
     docsOut.writeVInt(numDocs);
+    // 这里每次存储的都是一个差值
     filePointersOut.writeVLong(startPointer - previousFP);
     previousFP = startPointer;
     totalDocs += numDocs;
+    // 每次写入以一个数据块为单位
     totalChunks++;
   }
 
+  /**
+   * 当写入完成时 需要做持久化工作
+   * @param numDocs
+   * @param maxPointer
+   * @throws IOException
+   */
   void finish(int numDocs, long maxPointer) throws IOException {
+    // 此时要求的 doc数量必须是之前所有 writerIndex 写入的数量总和
     if (numDocs != totalDocs) {
       throw new IllegalStateException("Expected " + numDocs + " docs, but got " + totalDocs);
     }
+    // 写入结尾标记  以及校验和
     CodecUtil.writeFooter(docsOut);
     CodecUtil.writeFooter(filePointersOut);
+    // 关闭文件流  但是此时的文件后缀名还是 tmp (临时文件)
     IOUtils.close(docsOut, filePointersOut);
 
+    // 这时才创建 域索引 同时包含 index文件 和 meta 文件
     try (IndexOutput metaOut = dir.createOutput(IndexFileNames.segmentFileName(name, suffix, extension + FIELDS_META_EXTENSION_SUFFIX), ioContext);
         IndexOutput dataOut = dir.createOutput(IndexFileNames.segmentFileName(name, suffix, extension + FIELDS_INDEX_EXTENSION_SUFFIX), ioContext)) {
 
       CodecUtil.writeIndexHeader(metaOut, codecName + "Meta", VERSION_CURRENT, id, suffix);
       CodecUtil.writeIndexHeader(dataOut, codecName + "Idx", VERSION_CURRENT, id, suffix);
 
-      metaOut.writeInt(numDocs);
+      // 为元数据文件写入数据
+      metaOut.writeInt(numDocs);   // 该域被多少doc共用???
       metaOut.writeInt(blockShift);
-      metaOut.writeInt(totalChunks + 1);
-      metaOut.writeLong(dataOut.getFilePointer());
+      metaOut.writeInt(totalChunks + 1); // 包含多少个数据块
+      metaOut.writeLong(dataOut.getFilePointer());  // 写入 data数据长度(bytes数)
 
+      // 这里声明 IOContext 是 read_once  代表只能使用输入流读取一次   校验和相关的先忽略
       try (ChecksumIndexInput docsIn = dir.openChecksumInput(docsOut.getName(), IOContext.READONCE)) {
+        // 检查头部与之前写入的是否一致
         CodecUtil.checkHeader(docsIn, codecName + "Docs", VERSION_CURRENT, VERSION_CURRENT);
         Throwable priorE = null;
         try {
+          // 通过2个输出流对象 创建 writer
           final DirectMonotonicWriter docs = DirectMonotonicWriter.getInstance(metaOut, dataOut, totalChunks + 1, blockShift);
           long doc = 0;
           docs.add(doc);
@@ -178,6 +227,10 @@ public final class FieldsIndexWriter implements Closeable {
     }
   }
 
+  /**
+   * 当初始化过程失败时 释放资源 并删除临时文件
+   * @throws IOException
+   */
   @Override
   public void close() throws IOException {
     try {

@@ -32,7 +32,7 @@ import org.apache.lucene.util.IntBlockPool;
  *  streams per token.  Consumers of this class, eg {@link
  *  FreqProxTermsWriter} and {@link TermVectorsConsumer},
  *  write their own byte streams under each term. */
-// 该对象通过 hash函数 存储term
+// 该对象会存储 在分词过程中产生的 term
 abstract class TermsHash {
 
   /**
@@ -46,6 +46,9 @@ abstract class TermsHash {
   ByteBlockPool termBytePool;
   final Counter bytesUsed;
 
+  /**
+   * 用于描述当前正在解析的 doc
+   */
   final DocumentsWriterPerThread.DocState docState;
 
   final boolean trackAllocations;
@@ -53,7 +56,7 @@ abstract class TermsHash {
   /**
    *
    * @param docWriter
-   * @param trackAllocations  默认情况为 true
+   * @param trackAllocations  默认情况为 true   代表是否共用同一个计数器
    * @param nextTermsHash
    */
   TermsHash(final DocumentsWriterPerThread docWriter, boolean trackAllocations, TermsHash nextTermsHash) {
@@ -64,6 +67,7 @@ abstract class TermsHash {
     intPool = new IntBlockPool(docWriter.intBlockAllocator);
     bytePool = new ByteBlockPool(docWriter.byteBlockAllocator);
 
+    // 如果设置了 next对象  将2个对象的  termBytePool 都指向当前对象的 bytePool  应该是打算共用
     if (nextTermsHash != null) {
       // We are primary
       termBytePool = bytePool;
@@ -71,10 +75,14 @@ abstract class TermsHash {
     }
   }
 
+  /**
+   * 终止该对象
+   */
   public void abort() {
     try {
       reset();
     } finally {
+      // 以链式调用的形式 终止下层的 存储对象
       if (nextTermsHash != null) {
         nextTermsHash.abort();
       }
@@ -82,24 +90,42 @@ abstract class TermsHash {
   }
 
   // Clear all state
+  // 释放内存
   void reset() {
     // we don't reuse so we drop everything and don't fill with 0
     intPool.reset(false, false); 
     bytePool.reset(false, false);
   }
 
+  /**
+   * 将这些信息写入到索引中
+   * @param fieldsToFlush
+   * @param state
+   * @param sortMap
+   * @param norms
+   * @throws IOException
+   */
   void flush(Map<String,TermsHashPerField> fieldsToFlush, final SegmentWriteState state,
       Sorter.DocMap sortMap, NormsProducer norms) throws IOException {
+    // 默认实现都是委托 给下层
     if (nextTermsHash != null) {
       Map<String,TermsHashPerField> nextChildFields = new HashMap<>();
       for (final Map.Entry<String,TermsHashPerField> entry : fieldsToFlush.entrySet()) {
+        // 注意这里传递到下游的是 nextPerField
         nextChildFields.put(entry.getKey(), entry.getValue().nextPerField);
       }
       nextTermsHash.flush(nextChildFields, state, sortMap, norms);
     }
   }
 
+  /**
+   * 为当前对象追加一个 域信息
+   * @param fieldInvertState
+   * @param fieldInfo
+   * @return
+   */
   abstract TermsHashPerField addField(FieldInvertState fieldInvertState, FieldInfo fieldInfo);
+
 
   void finishDocument() throws IOException {
     if (nextTermsHash != null) {

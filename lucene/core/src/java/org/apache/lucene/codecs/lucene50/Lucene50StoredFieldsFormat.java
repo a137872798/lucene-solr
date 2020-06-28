@@ -99,10 +99,12 @@ import org.apache.lucene.util.packed.DirectMonotonicWriter;
  * <p>This {@link StoredFieldsFormat} does not support individual documents
  * larger than (<code>2<sup>31</sup> - 2<sup>14</sup></code>) bytes.
  * @lucene.experimental
+ * 该对象定义了 域信息索引文件的存储格式
  */
 public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
   
   /** Configuration option for stored fields. */
+  // 这里有2种写入模式 一种是追求速度 一种追求压缩率
   public static enum Mode {
     /** Trade compression ratio for retrieval speed. */
     BEST_SPEED,
@@ -135,8 +137,17 @@ public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
     return impl(mode).fieldsReader(directory, si, fn, context);
   }
 
+  /**
+   * 通过指定目录 创建向目录写入索引文件的writer对象
+   * @param directory
+   * @param si
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public StoredFieldsWriter fieldsWriter(Directory directory, SegmentInfo si, IOContext context) throws IOException {
+    // 这里将模式信息 写入到 segment 中
     String previous = si.putAttribute(MODE_KEY, mode.name());
     if (previous != null && previous.equals(mode.name()) == false) {
       throw new IllegalStateException("found existing value for " + MODE_KEY + " for segment: " + si.name +
@@ -144,7 +155,8 @@ public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
     }
     return impl(mode).fieldsWriter(directory, si, context);
   }
-  
+
+  // 基于模式选择不同的 写入对象 应该就是利用 LZ4 实现压缩
   StoredFieldsFormat impl(Mode mode) {
     switch (mode) {
       case BEST_SPEED: 

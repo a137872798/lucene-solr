@@ -24,6 +24,7 @@ import org.apache.lucene.store.IOContext;
 /**
  * Holder class for common parameters used during read.
  * @lucene.experimental
+ * 该对象 存储了一些读取segment 相关的参数
  */
 public class SegmentReadState {
   /** {@link Directory} where this segment is read from. */ 

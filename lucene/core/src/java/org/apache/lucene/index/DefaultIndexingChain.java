@@ -84,6 +84,9 @@ final class DefaultIndexingChain extends DocConsumer {
   private int hashMask = 1;
 
   private int totalFieldCount;
+  /**
+   * 每当处理一个新的  doc时 就会增加年代
+   */
   private long nextFieldGen;
 
   // Holds fields seen in each document
@@ -170,13 +173,16 @@ final class DefaultIndexingChain extends DocConsumer {
     // 该段下最大的文档号
     int maxDoc = state.segmentInfo.maxDoc();
     long t0 = System.nanoTime();
+    // 这里是写入 标准因子
     writeNorms(state, sortMap);
     if (docState.infoStream.isEnabled("IW")) {
       docState.infoStream.message("IW", ((System.nanoTime()-t0)/1000000) + " msec to write norms");
     }
+    // 这里要读取之前已经生成的段文件
     SegmentReadState readState = new SegmentReadState(state.directory, state.segmentInfo, state.fieldInfos, IOContext.READ, state.segmentSuffix);
     
     t0 = System.nanoTime();
+    // 将 文档内部的数据写入到 索引文件中
     writeDocValues(state, sortMap);
     if (docState.infoStream.isEnabled("IW")) {
       docState.infoStream.message("IW", ((System.nanoTime()-t0)/1000000) + " msec to write docValues");
@@ -280,6 +286,7 @@ final class DefaultIndexingChain extends DocConsumer {
   }
 
   /** Writes all buffered doc values (called from {@link #flush}). */
+  // 将文档数据写入到索引文件中
   private void writeDocValues(SegmentWriteState state, Sorter.DocMap sortMap) throws IOException {
     int maxDoc = state.segmentInfo.maxDoc();
     DocValuesConsumer dvConsumer = null;
@@ -351,15 +358,17 @@ final class DefaultIndexingChain extends DocConsumer {
         // 当存在标准因子时  获取当前版本支持的 标准因子格式   默认使用的 Codec 就是 Lucene84Codec
         NormsFormat normsFormat = state.segmentInfo.getCodec().normsFormat();
         assert normsFormat != null;
-        // 获取写入标准因子的 对象
+        // 调用该方法 会间接的为segment 创建有关标准因子的 数据索引文件 和 元数据索引文件
         normsConsumer = normsFormat.normsConsumer(state);
 
         for (FieldInfo fi : state.fieldInfos) {
+          // 从hash桶中找到 对应的域信息
           PerField perField = getPerField(fi.name);
           assert perField != null;
 
           // we must check the final value of omitNorms for the fieldinfo: it could have 
           // changed for this field since the first time we added it.
+          // 如果没有设置  不写入任何索引文件  并且 忽略标准因子的标识为 false 就会将标准因子写入到索引文件
           if (fi.omitsNorms() == false && fi.getIndexOptions() != IndexOptions.NONE) {
             assert perField.norms != null: "field=" + fi.name;
             perField.norms.finish(state.segmentInfo.maxDoc());
@@ -434,7 +443,7 @@ final class DefaultIndexingChain extends DocConsumer {
   }
 
   /**
-   * 处理当前读取到的 doc 并生成索引
+   * 处理当前读取到的 doc   只有当数据存储到chain后  才能根据这些数据生成相关的索引
    * @throws IOException
    */
   @Override
@@ -452,7 +461,7 @@ final class DefaultIndexingChain extends DocConsumer {
     // analyzer is free to reuse TokenStream across fields
     // (i.e., we cannot have more than one TokenStream
     // running "at once"):
-
+    // 实际上是转发到 词向量对象的 .startDocument()   会重置 TermVectorsConsumer 对象内部的field相关属性
     termsHash.startDocument();
 
     startStoredFields(docState.docID);

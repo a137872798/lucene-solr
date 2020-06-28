@@ -24,8 +24,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.packed.PackedInts.Reader;
 
 /**
- * 用于存储单调变化的数据   该对象使得压缩的值都变成一样的了 而到了上层 再抽取出最小值(实际上所有值都一样  那么就变成了 一直在存储0) 0只需要1位就可以存储
- * 实际上这里忽略了精度丢失
+ * 用于存储单调变化的数据   这里通过计算变化的平均数 使得每个值尽可能的接近  之后在上层 又通过 差值保存的策略 尽可能的减小每个值占用的内存空间
  */
 class MonotonicLongValues extends DeltaPackedLongValues {
 

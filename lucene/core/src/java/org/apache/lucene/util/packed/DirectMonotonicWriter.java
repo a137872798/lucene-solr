@@ -38,15 +38,34 @@ public final class DirectMonotonicWriter {
   public static final int MIN_BLOCK_SHIFT = 2;
   public static final int MAX_BLOCK_SHIFT = 22;
 
+  /**
+   * 2个输出流 分别代表了 元数据信息 和 实际的数据信息
+   */
   final IndexOutput meta;
   final IndexOutput data;
   final long numValues;
+  /**
+   * dataOutput 的基础偏移量  记录当前文件已经写入了多少byte
+   */
   final long baseDataPointer;
   final long[] buffer;
+  /**
+   * 类似于 buffer的偏移量
+   */
   int bufferSize;
+  /**
+   * 记录add()调用次数  或者说写入的数据总数
+   */
   long count;
   boolean finished;
 
+  /**
+   *
+   * @param metaOut
+   * @param dataOut
+   * @param numValues     标明了一共要写入多少数据
+   * @param blockShift     bufferSize = 1 << blockShift
+   */
   DirectMonotonicWriter(IndexOutput metaOut, IndexOutput dataOut, long numValues, int blockShift) {
     if (blockShift < MIN_BLOCK_SHIFT || blockShift > MAX_BLOCK_SHIFT) {
       throw new IllegalArgumentException("blockShift must be in [" + MIN_BLOCK_SHIFT + "-" + MAX_BLOCK_SHIFT + "], got " + blockShift);
@@ -63,14 +82,20 @@ public final class DirectMonotonicWriter {
     this.data = dataOut;
     this.numValues = numValues;
     final int blockSize = 1 << blockShift;
+    // 允许 buffer < numValues  并且在继续写入前会先将之前的数据持久化
     this.buffer = new long[(int) Math.min(numValues, blockSize)];
     this.bufferSize = 0;
     this.baseDataPointer = dataOut.getFilePointer();
   }
 
+  /**
+   * 当 buffer数据写满时 就需要先将内部的数据持久化
+   * @throws IOException
+   */
   private void flush() throws IOException {
     assert bufferSize != 0;
 
+    // 通过减去平均每个值的变化量 使得 差距尽可能的减小
     final float avgInc = (float) ((double) (buffer[bufferSize-1] - buffer[0]) / Math.max(1, bufferSize - 1));
     for (int i = 0; i < bufferSize; ++i) {
       final long expected = (long) (avgInc * (long) i);
@@ -82,6 +107,7 @@ public final class DirectMonotonicWriter {
       min = Math.min(buffer[i], min);
     }
 
+    // 再通过差值策略 进一步节省内存开销
     long maxDelta = 0;
     for (int i = 0; i < bufferSize; ++i) {
       buffer[i] -= min;
@@ -91,13 +117,18 @@ public final class DirectMonotonicWriter {
       maxDelta |= buffer[i];
     }
 
+    // 写入用于还原数据的2个关键变量  min 和 avg
     meta.writeLong(min);
     meta.writeInt(Float.floatToIntBits(avgInc));
+    // 这里是 写入数据的长度
     meta.writeLong(data.getFilePointer() - baseDataPointer);
+    // 代表所有的值都是一样的 也就是 数据的变化是平稳的
     if (maxDelta == 0) {
       meta.writeByte((byte) 0);
     } else {
+      // 要表达该值需要多少位  比如 4需要2位  8需要3位
       final int bitsRequired = DirectWriter.unsignedBitsRequired(maxDelta);
+      // 这里使用 packed 来存储数据
       DirectWriter writer = DirectWriter.getInstance(data, bufferSize, bitsRequired);
       for (int i = 0; i < bufferSize; ++i) {
         writer.add(buffer[i]);
@@ -113,14 +144,18 @@ public final class DirectMonotonicWriter {
   /** Write a new value. Note that data might not make it to storage until
    * {@link #finish()} is called.
    *  @throws IllegalArgumentException if values don't come in order */
+  // 将数据写入到 buffer 中
   public void add(long v) throws IOException {
     if (v < previous) {
       throw new IllegalArgumentException("Values do not come in order: " + previous + ", " + v);
     }
     if (bufferSize == buffer.length) {
+      // 写不下时 先将之前的数据刷盘
       flush();
     }
+    // 如果超量了 那么在flush之后 应该重置了 bufferSize
     buffer[bufferSize++] = v;
+    // 更新上一个值 并且下次写入的值 必须要大于该值
     previous = v;
     count++;
   }
@@ -133,6 +168,7 @@ public final class DirectMonotonicWriter {
     if (finished) {
       throw new IllegalStateException("#finish has been called already");
     }
+    // 只要有剩余数据 就进行持久化
     if (bufferSize > 0) {
       flush();
     }

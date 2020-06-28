@@ -26,6 +26,7 @@ import org.apache.lucene.store.IOContext;
 
 /**
  * Controls the format of stored fields
+ * 用于规定 域信息索引文件的存储格式
  */
 public abstract class StoredFieldsFormat {
   /** Sole constructor. (For invocation by subclass 
@@ -39,5 +40,6 @@ public abstract class StoredFieldsFormat {
 
   /** Returns a {@link StoredFieldsWriter} to write stored
    *  fields. */
+  // 通过指定目录文件 和段信息 创建 writer对象
   public abstract StoredFieldsWriter fieldsWriter(Directory directory, SegmentInfo si, IOContext context) throws IOException;
 }

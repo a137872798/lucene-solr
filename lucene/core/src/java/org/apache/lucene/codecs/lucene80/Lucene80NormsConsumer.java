@@ -58,8 +58,9 @@ final class Lucene80NormsConsumer extends NormsConsumer {
       // segmentName_suffix.ext
       String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
       data = state.directory.createOutput(dataName, state.context);
-      // 这里要写一个 特殊的文件头  应该是用来校验文件有效性之类的
+      // 写入头部信息
       CodecUtil.writeIndexHeader(data, dataCodec, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+      // 生成元数据索引文件
       String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
       meta = state.directory.createOutput(metaName, state.context);
       CodecUtil.writeIndexHeader(meta, metaCodec, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
@@ -67,6 +68,7 @@ final class Lucene80NormsConsumer extends NormsConsumer {
       success = true;
     } finally {
       if (!success) {
+        // 组装异常信息 并抛出
         IOUtils.closeWhileHandlingException(this);
       }
     }

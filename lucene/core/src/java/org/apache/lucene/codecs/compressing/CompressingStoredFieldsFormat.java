@@ -42,11 +42,21 @@ import org.apache.lucene.util.packed.DirectMonotonicWriter;
  * For optimal performance, you should use a {@link MergePolicy} that returns
  * segments that have the biggest byte size first.
  * @lucene.experimental
+ * 有关域的存储对象 是涉及到压缩算法的  lucene 基于 LZ4 算法实现了 倾向于速度 与倾向于压缩率的2种实现
  */
 public class CompressingStoredFieldsFormat extends StoredFieldsFormat {
 
+  /**
+   * 压缩格式的名称  一般就是 "Lucene50StoredFieldsFastData"
+   */
   private final String formatName;
+  /**
+   * 段信息后缀
+   */
   private final String segmentSuffix;
+  /**
+   * 采用的压缩模式
+   */
   private final CompressionMode compressionMode;
   private final int chunkSize;
   private final int maxDocsPerChunk;
@@ -57,6 +67,8 @@ public class CompressingStoredFieldsFormat extends StoredFieldsFormat {
    * suffix.
    * 
    * @see CompressingStoredFieldsFormat#CompressingStoredFieldsFormat(String, String, CompressionMode, int, int, int)
+   * @param chunkSize  看来存储被分为多个单位
+   * @param maxDocsPerChunk 每个doc 最多使用多少个存储单位
    */
   public CompressingStoredFieldsFormat(String formatName, CompressionMode compressionMode, int chunkSize, int maxDocsPerChunk, int blockShift) {
     this(formatName, "", compressionMode, chunkSize, maxDocsPerChunk, blockShift);
@@ -96,6 +108,7 @@ public class CompressingStoredFieldsFormat extends StoredFieldsFormat {
    * @param maxDocsPerChunk the maximum number of documents in a single chunk
    * @param blockShift the log in base 2 of number of chunks to store in an index block
    * @see CompressionMode
+   * 简单的赋值操作
    */
   public CompressingStoredFieldsFormat(String formatName, String segmentSuffix, 
                                        CompressionMode compressionMode, int chunkSize, int maxDocsPerChunk, int blockShift) {
@@ -124,6 +137,14 @@ public class CompressingStoredFieldsFormat extends StoredFieldsFormat {
         context, formatName, compressionMode);
   }
 
+  /**
+   * 构建 索引写入对象
+   * @param directory
+   * @param si
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public StoredFieldsWriter fieldsWriter(Directory directory, SegmentInfo si,
       IOContext context) throws IOException {
