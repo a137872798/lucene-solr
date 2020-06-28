@@ -52,7 +52,7 @@ import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
  * @see org.apache.lucene.codecs.lucene84 package documentation for file format details.
  *
  * @lucene.experimental
- * 8.4版本的 lucene 索引结构
+ * 当前版本使用的编解码器  会按照这个规则生成索引文件
  */
 public class Lucene84Codec extends Codec {
   private final TermVectorsFormat vectorsFormat = new Lucene50TermVectorsFormat();

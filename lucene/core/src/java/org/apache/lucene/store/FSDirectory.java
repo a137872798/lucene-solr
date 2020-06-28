@@ -126,13 +126,16 @@ public abstract class FSDirectory extends BaseDirectory {
 
   /** Maps files that we are trying to delete (or we tried already but failed)
    *  before attempting to delete that key. */
-  // 正在尝试删除中的数据
+  // 当尝试删除失败时 才会加入到这个列表中
   private final Set<String> pendingDeletes = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
 
+  /**
+   * 一个 计数器对象  记录距离上次delete操作之后 又执行了多少次操作
+   */
   private final AtomicInteger opsSinceLastDelete = new AtomicInteger();
 
   /** Used to generate temp file names in {@link #createTempOutput}. */
-  // 生成临时文件的 唯一后缀
+  // 用于标记临时文件
   private final AtomicLong nextTempFileCounter = new AtomicLong();
 
   /** Create a new FSDirectory for the named location (ctor for subclasses).
@@ -273,6 +276,7 @@ public abstract class FSDirectory extends BaseDirectory {
       privateDeleteFile(name, true); // try again to delete it - this is best effort
       pendingDeletes.remove(name); // watch out - if the delete fails it put
     }
+    // 这里重新创建输出流
     return new FSIndexOutput(name);
   }
 
@@ -334,6 +338,7 @@ public abstract class FSDirectory extends BaseDirectory {
       privateDeleteFile(dest, true); // try again to delete it - this is best effort
       pendingDeletes.remove(dest); // watch out if the delete fails it's back in here.
     }
+    // 使用 java.nio.File 提供的api
     Files.move(directory.resolve(source), directory.resolve(dest), StandardCopyOption.ATOMIC_MOVE);
   }
 
@@ -410,7 +415,7 @@ public abstract class FSDirectory extends BaseDirectory {
   }
 
   /**
-   * 尝试删除文件
+   * 这里是物理删除文件
    * @param name
    * @param isPendingDelete
    * @throws IOException
@@ -418,19 +423,23 @@ public abstract class FSDirectory extends BaseDirectory {
   private void privateDeleteFile(String name, boolean isPendingDelete) throws IOException {
     try {
       Files.delete(directory.resolve(name));
+      // 当删除成功时 从待删除列表中移除  实际上如果直接删除成功是不需要加入到这个list中的
       pendingDeletes.remove(name);
     } catch (NoSuchFileException | FileNotFoundException e) {
       // We were asked to delete a non-existent file:
+      // 如果文件已经不存在了 自然就不需要维护在 待删除列表中
       pendingDeletes.remove(name);
+      // 本次是打算从待删除文件中删除 就忽略异常
       if (isPendingDelete && Constants.WINDOWS) {
         // TODO: can we remove this OS-specific hacky logic?  If windows deleteFile is buggy, we should instead contain this workaround in
         // a WindowsFSDirectory ...
         // LUCENE-6684: we suppress this check for Windows, since a file could be in a confusing "pending delete" state, failing the first
         // delete attempt with access denied and then apparently falsely failing here when we try ot delete it again, with NSFE/FNFE
       } else {
+        // 代表在正常删除的场景下文件不存在 那么就是有问题
         throw e;
       }
-      // 当删除失败时 先将文件保存起来
+      // 当删除失败时 很可能上了文件锁之类的 反正就是不允许删除 (操作系统知识还是要补啊 f**k)
     } catch (IOException ioe) {
       // On windows, a file delete can fail because there's still an open
       // file handle against it.  We record this in pendingDeletes and
@@ -443,6 +452,7 @@ public abstract class FSDirectory extends BaseDirectory {
 
       // TODO: can/should we do if (Constants.WINDOWS) here, else throw the exc?
       // but what about a Linux box with a CIFS mount?
+      // 加入到待删除中
       pendingDeletes.add(name);
     }
   }
@@ -464,11 +474,10 @@ public abstract class FSDirectory extends BaseDirectory {
     FSIndexOutput(String name, OpenOption... options) throws IOException {
       super("FSIndexOutput(path=\"" + directory.resolve(name) + "\")", name, new FilterOutputStream(Files.newOutputStream(directory.resolve(name), options)) {
         // This implementation ensures, that we never write more than CHUNK_SIZE bytes:
-        // 这里覆盖了父类的 write 方法
+        // 这里覆盖了父类的write方法    每次最多写入chunk大小的数据
         @Override
         public void write(byte[] b, int offset, int length) throws IOException {
           while (length > 0) {
-            // 每次只能以 chunk大小写入  这也是BufferedOutputStream 的缓冲区大小
             final int chunk = Math.min(length, CHUNK_SIZE);
             out.write(b, offset, chunk);
             length -= chunk;

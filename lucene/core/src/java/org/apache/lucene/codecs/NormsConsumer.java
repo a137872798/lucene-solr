@@ -45,6 +45,7 @@ import org.apache.lucene.index.SegmentWriteState;
  * </ol>
  *
  * @lucene.experimental
+ * 该对象 负责将标准因子 写入到索引文件中
  */
 public abstract class NormsConsumer implements Closeable {
   

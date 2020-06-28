@@ -23,10 +23,14 @@ import org.apache.lucene.index.LeafReaderContext;
 
 /**
  * A query that matches no documents.
+ * 返回一个无法匹配到任何doc的query对象
  */
 
 public class MatchNoDocsQuery extends Query {
 
+  /**
+   * 错误原因
+   */
   private final String reason;
 
   /** Default constructor */

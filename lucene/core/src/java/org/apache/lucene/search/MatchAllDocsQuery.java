@@ -24,6 +24,7 @@ import org.apache.lucene.util.Bits;
 
 /**
  * A query that matches all documents.
+ * 代表能匹配所有的文档
  */
 public final class MatchAllDocsQuery extends Query {
 

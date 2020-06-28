@@ -23,7 +23,13 @@ import org.apache.lucene.codecs.StoredFieldsWriter;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.IOUtils;
 
+/**
+ * 该对象用于处理存储的 field
+ */
 class StoredFieldsConsumer {
+  /**
+   * 将doc转换成索引的线程
+   */
   final DocumentsWriterPerThread docWriter;
   StoredFieldsWriter writer;
   int lastDoc;

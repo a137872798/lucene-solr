@@ -20,7 +20,7 @@ package org.apache.lucene.util.packed;
 
 /**
  * Efficient sequential read/write of packed integers.
- * 代表存入的数据 都只需要截取8bit就可以
+ * 代表写入的数据 需要8位表示  也就是写入的数值在 0~255 之间
  */
 final class BulkOperationPacked8 extends BulkOperationPacked {
 
@@ -28,10 +28,22 @@ final class BulkOperationPacked8 extends BulkOperationPacked {
     super(8);
   }
 
+  // 父类方法本身可以实现解码 但是这里简化了逻辑
+
+  /**
+   *
+   * @param blocks
+   * @param blocksOffset   block的偏移量
+   * @param values
+   * @param valuesOffset
+   * @param iterations
+   */
   @Override
   public void decode(long[] blocks, int blocksOffset, int[] values, int valuesOffset, int iterations) {
     for (int i = 0; i < iterations; ++i) {
+      // 在定位到这个block 之后
       final long block = blocks[blocksOffset++];
+      // 每个 block 存储了 8个byte
       for (int shift = 56; shift >= 0; shift -= 8) {
         values[valuesOffset++] = (int) ((block >>> shift) & 255);
       }
@@ -41,6 +53,7 @@ final class BulkOperationPacked8 extends BulkOperationPacked {
   @Override
   public void decode(byte[] blocks, int blocksOffset, int[] values, int valuesOffset, int iterations) {
     for (int j = 0; j < iterations; ++j) {
+      // 刚好以byte形式存储 那么直接取值就好
       values[valuesOffset++] = blocks[blocksOffset++] & 0xFF;
     }
   }

@@ -22,6 +22,7 @@ package org.apache.lucene.search;
  *
  * @see LRUQueryCache
  * @lucene.experimental
+ * 查询缓存对象  负责对查询结果做缓存   因为查询本身是一个耗时的操作
  */
 public interface QueryCache {
 

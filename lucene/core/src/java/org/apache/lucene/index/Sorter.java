@@ -37,12 +37,18 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * Sorts documents of a given index by returning a permutation on the document
  * IDs.
  * @lucene.experimental
+ * 该对象负责进行真正的排序操作
  */
 final class Sorter {
+
+  /**
+   * 该对象内部 包含多个 SortField 定义了排序的规则
+   */
   final Sort sort;
   
   /** Creates a new Sorter to sort the index with {@code sort} */
   Sorter(Sort sort) {
+    // 描述排序规则的对象 类型不能是 Score 为啥???
     if (sort.needsScores()) {
       throw new IllegalArgumentException("Cannot sort an index with a Sort that refers to the relevance score");
     }
@@ -53,14 +59,18 @@ final class Sorter {
    * A permutation of doc IDs. For every document ID between <code>0</code> and
    * {@link IndexReader#maxDoc()}, <code>oldToNew(newToOld(docID))</code> must
    * return <code>docID</code>.
+   * 代表排序完成后的容器
    */
   static abstract class DocMap {
+
+    // 原本是按照 docId 进行排序 这里进行重排序后 可以通过原有的docId 找到当前新的位置
 
     /** Given a doc ID from the original index, return its ordinal in the
      *  sorted index. */
     abstract int oldToNew(int docID);
 
     /** Given the ordinal of a doc ID, return its doc ID in the original index. */
+    // 反向查询
     abstract int newToOld(int docID);
 
     /** Return the number of documents in this map. This must be equal to the
@@ -70,6 +80,7 @@ final class Sorter {
   }
 
   /** Check consistency of a {@link DocMap}, useful for assertions. */
+  // 一致性检测    也就是正反向索引的结果是否一致
   static boolean isConsistent(DocMap docMap) {
     final int maxDoc = docMap.size();
     for (int i = 0; i < maxDoc; ++i) {
@@ -85,6 +96,7 @@ final class Sorter {
   }
 
   /** A comparator of doc IDs. */
+  // 这里很可能是先通过 docId 获得一个别的什么属性 然后按照那个属性进行排序
   static abstract class DocComparator {
 
     /** Compare docID1 against docID2. The contract for the return value is the
@@ -92,12 +104,30 @@ final class Sorter {
     public abstract int compare(int docID1, int docID2);
   }
 
+  /**
+   * 该对象 基于 TimSort 算法进行排序  排序算法先不看吧 毕竟已经有这么多种现成的实现了 无非就是性能差距
+   * 推测 TimSort 可能就是 （归并排序+快速排序）   因为快速排序受原始数组影响 在最坏的情况下 性能不是 O(log)
+   */
   private static final class DocValueSorter extends TimSorter {
-    
+
+    /**
+     * 通过一组 docId 进行初始化
+     */
     private final int[] docs;
+    /**
+     * 该对象专门抽象出 比较的逻辑
+     */
     private final Sorter.DocComparator comparator;
+    /**
+     * 存放中转数据的临时数组
+     */
     private final int[] tmp;
-    
+
+    /**
+     * 核心的比较逻辑 还是看 com对象
+     * @param docs
+     * @param comparator
+     */
     DocValueSorter(int[] docs, Sorter.DocComparator comparator) {
       super(docs.length / 64);
       this.docs = docs;
@@ -139,10 +169,12 @@ final class Sorter {
   }
 
   /** Computes the old-to-new permutation over the given comparator. */
+  // 通过指定 比较器对象 将doc 排序后 并返回存储新顺序的 DocMap     comparator 内部应该定义了 根据docId 获取什么样的数据的逻辑
   private static Sorter.DocMap sort(final int maxDoc, DocComparator comparator) {
     // check if the index is sorted
     boolean sorted = true;
     for (int i = 1; i < maxDoc; ++i) {
+      // 如果已经是从小到大的顺序了 代表当前已经有序 就不需要排序了
       if (comparator.compare(i-1, i) > 0) {
         sorted = false;
         break;
@@ -153,20 +185,25 @@ final class Sorter {
     }
 
     // sort doc IDs
+    // 代表需要重更新排序
     final int[] docs = new int[maxDoc];
     for (int i = 0; i < maxDoc; i++) {
       docs[i] = i;
     }
-    
+
+    // 创建 排序对象
     DocValueSorter sorter = new DocValueSorter(docs, comparator);
     // It can be common to sort a reader, add docs, sort it again, ... and in
     // that case timSort can save a lot of time
+    // 这里已经完成了排序
     sorter.sort(0, docs.length); // docs is now the newToOld mapping
 
     // The reason why we use MonotonicAppendingLongBuffer here is that it
     // wastes very little memory if the index is in random order but can save
     // a lot of memory if the index is already "almost" sorted
+    // 因为完成排序 所以数据是单调变化的   这里利用单调性 + 差值存储 使得最后存储到 packed中的数据都是0 最大化节省内存开销
     final PackedLongValues.Builder newToOldBuilder = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
+    // 这里存储了所有的文档号    (按照差值存储规则)
     for (int i = 0; i < maxDoc; ++i) {
       newToOldBuilder.add(docs[i]);
     }
@@ -174,9 +211,11 @@ final class Sorter {
 
     // invert the docs mapping:
     for (int i = 0; i < maxDoc; ++i) {
+      // 创建反向索引
       docs[(int) newToOld.get(i)] = i;
     } // docs is now the oldToNew mapping
 
+    // 将反向数据也存储到 packed中
     final PackedLongValues.Builder oldToNewBuilder = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
     for (int i = 0; i < maxDoc; ++i) {
       oldToNewBuilder.add(docs[i]);
@@ -204,7 +243,9 @@ final class Sorter {
 
   /** Returns the native sort type for {@link SortedSetSortField} and {@link SortedNumericSortField},
    * {@link SortField#getType()} otherwise */
+  // 找到该排序域 定义的排序规则
   static SortField.Type getSortFieldType(SortField sortField) {
+    // 主要是为了这2种特殊类型服务的
     if (sortField instanceof SortedSetSortField) {
       return SortField.Type.STRING;
     } else if (sortField instanceof SortedNumericSortField) {
@@ -236,6 +277,13 @@ final class Sorter {
     }
   }
 
+  /**
+   * 基于某个排序字段 构建一个com 对象
+   * @param reader
+   * @param sortField
+   * @return
+   * @throws IOException
+   */
   static DocComparator getDocComparator(LeafReader reader, SortField sortField) throws IOException {
     return getDocComparator(reader.maxDoc(), sortField,
         () -> getOrWrapSorted(reader, sortField),
@@ -399,9 +447,11 @@ final class Sorter {
    * <p>
    * <b>NOTE:</b> deleted documents are expected to appear in the mapping as
    * well, they will however be marked as deleted in the sorted view.
+   * 这里 基于reader中的数据 生成comparator 对象
    */
   DocMap sort(LeafReader reader) throws IOException {
     SortField fields[] = sort.getSort();
+    // 每个 排序对象都可以生成一个 com对象  而排序结果是这些排序对象共同作用的结果
     final DocComparator comparators[] = new DocComparator[fields.length];
 
     for (int i = 0; i < fields.length; i++) {
@@ -411,6 +461,13 @@ final class Sorter {
   }
 
 
+  /**
+   * 这里 将一组comp 对象组合成单个对象 并对doc排序
+   * @param maxDoc
+   * @param comparators
+   * @return
+   * @throws IOException
+   */
   DocMap sort(int maxDoc, DocComparator[] comparators) throws IOException {
     final DocComparator comparator = new DocComparator() {
       @Override
@@ -421,6 +478,7 @@ final class Sorter {
             return comp;
           }
         }
+        // 当所有 comp的结果都是0的时候 直接比较 docId
         return Integer.compare(docID1, docID2); // docid order tiebreak
       }
     };

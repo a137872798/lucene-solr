@@ -26,7 +26,9 @@ import org.apache.lucene.util.automaton.Automaton;
  *
  * <p>This query uses the {@link
  * MultiTermQuery#CONSTANT_SCORE_REWRITE}
- * rewrite method. */
+ * rewrite method.
+ * 基于前缀匹配的 query
+ */
 
 public class PrefixQuery extends AutomatonQuery {
 

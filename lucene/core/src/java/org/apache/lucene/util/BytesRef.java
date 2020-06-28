@@ -46,6 +46,7 @@ public final class BytesRef implements Comparable<BytesRef>, Cloneable {
   public int offset;
 
   /** Length of used bytes. */
+  // bytes 中实际使用了多少bytes
   public int length;
 
   /** Create a BytesRef with {@link #EMPTY_BYTES} */
@@ -82,13 +83,12 @@ public final class BytesRef implements Comparable<BytesRef>, Cloneable {
    * for the provided String.  
    * 
    * @param text This must be well-formed
-   * unicode text, with no unpaired surrogates.
+   * unicode text, with no unpaired surrogates.   传入的字符串是UTF-16  填装的bytes[] 是UTF-8
    */
   public BytesRef(CharSequence text) {
-    // 不太确定一个 utf-8 到底使用多少字节 下面2行的意思大概是 先按照utf8分配大小 然后将 text按照utf16的方式解码 并填充到utf8的容器中
-    // 如果text 本身不是使用utf16呢
-    this(new byte[UnicodeUtil.maxUTF8Length(text.length())]);
-    length = UnicodeUtil.UTF16toUTF8(text, 0, text.length(), bytes);
+    // UTF-8本身是一个变长字符集 这里都使用最大的长度进行存储 好像最大值是3个byte
+    this(new byte[UnicodeUtil.maxUTF8Length(text.length())]);  // 此时该对象内部的bytes 还是空的
+    length = UnicodeUtil.UTF16toUTF8(text, 0, text.length(), bytes);  // 这里将数据拷贝到 bytes中 并且返回长度
   }
   
   /**

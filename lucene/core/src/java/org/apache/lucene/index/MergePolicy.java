@@ -73,13 +73,14 @@ public abstract class MergePolicy {
      * encapsulates the logic to pause and resume the merge thread
      * or to abort the merge entirely.
      *
-     * @lucene.experimental 通过该对象可以影响当前merge的进程
+     * @lucene.experimental
+     * 该对象负责与  mergeThread 交互 比如暂停merge工作 等
      */
     public static class OneMergeProgress {
         /**
          * Reason for pausing the merge thread.
          */
-        // 暂停merge的枚举
+        // 这里有一个 暂停融合的原因枚举
         public static enum PauseReason {
             /**
              * Stopped (because of throughput rate set to 0, typically).
@@ -95,7 +96,6 @@ public abstract class MergePolicy {
             OTHER
         }
 
-        ;
 
         private final ReentrantLock pauseLock = new ReentrantLock();
         private final Condition pausing = pauseLock.newCondition();
@@ -103,11 +103,12 @@ public abstract class MergePolicy {
         /**
          * Pause times (in nanoseconds) for each {@link PauseReason}.
          * value 用于累加基于各种原因导致的 merge暂停时间
+         * 每个merge任务还专门用这样一个类来记录各种描述信息
          */
         private final EnumMap<PauseReason, AtomicLong> pauseTimesNS;
 
         /**
-         * 是否已经禁止融合
+         * 当前merge操作是否已经被终止
          */
         private volatile boolean aborted;
 
@@ -115,14 +116,13 @@ public abstract class MergePolicy {
          * This field is for sanity-check purposes only. Only the same thread that invoked
          * {@link OneMerge#mergeInit()} is permitted to be calling
          * {@link #pauseNanos}. This is always verified at runtime.
-         * 代表用于执行 merge 的线程
+         * 对应 处理OneMerge的线程 可能是SerializeMergeScheduler中的单线程 也可能是 ConcurrentMergeScheduler内的多线程
          */
         private Thread owner;
 
         /**
          * Creates a new merge progress info.
          */
-        // 当该对象被初始化时  每种暂停原因对应的时间都为0
         public OneMergeProgress() {
             // Place all the pause reasons in there immediately so that we can simply update values.
             pauseTimesNS = new EnumMap<PauseReason, AtomicLong>(PauseReason.class);
@@ -134,7 +134,7 @@ public abstract class MergePolicy {
         /**
          * Abort the merge this progress tracks at the next
          * possible moment.
-         * 当本次merge 任务被终止时   唤醒之前阻塞的线程   (因为本任务已经停止了  其他线程在被唤醒后应该会判断  aborted标识)
+         * 禁止融合 同时唤醒被阻塞的线程    当线程唤醒时 应该会检测 aborted 标识 然后终止任务之类的
          */
         public void abort() {
             aborted = true;
@@ -159,11 +159,14 @@ public abstract class MergePolicy {
          *
          * @param condition The pause condition that should return false if immediate return from this
          *                  method is needed. Other threads can wake up any sleeping thread by calling
-         *                  {@link #wakeup}, but it'd fall to sleep for the remainder of the requested time if this     该condition必须返回false才会真正从暂停状态解除
-         *                  传入一个暂停原因 以及暂停的时间
+         *                  {@link #wakeup}, but it'd fall to sleep for the remainder of the requested time if this
+         *                  如果条件还是被满足 那么还是会继续阻塞
+         *
+         *
+         *                  基于某种原因 暂停融合动作  (一般是被 MergeRateLimiter限流)
          */
         public void pauseNanos(long pauseNanos, PauseReason reason, BooleanSupplier condition) throws InterruptedException {
-            // 只有执行merge的线程可以从内部暂停
+            // 避免在外部线程调用该方法   是要在 mergeThread中配合 MergeRateLimiter 才实现暂停功能
             if (Thread.currentThread() != owner) {
                 throw new RuntimeException("Only the merge owner thread can call pauseNanos(). This thread: "
                         + Thread.currentThread().getName() + ", owner thread: "
@@ -175,7 +178,6 @@ public abstract class MergePolicy {
             AtomicLong timeUpdate = pauseTimesNS.get(reason);
             pauseLock.lock();
             try {
-                // 每次被唤醒时 需要通过 condition 判断是否满足唤醒条件 否则还是继续沉睡
                 while (pauseNanos > 0 && !aborted && condition.getAsBoolean()) {
                     pauseNanos = pausing.awaitNanos(pauseNanos);
                 }
@@ -187,7 +189,6 @@ public abstract class MergePolicy {
 
         /**
          * Request a wakeup for any threads stalled in {@link #pauseNanos}.
-         * 外部线程暂停的merge 线程
          */
         public void wakeup() {
             pauseLock.lock();
@@ -201,7 +202,6 @@ public abstract class MergePolicy {
         /**
          * Returns pause reasons and associated times in nanoseconds.
          */
-        // 返回由于各种原因暂停的时长
         public Map<PauseReason, Long> getPauseTimes() {
             Set<Entry<PauseReason, AtomicLong>> entries = pauseTimesNS.entrySet();
             return entries.stream()
@@ -230,19 +230,13 @@ public abstract class MergePolicy {
      *
      * @lucene.experimental
      */
-    // 描述一次merge操作必备的各种属性
+    // 执行某次合并操作涉及到的所有信息   该对象在初始化的同时 会生成一个  Processor 对象 这个对象可以从外部控制merge线程的状态 比如merge需要暂停了 就是通过processor来下达指令
     public static class OneMerge {
-        // 推测是merge的结果
+        // 该片段相关的提交信息 (单个segment)
         SegmentCommitInfo info;         // used by IndexWriter
         boolean registerDone;           // used by IndexWriter
-        /**
-         * merge 也有年代的概念???
-         */
         long mergeGen;                  // used by IndexWriter
         boolean isExternal;             // used by IndexWriter
-        /**
-         * 单次最多merge 多少个 segment
-         */
         int maxNumSegments = -1;        // used by IndexWriter
 
         /**
@@ -273,15 +267,12 @@ public abstract class MergePolicy {
          */
         private final OneMergeProgress mergeProgress;
 
-        /**
-         * 记录merge的起始时间
-         */
         volatile long mergeStartNS = -1;
 
         /**
          * Total number of documents in segments to be merged, not accounting for deletions.
+         * 记录了 doc总数
          */
-        // 一共融合了多少个doc  每个segment 内部包含多个 doc
         public final int totalMaxDoc;
         Throwable error;
 
@@ -290,8 +281,9 @@ public abstract class MergePolicy {
          *
          * @param segments List of {@link SegmentCommitInfo}s
          *                 to be merged.
+         *                 通过一组段对象来初始化 代表本次merge操作会涉及到的所有段
+         *                 在 forceMerge中 可能生成OneMerge使用的段列表内部只有一个元素
          */
-        // 通过传入一个待merge 的commitInfo 进行初始化
         public OneMerge(List<SegmentCommitInfo> segments) {
             if (0 == segments.size()) {
                 throw new RuntimeException("segments must include at least one segment");
@@ -302,16 +294,16 @@ public abstract class MergePolicy {
             for (SegmentCommitInfo info : segments) {
                 count += info.info.maxDoc();
             }
-            // 计算总计要merge 多少doc
             totalMaxDoc = count;
 
+            // 生成一个后台处理对象
             mergeProgress = new OneMergeProgress();
         }
 
         /**
          * Called by {@link IndexWriter} after the merge started and from the
          * thread that will be executing the merge.
-         * 初始化merge工作  也就是为mergeProgress 设置merge线程
+         * 应该是由merge线程来触发的 这样才给了 processor 操作线程的机会
          */
         public void mergeInit() throws IOException {
             mergeProgress.setMergeThread(Thread.currentThread());
@@ -326,7 +318,6 @@ public abstract class MergePolicy {
         /**
          * Wrap the reader in order to add/remove information to the merged segment.
          */
-        // 使用merge对象 包装 codecReader 默认直接返回reader
         public CodecReader wrapForMerge(CodecReader reader) throws IOException {
             return reader;
         }
@@ -334,7 +325,6 @@ public abstract class MergePolicy {
         /**
          * Expert: Sets the {@link SegmentCommitInfo} of the merged segment.
          * Allows sub-classes to e.g. set diagnostics properties.
-         * 设置merge的结果
          */
         public void setMergeInfo(SegmentCommitInfo info) {
             this.info = info;
@@ -367,8 +357,8 @@ public abstract class MergePolicy {
         /**
          * Returns a readable description of the current merge
          * state.
+         * 将内部段信息 格式化输出
          */
-        // 将内部信息 格式化输出
         public String segString() {
             StringBuilder b = new StringBuilder();
             final int numSegments = segments.size();
@@ -403,7 +393,6 @@ public abstract class MergePolicy {
         /**
          * Returns the total number of documents that are included with this merge.
          * Note that this does not indicate the number of documents after the merge.
-         * 返回本次merge 的doc总数
          */
         public int totalNumDocs() {
             int total = 0;
@@ -416,12 +405,9 @@ public abstract class MergePolicy {
         /**
          * Return {@link MergeInfo} describing this merge.
          */
-        // 将内部信息包装成一个用于描述 merge的 javaBean
         public MergeInfo getStoreMergeInfo() {
             return new MergeInfo(totalMaxDoc, estimatedMergeBytes, isExternal, maxNumSegments);
         }
-
-        // 与merge的终止相关
 
         /**
          * Returns true if this merge was or should be aborted.
@@ -439,6 +425,7 @@ public abstract class MergePolicy {
 
         /**
          * Checks if merge has been aborted and throws a merge exception if so.
+         * 检测merge操作是否已经停止
          */
         public void checkAborted() throws MergeAbortedException {
             if (isAborted()) {
@@ -459,14 +446,15 @@ public abstract class MergePolicy {
      * A MergeSpecification instance provides the information
      * necessary to perform multiple merges.  It simply
      * contains a list of {@link OneMerge} instances.
-     * 描述某次参数merge的所有片段
+     * 代表某次段合并时的信息
      */
+
     public static class MergeSpecification {
 
         /**
          * The subset of segments to be included in the primitive merge.
-         * 内部包含一组 oneMerge对象
          */
+
         public final List<OneMerge> merges = new ArrayList<>();
 
         /**
@@ -480,7 +468,6 @@ public abstract class MergePolicy {
          * Adds the provided {@link OneMerge} to this
          * specification.
          */
-        // 添加一个merge 对象
         public void add(OneMerge merge) {
             merges.add(merge);
         }
@@ -502,7 +489,6 @@ public abstract class MergePolicy {
     /**
      * Exception thrown if there are any problems while executing a merge.
      */
-    // 用于描述 merge 过程中出现的异常
     public static class MergeException extends RuntimeException {
         /**
          * Create a {@code MergeException}.
@@ -525,7 +511,6 @@ public abstract class MergePolicy {
      * this exception is privately caught and suppressed by
      * {@link IndexWriter}.
      */
-    // 代表本次merge 操作终止
     public static class MergeAbortedException extends IOException {
         /**
          * Create a {@link MergeAbortedException}.
@@ -546,13 +531,11 @@ public abstract class MergePolicy {
     /**
      * Default ratio for compound file system usage. Set to <code>1.0</code>, always use
      * compound file system.
-     * 通过Lucene的，用Java编写的文本搜索引擎库使用CFS文件。它用于保存多个索引文件成一个复合存档。
      */
     protected static final double DEFAULT_NO_CFS_RATIO = 1.0;
 
     /**
      * Default max segment size in order to use compound file system. Set to {@link Long#MAX_VALUE}.
-     * 在复合文件中 segment的最大长度
      */
     protected static final long DEFAULT_MAX_CFS_SEGMENT_SIZE = Long.MAX_VALUE;
 
@@ -560,7 +543,6 @@ public abstract class MergePolicy {
      * If the size of the merge segment exceeds this ratio of
      * the total index size then it will remain in
      * non-compound format
-     * 如果段相关的索引信息超过一定的大小 那么不采用 cfs格式存储
      */
     protected double noCFSRatio = DEFAULT_NO_CFS_RATIO;
 
@@ -596,7 +578,6 @@ public abstract class MergePolicy {
      * @param mergeTrigger the event that triggered the merge
      * @param segmentInfos the total set of segments in the index
      * @param mergeContext the IndexWriter to find the merges on
-     *                     从索引上找到哪些数据需要被merge
      */
     public abstract MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos segmentInfos, MergeContext mergeContext)
             throws IOException;
@@ -630,7 +611,6 @@ public abstract class MergePolicy {
      *
      * @param segmentInfos the total set of segments in the index
      * @param mergeContext the IndexWriter to find the merges on
-     *                     找到哪些数据是需要从索引上删除的
      */
     public abstract MergeSpecification findForcedDeletesMerges(
             SegmentInfos segmentInfos, MergeContext mergeContext) throws IOException;
@@ -641,27 +621,22 @@ public abstract class MergePolicy {
      * iff the size of the given mergedInfo is less or equal to
      * {@link #getMaxCFSSegmentSizeMB()} and the size is less or equal to the
      * TotalIndexSize * {@link #getNoCFSRatio()} otherwise <code>false</code>.
-     * 判断是否写入到复合文件
      */
     public boolean useCompoundFile(SegmentInfos infos, SegmentCommitInfo mergedInfo, MergeContext mergeContext) throws IOException {
         if (getNoCFSRatio() == 0.0) {
             return false;
         }
-        // 计算需要被merge的长度 (可能有部分数据需要被删除)
         long mergedInfoSize = size(mergedInfo, mergeContext);
-        // 超过了预定值 无法进行merge
         if (mergedInfoSize > maxCFSSegmentSize) {
             return false;
         }
         if (getNoCFSRatio() >= 1.0) {
             return true;
         }
-        // 计算merge 的总大小
         long totalSize = 0;
         for (SegmentCommitInfo info : infos) {
             totalSize += size(info, mergeContext);
         }
-        // 小于所有 infos的总和才行
         return mergedInfoSize <= getNoCFSRatio() * totalSize;
     }
 
@@ -669,18 +644,13 @@ public abstract class MergePolicy {
      * Return the byte size of the provided {@link
      * SegmentCommitInfo}, pro-rated by percentage of
      * non-deleted documents is set.
-     * 计算写入的数据长度   需要考虑 删除的数据长度
      */
     protected long size(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
-        // 先获取该段原始长度
         long byteSize = info.sizeInBytes();
-        // 计算segment 在merge过程中会删除多少数据
         int delCount = mergeContext.numDeletesToMerge(info);
         assert assertDelCount(delCount, info);
-        // 计算被删除的数据占用的 百分比
         double delRatio = info.info.maxDoc() <= 0 ? 0d : (double) delCount / (double) info.info.maxDoc();
         assert delRatio <= 1.0;
-        // 只返回未被删除的部分
         return (info.info.maxDoc() <= 0 ? byteSize : (long) (byteSize * (1.0 - delRatio)));
     }
 
@@ -698,14 +668,11 @@ public abstract class MergePolicy {
      * Returns true if this single info is already fully merged (has no
      * pending deletes, is in the same dir as the
      * writer, and matches the current compound file setting
-     * 判断merge 是否已经结束
      */
     protected final boolean isMerged(SegmentInfos infos, SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
         assert mergeContext != null;
-        // 计算被删除的长度
         int delCount = mergeContext.numDeletesToMerge(info);
         assert assertDelCount(delCount, info);
-        // 如果当前计算出来删除长度为0 且 同时使用复合文件 或者同时不使用
         return delCount == 0 &&
                 useCompoundFile(infos, info, mergeContext) == info.info.getUseCompoundFile();
     }
@@ -735,7 +702,6 @@ public abstract class MergePolicy {
 
     /**
      * Returns the largest size allowed for a compound file segment
-     * 复合文件中 每个segment 最大允许使用多少 MB
      */
     public double getMaxCFSSegmentSizeMB() {
         return maxCFSSegmentSize / 1024 / 1024.;
@@ -776,7 +742,6 @@ public abstract class MergePolicy {
      * @param readerSupplier a supplier that allows to obtain a {@link CodecReader} for this segment
      * @see IndexWriter#softUpdateDocument(Term, Iterable, Field...)
      * @see IndexWriterConfig#setSoftDeletesField(String)
-     * 获取在merge 过程中删除的数量
      */
     public int numDeletesToMerge(SegmentCommitInfo info, int delCount,
                                  IOSupplier<CodecReader> readerSupplier) throws IOException {
@@ -817,8 +782,7 @@ public abstract class MergePolicy {
      * how many deletes a segment would claim back if merged. This context might be stateful
      * and change during the execution of a merge policy's selection processes.
      *
-     * @lucene.experimental
-     * merge的上下文对象
+     * @lucene.experimental 记录当前融合信息
      */
     public interface MergeContext {
 
@@ -827,25 +791,21 @@ public abstract class MergePolicy {
          *
          * @param info the segment to get the number of deletes for
          * @see MergePolicy#numDeletesToMerge(SegmentCommitInfo, int, org.apache.lucene.util.IOSupplier)
-         * 计算该segment 在merge过程中需要删除多少doc
          */
         int numDeletesToMerge(SegmentCommitInfo info) throws IOException;
 
         /**
          * Returns the number of deleted documents in the given segments.
-         * 删除的文档数
          */
         int numDeletedDocs(SegmentCommitInfo info);
 
         /**
          * Returns the info stream that can be used to log messages
-         * 返回一个日志对象
          */
         InfoStream getInfoStream();
 
         /**
          * Returns an unmodifiable set of segments that are currently merging.
-         * 返回正在merge中的一组数据
          */
         Set<SegmentCommitInfo> getMergingSegments();
     }

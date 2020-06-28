@@ -45,7 +45,7 @@ public final class KeepOnlyLastCommitDeletionPolicy extends IndexDeletionPolicy 
 
   /**
    * Deletes all commits except the most recent one.
-   * 每当一组提交点对象提交时  删除每个提交点对象 !!!除了最后一个提交点
+   * 每当一组提交点对象提交时  删除除了最后一个外的其他 commit对象
    */
   @Override
   public void onCommit(List<? extends IndexCommit> commits) {

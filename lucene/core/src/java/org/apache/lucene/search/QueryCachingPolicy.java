@@ -27,7 +27,7 @@ import java.io.IOException;
  * @see UsageTrackingQueryCachingPolicy
  * @see LRUQueryCache
  * @lucene.experimental
- * 采用的缓存策略
+ * 缓存策略对象
  */
 // TODO: add APIs for integration with IndexWriter.IndexReaderWarmer
 public interface QueryCachingPolicy {
@@ -35,6 +35,7 @@ public interface QueryCachingPolicy {
   /** Callback that is called every time that a cached filter is used.
    *  This is typically useful if the policy wants to track usage statistics
    *  in order to make decisions. */
+  // 当使用缓存时 触发钩子
   void onUse(Query query);
 
   /** Whether the given {@link Query} is worth caching.
@@ -43,7 +44,7 @@ public interface QueryCachingPolicy {
    *  If it is not cached yet and this method returns <code>true</code> then a
    *  cache entry will be generated. Otherwise an uncached scorer will be
    *  returned. */
-  // 检测某个query 是否应该被缓存
+  // 根据本次查询结果决定是否要使用缓存
   boolean shouldCache(Query query) throws IOException;
 
 }

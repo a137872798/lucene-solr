@@ -19,6 +19,7 @@ package org.apache.lucene.search;
 
 /**
  * Just counts the total number of hits.
+ * 仅包含命中总数的收集器
  */
 
 public class TotalHitCountCollector extends SimpleCollector {

@@ -33,16 +33,32 @@ import static org.apache.lucene.codecs.lucene80.Lucene80NormsFormat.VERSION_CURR
 
 /**
  * Writer for {@link Lucene80NormsFormat}
+ * 默认实现
  */
 final class Lucene80NormsConsumer extends NormsConsumer {
+
+  /**
+   * 抽取标准因子后 写入到这2个输出流中   这2个输出流 底层对接2个索引文件
+   */
   IndexOutput data, meta;
   final int maxDoc;
 
+  /**
+   *
+   * @param state
+   * @param dataCodec    "Lucene80NormsData"
+   * @param dataExtension    nvd
+   * @param metaCodec      "Lucene80NormsMetadata"
+   * @param metaExtension    nvm
+   * @throws IOException
+   */
   Lucene80NormsConsumer(SegmentWriteState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
     boolean success = false;
     try {
+      // segmentName_suffix.ext
       String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
       data = state.directory.createOutput(dataName, state.context);
+      // 这里要写一个 特殊的文件头  应该是用来校验文件有效性之类的
       CodecUtil.writeIndexHeader(data, dataCodec, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
       String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
       meta = state.directory.createOutput(metaName, state.context);

@@ -27,7 +27,7 @@ import java.io.IOException;
  *
  * @see Directory
  * @see IndexInput
- * 该输出流 负责向 directory下的文件写入数据  写入的就是lucene的索引
+ * DataOutput 只是简单模拟一个允许写入数据的输出流 而该对象模拟了一种索引文件
  */
 public abstract class IndexOutput extends DataOutput implements Closeable {
   

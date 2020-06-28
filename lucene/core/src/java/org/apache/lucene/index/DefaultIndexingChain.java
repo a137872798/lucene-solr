@@ -52,10 +52,24 @@ import org.apache.lucene.util.RamUsageEstimator;
 
 /** Default general purpose indexing chain, which handles
  *  indexing all types of fields. */
+// 该对象会从doc 中解析相关信息并生成索引
 final class DefaultIndexingChain extends DocConsumer {
+
+  /**
+   * 记录当前使用了多少byte
+   */
   final Counter bytesUsed;
+  /**
+   * 当前正在处理的 doc 的状态
+   */
   final DocumentsWriterPerThread.DocState docState;
+  /**
+   * 处理该doc 的 thread 对象
+   */
   final DocumentsWriterPerThread docWriter;
+  /**
+   * 该对象负责构建 域信息
+   */
   final FieldInfos.Builder fieldInfos;
 
   // Writes postings and term vectors:
@@ -65,7 +79,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
   // NOTE: I tried using Hash Map<String,PerField>
   // but it was ~2% slower on Wiki and Geonames with Java
-  // 1.7.0_25:
+  // 1.7.0_25:     hash桶对象 利用拉链法解决hash冲突
   private PerField[] fieldHash = new PerField[2];
   private int hashMask = 1;
 
@@ -77,33 +91,53 @@ final class DefaultIndexingChain extends DocConsumer {
 
   private final Set<String> finishedDocValues = new HashSet<>();
 
+  /**
+   * 每个 负责处理 doc的writer线程 都会对应一个 chain 对象
+   * @param docWriter
+   */
   public DefaultIndexingChain(DocumentsWriterPerThread docWriter) {
     this.docWriter = docWriter;
     this.fieldInfos = docWriter.getFieldInfosBuilder();
+    // 当写入一组 doc 时 每次docState都会更新 同时会通过该对象挨个写入doc
     this.docState = docWriter.docState;
     this.bytesUsed = docWriter.bytesUsed;
 
     final TermsHash termVectorsWriter;
+    // 每个thread 存储的文档会被归结到 某个segment中 在这个段中 可以规定排序规则
     if (docWriter.getSegmentInfo().getIndexSort() == null) {
+      // 生成一个处理 field 的对象
       storedFieldsConsumer = new StoredFieldsConsumer(docWriter);
+      // 生成一个 处理词向量的对象
       termVectorsWriter = new TermVectorsConsumer(docWriter);
     } else {
+      // 当声明了排序规则时 创建2个排序对象
       storedFieldsConsumer = new SortingStoredFieldsConsumer(docWriter);
       termVectorsWriter = new SortingTermVectorsConsumer(docWriter);
     }
+    // 该对象负责记录 term的频率信息
     termsHash = new FreqProxTermsWriter(docWriter, termVectorsWriter);
   }
 
+  /**
+   * 在执行 flush 之前 检测是否需要对内部的数据进行排序
+   * @param state
+   * @return
+   * @throws IOException
+   */
   private Sorter.DocMap maybeSortSegment(SegmentWriteState state) throws IOException {
+    // 获取排序对象  如果没有设置 那么不需要排序
     Sort indexSort = state.segmentInfo.getIndexSort();
     if (indexSort == null) {
       return null;
     }
 
     List<Sorter.DocComparator> comparators = new ArrayList<>();
+    // sort 对象本身是由多个 SortField 组成的 每个对象都会影响排序的结果
     for (int i = 0; i < indexSort.getSort().length; i++) {
       SortField sortField = indexSort.getSort()[i];
+      // 尝试从 hash桶中 找到 field 对应的 PerField 对象 如果对象不存在 则忽略
       PerField perField = getPerField(sortField.getField());
+      // TODO
       if (perField != null && perField.docValuesWriter != null &&
           finishedDocValues.contains(perField.fieldInfo.name) == false) {
           perField.docValuesWriter.finish(state.segmentInfo.maxDoc());
@@ -116,15 +150,24 @@ final class DefaultIndexingChain extends DocConsumer {
     }
     Sorter sorter = new Sorter(indexSort);
     // returns null if the documents are already sorted
+    // 这里的 comp 对象是 从 perField 中抽取出来的 没有的话就不需要排序了   如果数据本身已经有序了 返回null
     return sorter.sort(state.segmentInfo.maxDoc(), comparators.toArray(new Sorter.DocComparator[comparators.size()]));
   }
 
+  /**
+   * 根据 携带的描述信息 执行刷盘动作
+   * @param state
+   * @return
+   * @throws IOException
+   */
   @Override
   public Sorter.DocMap flush(SegmentWriteState state) throws IOException {
 
     // NOTE: caller (DocumentsWriterPerThread) handles
     // aborting on any exception from this method
+    // 首先尝试根据 segmentInfo 内部包含的排序对象 进行排序
     Sorter.DocMap sortMap = maybeSortSegment(state);
+    // 该段下最大的文档号
     int maxDoc = state.segmentInfo.maxDoc();
     long t0 = System.nanoTime();
     writeNorms(state, sortMap);
@@ -293,13 +336,22 @@ final class DefaultIndexingChain extends DocConsumer {
     }
   }
 
+  /**
+   * 写入标准因子
+   * @param state
+   * @param sortMap
+   * @throws IOException
+   */
   private void writeNorms(SegmentWriteState state, Sorter.DocMap sortMap) throws IOException {
     boolean success = false;
     NormsConsumer normsConsumer = null;
     try {
+      // 首先检测是否有标准因子
       if (state.fieldInfos.hasNorms()) {
+        // 当存在标准因子时  获取当前版本支持的 标准因子格式   默认使用的 Codec 就是 Lucene84Codec
         NormsFormat normsFormat = state.segmentInfo.getCodec().normsFormat();
         assert normsFormat != null;
+        // 获取写入标准因子的 对象
         normsConsumer = normsFormat.normsConsumer(state);
 
         for (FieldInfo fi : state.fieldInfos) {
@@ -381,6 +433,10 @@ final class DefaultIndexingChain extends DocConsumer {
     }
   }
 
+  /**
+   * 处理当前读取到的 doc 并生成索引
+   * @throws IOException
+   */
   @Override
   public void processDocument() throws IOException {
 
@@ -635,7 +691,9 @@ final class DefaultIndexingChain extends DocConsumer {
   /** Returns a previously created {@link PerField}, or null
    *  if this field name wasn't seen yet. */
   private PerField getPerField(String name) {
+    // 在hash桶中 找到存储数据的字段
     final int hashPos = name.hashCode() & hashMask;
+    // 看来是拉链法解决 hash冲突
     PerField fp = fieldHash[hashPos];
     while (fp != null && !fp.fieldInfo.name.equals(name)) {
       fp = fp.next;
@@ -898,6 +956,11 @@ final class DefaultIndexingChain extends DocConsumer {
     }
   }
 
+  /**
+   * 找到包含某个域的所有doc
+   * @param field
+   * @return
+   */
   @Override
   DocIdSetIterator getHasDocValues(String field) {
     PerField perField = getPerField(field);

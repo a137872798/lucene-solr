@@ -29,7 +29,6 @@ import org.apache.lucene.util.BytesRef;
  *  consumes Iterable&lt;IndexableField&gt; as a document.
  *
  *  @lucene.experimental */
-// 代表索引中的某个字段    IndexWriter 每次都是以 Field为单位
 public interface IndexableField {
 
   /** Field name */ // 返回该字符的名称

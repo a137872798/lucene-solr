@@ -19,23 +19,23 @@ package org.apache.lucene.store;
 /**
  * <p>A MergeInfo provides information required for a MERGE context.
  *  It is used as part of an {@link IOContext} in case of MERGE context.</p>
- *  用于描述某次merge的信息
+ *  简单的bean 对象  描述merge信息
  */
 
 public class MergeInfo {
 
   /**
-   * 本次merge涉及到了多少doc
+   * 总的 doc数量
    */
   public final int totalMaxDoc;
 
   /**
-   * 预估涉及到的所有segment 一共占用多少byte
+   * 预估整合后的 byte数
    */
   public final long estimatedMergeBytes;
 
   /**
-   * 是否是外部的  ???
+   * 是否是外部的
    */
   public final boolean isExternal;
 

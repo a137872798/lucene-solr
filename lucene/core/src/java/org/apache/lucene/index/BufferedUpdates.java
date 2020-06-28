@@ -40,7 +40,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 // NOTE: instances of this class are accessed either via a private
 // instance on DocumentWriterPerThread, or via sync'd code by
 // DocumentsWriterDeleteQueue
-// 保存一些更新的数据
+// 该容器用于存储一些 删除 更新的数据
 class BufferedUpdates implements Accountable {
 
     /* Rough logic: HashMap has an array[Entry] w/ varying
@@ -53,7 +53,6 @@ class BufferedUpdates implements Accountable {
        Term's text is String (OBJ_HEADER + 4*INT + POINTER +
        OBJ_HEADER + string.length*CHAR).  Integer is
        OBJ_HEADER + INT. */
-    // 一个hashMap 占用的byte 数
     final static int BYTES_PER_DEL_TERM = 9 * RamUsageEstimator.NUM_BYTES_OBJECT_REF + 7 * RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + 10 * Integer.BYTES;
 
     /* Rough logic: HashMap has an array[Entry] w/ varying
@@ -62,22 +61,31 @@ class BufferedUpdates implements Accountable {
        (OBJ_HEADER + 3*POINTER + INT).  Query we often
        undercount (say 24 bytes).  Integer is OBJ_HEADER + INT. */
     final static int BYTES_PER_DEL_QUERY = 5 * RamUsageEstimator.NUM_BYTES_OBJECT_REF + 2 * RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + 2 * Integer.BYTES + 24;
-    // 记录当前已经删除的term和 更新的field
+
+
+    // 记录内部有关删除的 term的数量
     final AtomicInteger numTermDeletes = new AtomicInteger();
+    // 更新的 field  数量
     final AtomicInteger numFieldUpdates = new AtomicInteger();
 
     /**
-     * 记录已经被删除的词
+     * 指定term进行删除 同时还携带了该term的docId
      */
     final Map<Term, Integer> deleteTerms = new HashMap<>(); // TODO cut this over to FieldUpdatesBuffer
+
     /**
-     * 记录被删除的查询对象
+     * query用于定位数据  这里的含义是指  query命中的文档被删除   value对应文档号
      */
     final Map<Query, Integer> deleteQueries = new HashMap<>();
 
+    /**
+     * 针对某个域  对应的更新数据
+     */
     final Map<String, FieldUpdatesBuffer> fieldUpdates = new HashMap<>();
 
-
+    /**
+     * 这里维护了一个 int最大值
+     */
     public static final Integer MAX_INT = Integer.valueOf(Integer.MAX_VALUE);
 
     private final Counter bytesUsed = Counter.newCounter(true);
@@ -119,16 +127,28 @@ class BufferedUpdates implements Accountable {
         }
     }
 
+    /**
+     * 存放一组 query 与 该query命中的docId 的映射关系
+     * @param query
+     * @param docIDUpto
+     */
     public void addQuery(Query query, int docIDUpto) {
         Integer current = deleteQueries.put(query, docIDUpto);
         // increment bytes used only if the query wasn't added so far.
         if (current == null) {
+            // 首次添加的话 需要增加该对象占用的bytes总数
             bytesUsed.addAndGet(BYTES_PER_DEL_QUERY);
         }
     }
 
+    /**
+     * 代表某个term被删除  同时还携带了该 term 所属的doc
+     * @param term
+     * @param docIDUpto
+     */
     public void addTerm(Term term, int docIDUpto) {
         Integer current = deleteTerms.get(term);
+        // 如果本次传入的文档号比较旧 忽略本次操作
         if (current != null && docIDUpto < current) {
             // Only record the new number if it's greater than the
             // current one.  This is important because if multiple
@@ -144,14 +164,21 @@ class BufferedUpdates implements Accountable {
         // note that if current != null then it means there's already a buffered
         // delete on that term, therefore we seem to over-count. this over-counting
         // is done to respect IndexWriterConfig.setMaxBufferedDeleteTerms.
+        // 增加计数器的值
         numTermDeletes.incrementAndGet();
         if (current == null) {
             termsBytesUsed.addAndGet(BYTES_PER_DEL_TERM + term.bytes.length + (Character.BYTES * term.field().length()));
         }
     }
 
+    /**
+     * 代表某个 数值型 doc 进行了更新操作  注意 以term为单位 每个 term 单独维护一组更新信息
+     * @param update   更新的数值
+     * @param docIDUpto  文档的id
+     */
     void addNumericUpdate(NumericDocValuesUpdate update, int docIDUpto) {
         FieldUpdatesBuffer buffer = fieldUpdates.computeIfAbsent(update.field, k -> new FieldUpdatesBuffer(fieldUpdatesBytesUsed, update, docIDUpto));
+        // 追加描述信息  这样 这个update对象不就添加2次了吗
         if (update.hasValue) {
             buffer.addUpdate(update.term, update.getValue(), docIDUpto);
         } else {
@@ -170,6 +197,7 @@ class BufferedUpdates implements Accountable {
         numFieldUpdates.incrementAndGet();
     }
 
+    // 当delete动作刷盘后 允许重置这些容器内的数据
     void clearDeleteTerms() {
         numTermDeletes.set(0);
         termsBytesUsed.addAndGet(-termsBytesUsed.get());

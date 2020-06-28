@@ -235,6 +235,13 @@ final class PendingSoftDeletes extends PendingDeletes {
     return liveDocsInitialized == false;
   }
 
+  /**
+   * 计算软删除的数量总数
+   * @param softDeletedDocs
+   * @param hardDeletes  当传入了这个容器时 必须确保软删除的 doc 是硬删除的doc  (软删除的前提是他原本作为一个硬删除的doc)
+   * @return
+   * @throws IOException
+   */
   static int countSoftDeletes(DocIdSetIterator softDeletedDocs, Bits hardDeletes) throws IOException {
     int count = 0;
     if (softDeletedDocs != null) {

@@ -30,6 +30,9 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 
+/**
+ * 增加了排序功能
+ */
 final class SortingTermVectorsConsumer extends TermVectorsConsumer {
   TrackingTmpOutputDirectoryWrapper tmpDirectory;
 

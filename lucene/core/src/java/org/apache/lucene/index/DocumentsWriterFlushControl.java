@@ -43,10 +43,13 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * {@link DocumentsWriterPerThread} exceeds the
  * {@link IndexWriterConfig#getRAMPerThreadHardLimitMB()} to prevent address
  * space exhaustion.
+ * 该对象负责处理 刷盘相关的动作
  */
 final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
   private final long hardMaxBytesPerDWPT;
+
+
   private long activeBytes = 0;
   private volatile long flushBytes = 0;
   private volatile int numPending = 0;
@@ -54,9 +57,11 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   private final AtomicBoolean flushDeletes = new AtomicBoolean(false);
   private boolean fullFlush = false;
   private boolean fullFlushMarkDone = false; // only for assertion that we don't get stale DWPTs from the pool
+
   // The flushQueue is used to concurrently distribute DWPTs that are ready to be flushed ie. when a full flush is in
   // progress. This might be triggered by a commit or NRT refresh. The trigger will only walk all eligible DWPTs and
   // mark them as flushable putting them in the flushQueue ready for other threads (ie. indexing threads) to help flushing
+  // 这里存放的应该都是待刷盘的线程
   private final Queue<DocumentsWriterPerThread> flushQueue = new LinkedList<>();
   // only for safety reasons if a DWPT is close to the RAM limit
   private final Queue<DocumentsWriterPerThread> blockedFlushes = new LinkedList<>();
@@ -80,6 +85,11 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   private final LiveIndexWriterConfig config;
   private final InfoStream infoStream;
 
+  /**
+   * 在  writer 对象被创建时  就会创建该对象
+   * @param documentsWriter
+   * @param config
+   */
   DocumentsWriterFlushControl(DocumentsWriter documentsWriter, LiveIndexWriterConfig config) {
     this.infoStream = config.getInfoStream();
     this.perThreadPool = documentsWriter.perThreadPool;
@@ -97,10 +107,18 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     return flushBytes;
   }
 
+  /**
+   * 这个 netBytes 是啥意思  总之是  flushBytes 与 activeBytes 的总和
+   * @return
+   */
   synchronized long netBytes() {
     return flushBytes + activeBytes;
   }
-  
+
+  /**
+   * 这个值时  maxRam的2倍  当size为-1时 代表不做限制
+   * @return
+   */
   private long stallLimitBytes() {
     final double maxRamMB = config.getRAMBufferSizeMB();
     return maxRamMB != IndexWriterConfig.DISABLE_AUTO_FLUSH ? (long)(2 * (maxRamMB * 1024 * 1024)) : Long.MAX_VALUE;
@@ -193,6 +211,12 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
   }
 
+  /**
+   *
+   * @param perThread
+   * @param markPending  当前线程是否正在 flush中
+   * @return
+   */
   private DocumentsWriterPerThread checkout(DocumentsWriterPerThread perThread, boolean markPending) {
     assert Thread.holdsLock(this);
     if (fullFlush) {
@@ -229,6 +253,10 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     return true;
   }
 
+  /**
+   * 代表某个刷盘操作完成  (实际上也可能是刷盘操作终止)
+   * @param dwpt
+   */
   synchronized void doAfterFlush(DocumentsWriterPerThread dwpt) {
     assert flushingWriters.contains(dwpt);
     try {
@@ -246,9 +274,14 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
   private long stallStartNS;
 
+  /**
+   * 更新摊位的状态
+   * @return
+   */
   private boolean updateStallState() {
     
     assert Thread.holdsLock(this);
+    // 获取 ramMaxBytes
     final long limit = stallLimitBytes();
     /*
      * we block indexing threads if net byte grows due to slow flushes
@@ -305,7 +338,11 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     } // don't assert on numDocs since we could hit an abort excp. while selecting that dwpt for flushing
     
   }
-  
+
+  /**
+   * 当 本对象管理的  DocumentsWriter.abort()  被调用时触发
+   * @param perThread
+   */
   synchronized void doOnAbort(DocumentsWriterPerThread perThread) {
     try {
       assert perThreadPool.isRegistered(perThread);
@@ -363,11 +400,16 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         + ", flushBytes=" + flushBytes + "]";
   }
 
+  /**
+   * 返回下一个待刷盘的线程
+   * @return
+   */
   DocumentsWriterPerThread nextPendingFlush() {
     int numPending;
     boolean fullFlush;
     synchronized (this) {
       final DocumentsWriterPerThread poll;
+      // 如果当前有待刷盘的线程 直接返回
       if ((poll = flushQueue.poll()) != null) {
         updateStallState();
         return poll;
@@ -406,6 +448,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     return perThreadPool.iterator();
   }
 
+  /**
+   * 代表总控对象触发 删除操作时 转发给  flushPolicy 对象
+   */
   synchronized void doOnDelete() {
     // pass null this is a global delete no update
     flushPolicy.onDelete(this, null);
@@ -432,6 +477,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     return flushDeletes.getAndSet(false);
   }
 
+  /**
+   * 设置需要物理刷盘的标识
+   */
   public void setApplyAllDeletes() {
     flushDeletes.set(true);
   }
@@ -587,9 +635,15 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      fullFlushMarkDone = fullFlush = false;
    }
   }
-  
+
+  /**
+   * 终止所有待刷盘的对象
+   */
   synchronized void abortPendingFlushes() {
     try {
+      // 好像有好几组功能不同的线程
+
+      // 这个对象也维护了一组 thread  难道和  DocumentsWriter 内部的 thread 不一样吗???
       for (DocumentsWriterPerThread dwpt : flushQueue) {
         try {
           documentsWriter.subtractFlushedNumDocs(dwpt.getNumDocsInRAM());
@@ -597,6 +651,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         } catch (Exception ex) {
           // that's fine we just abort everything here this is best effort
         } finally {
+          // 触发钩子
           doAfterFlush(dwpt);
         }
       }
@@ -664,6 +719,10 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     return infoStream;
   }
 
+  /**
+   * 这里遍历所有的线程 找到 更改最多的bytes 对应的线程
+   * @return
+   */
   synchronized DocumentsWriterPerThread findLargestNonPendingWriter() {
     DocumentsWriterPerThread maxRamUsingWriter = null;
     long maxRamSoFar = 0;
@@ -689,6 +748,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
   /**
    * Returns the largest non-pending flushable DWPT or <code>null</code> if there is none.
+   * 检测当前是否还有待处理的 thread
    */
   final DocumentsWriterPerThread checkoutLargestNonPendingWriter() {
     DocumentsWriterPerThread largestNonPendingWriter = findLargestNonPendingWriter();
@@ -696,6 +756,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
       // we only lock this very briefly to swap it's DWPT out - we don't go through the DWPTPool and it's free queue
       largestNonPendingWriter.lock();
       try {
+        // 如果目标线程已经注册到 pool中了
         if (perThreadPool.isRegistered(largestNonPendingWriter)) {
           synchronized (this) {
             try {

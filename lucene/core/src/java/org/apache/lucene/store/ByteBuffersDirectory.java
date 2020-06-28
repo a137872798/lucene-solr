@@ -51,6 +51,10 @@ import org.apache.lucene.util.BitUtil;
  * 这是一个内存目录  也就是数据实际上还是写入到 内存中
  */
 public final class ByteBuffersDirectory extends BaseDirectory {
+
+  /**
+   * 将多个 ByteBuffersDataOutput 模拟成一个 输出流
+   */
   public static final BiFunction<String, ByteBuffersDataOutput, IndexInput> OUTPUT_AS_MANY_BUFFERS = 
       (fileName, output) -> {
         ByteBuffersDataInput dataInput = output.toDataInput();
@@ -63,6 +67,7 @@ public final class ByteBuffersDirectory extends BaseDirectory {
 
   public static final BiFunction<String, ByteBuffersDataOutput, IndexInput> OUTPUT_AS_ONE_BUFFER = 
       (fileName, output) -> {
+        // 该对象内部只有一个  ByteBuffer
         ByteBuffersDataInput dataInput = new ByteBuffersDataInput(Arrays.asList(ByteBuffer.wrap(output.toArrayCopy())));
         String inputName = String.format(Locale.ROOT, "%s (file=%s, buffers=%s)",
             ByteBuffersIndexInput.class.getSimpleName(),
@@ -76,10 +81,12 @@ public final class ByteBuffersDirectory extends BaseDirectory {
   public static final BiFunction<String, ByteBuffersDataOutput, IndexInput> OUTPUT_AS_MANY_BUFFERS_LUCENE = 
       (fileName, output) -> {
         List<ByteBuffer> bufferList = output.toBufferList();
+        // 这里添加了一个空的 byteBuffer
         bufferList.add(ByteBuffer.allocate(0));
 
         int chunkSizePower;
         int blockSize = ByteBuffersDataInput.determineBlockPage(bufferList);
+        // block的大小是 2的多少次
         if (blockSize == 0) {
           chunkSizePower = 30;
         } else {
@@ -90,12 +97,16 @@ public final class ByteBuffersDirectory extends BaseDirectory {
             ByteBuffersDirectory.class.getSimpleName(),
             fileName);
 
+        // 这里生成了一个守卫对象  该对象在buffer使用完毕后会选择释放内存(针对DirectByteBuffer  但是像ByteBuffer这种就不需要释放内存了  )
         ByteBufferGuard guard = new ByteBufferGuard("none", (String resourceDescription, ByteBuffer b) -> {});
         return ByteBufferIndexInput.newInstance(inputName,
             bufferList.toArray(new ByteBuffer [bufferList.size()]),
             output.size(), chunkSizePower, guard);
       };
 
+  /**
+   * 该函数用于决定临时文件的文件名
+   */
   private final Function<String, String> tempFileName = new Function<String, String>() {
     private final AtomicLong counter = new AtomicLong();
 
@@ -105,20 +116,28 @@ public final class ByteBuffersDirectory extends BaseDirectory {
     }
   };
 
+  /**
+   * 模拟内部存储的一组文件
+   */
   private final ConcurrentHashMap<String, FileEntry> files = new ConcurrentHashMap<>();
 
   /**
    * Conversion between a buffered index output and the corresponding index input
-   * for a given file.   
+   * for a given file.
+   * 该函数根据传入的 output 转换成 input
    */
   private final BiFunction<String, ByteBuffersDataOutput, IndexInput> outputToInput;
 
   /**
    * A supplier of {@link ByteBuffersDataOutput} instances used to buffer up 
    * the content of written files.
+   * 该对象负责产生 Output对象
    */
   private final Supplier<ByteBuffersDataOutput> bbOutputSupplier;
 
+  /**
+   * 因为是针对内存级别的锁 所以只要保证线程间隔就好
+   */
   public ByteBuffersDirectory() {
     this(new SingleInstanceLockFactory());
   }
@@ -135,6 +154,11 @@ public final class ByteBuffersDirectory extends BaseDirectory {
     this.bbOutputSupplier = Objects.requireNonNull(bbOutputSupplier);
   }
 
+  /**
+   * 将基于内存模拟的文件名返回
+   * @return
+   * @throws IOException
+   */
   @Override
   public String[] listAll() throws IOException {
     ensureOpen();
@@ -166,6 +190,13 @@ public final class ByteBuffersDirectory extends BaseDirectory {
     return file != null;
   }
 
+  /**
+   * IndexOutput 模拟了一种索引文件   DataOutput 仅仅模拟数据输出流
+   * @param name the name of the file to create.
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public IndexOutput createOutput(String name, IOContext context) throws IOException {
     ensureOpen();
@@ -180,6 +211,7 @@ public final class ByteBuffersDirectory extends BaseDirectory {
   public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
     ensureOpen();
     while (true) {
+      // 创建的文件会携带 .tmp 的后缀名   代表一个临时文件
       String name = IndexFileNames.segmentFileName(prefix, tempFileName.apply(suffix), "tmp");
       FileEntry e = new FileEntry(name); 
       if (files.putIfAbsent(name, e) == null) {
@@ -205,6 +237,7 @@ public final class ByteBuffersDirectory extends BaseDirectory {
     files.remove(source);
   }
 
+  // 因为是基于内存的所有没有 刷盘或者写入元数据的动作
   @Override
   public void sync(Collection<String> names) throws IOException {
     ensureOpen();
@@ -215,6 +248,13 @@ public final class ByteBuffersDirectory extends BaseDirectory {
     ensureOpen();
   }
 
+  /**
+   * 获取对应文件(内存) 的输入流   必须要等待写入完毕 调用close 后才能获取input
+   * @param name the name of an existing file.   定位资源位置
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public IndexInput openInput(String name, IOContext context) throws IOException {
     ensureOpen();
@@ -237,9 +277,15 @@ public final class ByteBuffersDirectory extends BaseDirectory {
     return Collections.emptySet();
   }
 
+  /**
+   * 这里使用内存模拟了一个文件
+   */
   private final class FileEntry {
     private final String fileName;
 
+    /**
+     * 用于读取内部数据的输入流
+     */
     private volatile IndexInput content;
     private volatile long cachedLength;
 
@@ -272,6 +318,7 @@ public final class ByteBuffersDirectory extends BaseDirectory {
       return new ByteBuffersIndexOutput(
           bbOutputSupplier.get(), outputName, fileName,
           new CRC32(),
+          // 该函数对应  close()动作  代表在输出流被关闭时  填充内部的文本  便于读取数据
           (output) -> {
             content = outputToInput.apply(fileName, output);
             cachedLength = output.size();

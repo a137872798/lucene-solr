@@ -30,7 +30,7 @@ import org.apache.lucene.util.InfoStream;
  *  selected by a {@link MergePolicy}.  The default
  *  MergeScheduler is {@link ConcurrentMergeScheduler}.</p>
  * @lucene.experimental
- * 一个merge的定时器
+ * merge的 执行器
 */
 public abstract class MergeScheduler implements Closeable {
 
@@ -40,13 +40,15 @@ public abstract class MergeScheduler implements Closeable {
   }
 
   /** Run the merges provided by {@link MergeSource#getNextMerge()}.
-   * @param mergeSource the {@link IndexWriter} to obtain the merges from.
-   * @param trigger the {@link MergeTrigger} that caused this merge to happen */
+   * @param mergeSource the {@link IndexWriter} to obtain the merges from.   该对象负责产生 oneMerge
+   * @param trigger the {@link MergeTrigger} that caused this merge to happen    代表因为什么原因触发的merge
+   */
   public abstract void merge(MergeSource mergeSource, MergeTrigger trigger) throws IOException;
 
   /** 
    * Wraps the incoming {@link Directory} so that we can merge-throttle it
-   * using {@link RateLimitedIndexOutput}. 
+   * using {@link RateLimitedIndexOutput}.
+   * TODO 啥子哦 感觉没多久就会明白了  包装成 Directory 后就能够用一些过滤器之类的进行加工处理了
    */
   public Directory wrapForMerge(OneMerge merge, Directory in) {
     // A no-op by default.
@@ -58,6 +60,7 @@ public abstract class MergeScheduler implements Closeable {
   public abstract void close() throws IOException;
 
   /** For messages about merge scheduling */
+  // 日志对象 忽略
   protected InfoStream infoStream;
 
   /** IndexWriter calls this on init. */
@@ -90,13 +93,13 @@ public abstract class MergeScheduler implements Closeable {
   /**
    * Provides access to new merges and executes the actual merge
    * @lucene.experimental
-   * 将要被merge的数据源
+   * 该对象负责生成 需要被 merge 的 OneMerge对象
    */
   public interface MergeSource {
     /**
      * The {@link MergeScheduler} calls this method to retrieve the next
      * merge requested by the MergePolicy
-     * 获取下一个要merge的对象
+     * 返回下一组要被merge的 segment (包含在 OneMerge中)
      */
     MergePolicy.OneMerge getNextMerge();
 
@@ -108,13 +111,14 @@ public abstract class MergeScheduler implements Closeable {
 
     /**
      * Expert: returns true if there are merges waiting to be scheduled.
-     * 返回当前是否有正在等待的 merge任务
+     * merge 任务当前是否在等待什么
      */
     boolean hasPendingMerges();
 
     /**
      * Merges the indicated segments, replacing them in the stack with a
      * single segment.
+     * 推测  MergeScheduler的 merge() 方法是委托给该对象
      */
     void merge(MergePolicy.OneMerge merge) throws IOException;
   }

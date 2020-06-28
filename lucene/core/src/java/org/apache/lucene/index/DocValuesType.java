@@ -21,7 +21,7 @@ package org.apache.lucene.index;
 /**
  * DocValues types. Note that DocValues is strongly typed, so a
  * field cannot have different types across different documents.
- * 代表文档类型
+ * 代表文档数据类型
  */
 public enum DocValuesType {
   /**

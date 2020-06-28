@@ -69,7 +69,7 @@ public class IOContext {
   }
 
   /**
-   * 代表通过一个刷盘动作初始化
+   * 该上下文携带一个刷盘信息
    * @param flushInfo
    */
   public IOContext(FlushInfo flushInfo) {

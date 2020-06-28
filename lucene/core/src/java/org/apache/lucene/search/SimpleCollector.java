@@ -25,13 +25,18 @@ import org.apache.lucene.index.LeafReaderContext;
  * Base {@link Collector} implementation that is used to collect all contexts.
  *
  * @lucene.experimental
- * 一个收集器对象  根据doc的内容 将文档聚集起来
+ * 收集器骨架类
  */
 public abstract class SimpleCollector implements Collector, LeafCollector {
 
+  /**
+   * 这些方法都是一个套路  参数传入一个 leaf context 并利用内部的reader对象 获取目标叶的数据
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public final LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
-    // 切换reader后 返回自身
     doSetNextReader(context);
     return this;
   }

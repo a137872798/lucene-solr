@@ -50,6 +50,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * </ol>
  * 
  * @lucene.experimental
+ * 该对象 负责将域信息 写入到 索引文件中   该方法只是定义了一个模板
  */
 public abstract class StoredFieldsWriter implements Closeable {
   
@@ -62,12 +63,15 @@ public abstract class StoredFieldsWriter implements Closeable {
    *  {@link #writeField(FieldInfo, IndexableField)} will be called
    *  for each stored field. Note that this is
    *  called even if the document has no stored fields. */
+  // 在开始存储 doc的域之前调用的方法
   public abstract void startDocument() throws IOException;
 
   /** Called when a document and all its fields have been added. */
+  // 当已经处理完该doc 下所有的 field 后调用的方法
   public void finishDocument() throws IOException {}
 
   /** Writes a single stored field. */
+  // 将域信息写入到索引文件中
   public abstract void writeField(FieldInfo info, IndexableField field) throws IOException;
   
   /** Called before {@link #close()}, passing in the number

@@ -368,7 +368,7 @@ public abstract class IndexReader implements Closeable {
    */
   // TODO: we need a separate StoredField, so that the
   // Document returned here contains that class not
-  // IndexableField
+  // IndexableField  通过传入文档号 定位到具体的文档对象
   public final Document document(int docID) throws IOException {
     // 该对象内部维护一个doc  调用相关api时 field 会被写入到doc中
     final DocumentStoredFieldVisitor visitor = new DocumentStoredFieldVisitor();

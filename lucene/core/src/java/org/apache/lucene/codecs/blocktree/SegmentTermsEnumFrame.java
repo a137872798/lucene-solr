@@ -29,14 +29,22 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.fst.FST;
 
+/**
+ * 一个框架对象   包含在 segmentTermsEnum中
+ */
 final class SegmentTermsEnumFrame {
   // Our index in stack[]:
+  // 对应 frame数组的下标
   final int ord;
 
+  /**
+   * 是否有词  有原始词
+   */
   boolean hasTerms;
   boolean hasTermsOrig;
   boolean isFloor;
 
+  // 这里涉及到 FST
   FST.Arc<BytesRef> arc;
 
   //static boolean DEBUG = BlockTreeTermsWriter.DEBUG;
@@ -98,6 +106,12 @@ final class SegmentTermsEnumFrame {
   private final SegmentTermsEnum ste;
   private final int version;
 
+  /**
+   * 通过一个
+   * @param ste
+   * @param ord
+   * @throws IOException
+   */
   public SegmentTermsEnumFrame(SegmentTermsEnum ste, int ord) throws IOException {
     this.ste = ste;
     this.ord = ord;

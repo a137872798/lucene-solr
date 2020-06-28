@@ -84,7 +84,6 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig {
     /**
      * Denotes a flush trigger is disabled.
      */
-    // 关闭自动刷盘
     public final static int DISABLE_AUTO_FLUSH = -1;
 
     /**

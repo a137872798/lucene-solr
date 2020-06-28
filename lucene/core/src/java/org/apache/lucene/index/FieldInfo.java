@@ -26,7 +26,7 @@ import java.util.Objects;
  *  of this class are thread-safe for multiple readers, but only one thread can
  *  be adding documents at a time, with no other reader or writer threads
  *  accessing this object.
- *  描述 field的信息  一个简单的javaBean
+ *  描述 field的信息
  **/
 
 public final class FieldInfo {
@@ -37,53 +37,32 @@ public final class FieldInfo {
   /** Internal field number */
   public final int number;
 
-  /**
-   * 描述该field 的数据类型
-   */
   private DocValuesType docValuesType = DocValuesType.NONE;
 
-  // True if any document indexed term vectors
-  // 是否存储了向量
+  // True if any document indexed term vectors  是否存储了向量
   private boolean storeTermVector;
 
-  /**
-   * 是否忽略标准化
-   */
   private boolean omitNorms; // omit norms associated with indexed fields  
 
-  /**
-   * 有关索引的选项
-   */
   private IndexOptions indexOptions = IndexOptions.NONE;
-  /**
-   * 是否要存储数据体
-   */
   private boolean storePayloads; // whether this field stores payloads together with term positions
 
   private final Map<String,String> attributes;
 
-  /**
-   * docValue年代信息
-   */
   private long dvGen;
 
   /** If both of these are positive it means this field indexed points
    *  (see {@link org.apache.lucene.codecs.PointsFormat}). */
-  // point 是什么概念 ???
-  // 维度数量 索引维度数量  和 point占用的 byte数
   private int pointDimensionCount;
   private int pointIndexDimensionCount;
   private int pointNumBytes;
 
   // whether this field is used as the soft-deletes field
-  /**
-   * 当前field 是否使用软删除
-   */
   private final boolean softDeletesField;
 
   /**
    * Sole constructor.
-   * 用一堆相关属性进行初始化
+   *
    * @lucene.experimental
    */
   public FieldInfo(String name, int number, boolean storeTermVector, boolean omitNorms, boolean storePayloads,
@@ -113,8 +92,7 @@ public final class FieldInfo {
 
   /** 
    * Performs internal consistency checks.
-   * Always returns true (or throws IllegalStateException)
-   * 一致性检验  应该就是校验参数合法性
+   * Always returns true (or throws IllegalStateException) 
    */
   public boolean checkConsistency() {
     if (indexOptions != IndexOptions.NONE) {
@@ -166,7 +144,6 @@ public final class FieldInfo {
   }
 
   // should only be called by FieldInfos#addOrUpdate
-  // 更新内部数据
   void update(boolean storeTermVector, boolean omitNorms, boolean storePayloads, IndexOptions indexOptions,
               Map<String, String> attributes, int dimensionCount, int indexDimensionCount, int dimensionNumBytes) {
     if (indexOptions == null) {
@@ -210,7 +187,6 @@ public final class FieldInfo {
 
   /** Record that this field is indexed with points, with the
    *  specified number of dimensions and bytes per dimension. */
-  // 更新字段的同时 进行各种约束性检查
   public void setPointDimensions(int dimensionCount, int indexDimensionCount, int numBytes) {
     if (dimensionCount <= 0) {
       throw new IllegalArgumentException("point dimension count must be >= 0; got " + dimensionCount + " for field=\"" + name + "\"");

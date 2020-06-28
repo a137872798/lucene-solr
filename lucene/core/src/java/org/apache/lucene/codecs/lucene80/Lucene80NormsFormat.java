@@ -74,12 +74,19 @@ import org.apache.lucene.store.DataOutput;
  *   </ul>
  * </ol>
  * @lucene.experimental
+ * 默认情况下 使用的标准因子索引文件格式
  */
 public class Lucene80NormsFormat extends NormsFormat {
 
   /** Sole Constructor */
   public Lucene80NormsFormat() {}
-  
+
+  /**
+   * 存储数据的索引文件后缀名是  nvd   存储元数据的索引文件后缀名是 nvm
+   * @param state
+   * @return
+   * @throws IOException
+   */
   @Override
   public NormsConsumer normsConsumer(SegmentWriteState state) throws IOException {
     return new Lucene80NormsConsumer(state, DATA_CODEC, DATA_EXTENSION, METADATA_CODEC, METADATA_EXTENSION);

@@ -32,6 +32,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * A {@link DataInput} implementing {@link RandomAccessInput} and reading data from a
  * list of {@link ByteBuffer}s.
  * 基于BB 的输入流对象
+ * 在 ByteBuffersDataOutput 中 数据会被写入到一个List<ByteBuffers> 中  并且有一个 toDataInput() 方法 就是用内部的list生成该对象  以提供对外访问的api
  */
 public final class ByteBuffersDataInput extends DataInput implements Accountable, RandomAccessInput {
   /**
@@ -147,6 +148,13 @@ public final class ByteBuffersDataInput extends DataInput implements Accountable
     }
   }
 
+  /**
+   * 从指定偏移量开始读取len长度的数据到arr 中
+   * @param arr
+   * @param off
+   * @param len the number of bytes to read
+   * @throws EOFException
+   */
   @Override
   public void readBytes(byte[] arr, int off, int len) throws EOFException {
     try {

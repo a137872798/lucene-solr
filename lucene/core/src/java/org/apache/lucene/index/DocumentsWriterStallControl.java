@@ -35,6 +35,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * Once flushing catches up and the number of flushing DWPT is equal or lower
  * than the number of active {@link DocumentsWriterPerThread}s threads are released and can
  * continue indexing.
+ *
  */
 final class DocumentsWriterStallControl {
   

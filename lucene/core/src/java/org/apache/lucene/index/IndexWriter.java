@@ -535,7 +535,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 转发到 writer
+     * 当检测到异常时
      * @param event
      * @param message
      */
@@ -544,9 +544,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       IndexWriter.this.onTragicEvent(event, message);
     }
 
+    /**
+     * 将更新数据写入 磁盘   indexWriter 会创建一个 DocumentsWriter 并将本对象作为监听器设置到内部  每当针对doc的更新操作积累到一定量时 触发对应事件
+     */
     @Override
     public void onDeletesApplied() {
-      // 添加一个异步事件 用于发布segment
       eventQueue.add(w -> {
           try {
             w.publishFlushedSegments(true);
@@ -5078,10 +5080,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * info.files(). While, generally, this may include separate norms and
    * deletion files, this SegmentInfo must not reference such files when this
    * method is called, because they are not allowed within a compound file.
+   * 创建  csf 文件
    */
   static void createCompoundFile(InfoStream infoStream, TrackingDirectoryWrapper directory, final SegmentInfo info, IOContext context, IOUtils.IOConsumer<Collection<String>> deleteFiles) throws IOException {
 
     // maybe this check is not needed, but why take the risk?
+    // 在创建 csf 文件的场景 必须确保本次操作中没有创建新的文件
     if (!directory.getCreatedFiles().isEmpty()) {
       throw new IllegalStateException("pass a clean trackingdir for CFS creation");
     }
@@ -5092,16 +5096,19 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     // Now merge all added files    
     boolean success = false;
     try {
+      // codec 定义了各种索引文件的格式 以及写入过程 这里转发给 codec对象 将数据写入 csf 文件
       info.getCodec().compoundFormat().write(directory, info, context);
       success = true;
     } finally {
       if (!success) {
         // Safe: these files must exist
+        // 能进入到这里 就代表 本次操作很可能创建了新的文件  那么就需要进行删除
         deleteFiles.accept(directory.getCreatedFiles());
       }
     }
 
     // Replace all previous files with the CFS/CFE files:
+    // 实际上就是 用清理后的文件 去替代原来的文件
     info.setFiles(new HashSet<>(directory.getCreatedFiles()));
   }
   

@@ -41,6 +41,7 @@ public class SegmentCommitInfo {
   public final SegmentInfo info;
 
   /** Id that uniquely identifies this segment commit. */
+  // 每当一次数据刷盘后  id都会重新生成
   private byte[] id;
 
   // How many deleted docs in the segment:
@@ -102,6 +103,7 @@ public class SegmentCommitInfo {
    *          {@link SegmentInfo} that we wrap
    * @param delCount
    *          number of deleted documents in this segment
+   * @param softDelCount 软删除了多少数据
    * @param delGen
    *          deletion generation number (used to name deletion files)
    * @param fieldInfosGen

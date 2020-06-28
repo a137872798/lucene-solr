@@ -27,6 +27,7 @@ import org.apache.lucene.util.Accountable;
 /** Abstract API that produces field normalization values
  *
  * @lucene.experimental
+ * 该对象可以从 域信息读取出 标准因子
  */
 public abstract class NormsProducer implements Closeable, Accountable {
   
@@ -37,6 +38,7 @@ public abstract class NormsProducer implements Closeable, Accountable {
   /** Returns {@link NumericDocValues} for this field.
    *  The returned instance need not be thread-safe: it will only be
    *  used by a single thread. */
+  // 为该域字段 解析标准因子
   public abstract NumericDocValues getNorms(FieldInfo field) throws IOException;
   
   /** 
@@ -45,6 +47,7 @@ public abstract class NormsProducer implements Closeable, Accountable {
    * Note that this may be costly in terms of I/O, e.g. 
    * may involve computing a checksum value against large data files.
    * @lucene.internal
+   * 一致性校验
    */
   public abstract void checkIntegrity() throws IOException;
   

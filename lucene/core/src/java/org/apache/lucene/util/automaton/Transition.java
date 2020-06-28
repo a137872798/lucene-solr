@@ -20,6 +20,7 @@ package org.apache.lucene.util.automaton;
 /** Holds one transition from an {@link Automaton}.  This is typically
  *  used temporarily when iterating through transitions by invoking
  *  {@link Automaton#initTransition} and {@link Automaton#getNextTransition}. */
+// 在自动状态机中 意味着状态的转换
 
 public class Transition {
 

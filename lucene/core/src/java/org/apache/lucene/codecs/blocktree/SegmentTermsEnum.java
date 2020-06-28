@@ -36,21 +36,36 @@ import org.apache.lucene.util.fst.Util;
 
 /** Iterates through terms in this field. */
 
+/**
+ * 片段上关联的 词迭代器对象
+ */
+
 final class SegmentTermsEnum extends BaseTermsEnum {
 
   // Lazy init:
+  // 该对象负责读取数据
   IndexInput in;
 
+  /**
+   * 应该是一个比较小的单位吧
+   */
   private SegmentTermsEnumFrame[] stack;
   private final SegmentTermsEnumFrame staticFrame;
+  /**
+   * 当前指向的 frame
+   */
   SegmentTermsEnumFrame currentFrame;
   boolean termExists;
+  // 文件流
   final FieldReader fr;
 
   private int targetBeforeCurrentLength;
 
   //static boolean DEBUG = BlockTreeTermsWriter.DEBUG;
 
+  /**
+   * 该对象使用一个 byte[] 模拟一个输入流
+   */
   private final ByteArrayDataInput scratchReader = new ByteArrayDataInput();
 
   // What prefix of the current term was present in the index; when we only next() through the index, this stays at 0.  It's only set when
@@ -58,8 +73,12 @@ final class SegmentTermsEnum extends BaseTermsEnum {
   private int validIndexPrefix;
 
   // assert only:
+  // 是否读取到末尾
   private boolean eof;
 
+  /**
+   * 该对象负责构建  BytesRef
+   */
   final BytesRefBuilder term = new BytesRefBuilder();
   private final FST.BytesReader fstReader;
 

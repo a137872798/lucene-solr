@@ -28,7 +28,7 @@ import org.apache.lucene.index.PointValues;
 
 /**
  * Describes the properties of a field.
- * 描述某个字段的信息  就是一个简单的bean对象
+ * 可以理解为某个 Field的配置信息  一个域需要存储哪些数据之类的都在这里进行定义
  */
 public class FieldType implements IndexableFieldType  {
 
@@ -37,7 +37,7 @@ public class FieldType implements IndexableFieldType  {
    */
   private boolean stored;
   /**
-   * 默认情况认为该字段已经被解析
+   * 该域信息 是否应该被分词  默认为true
    */
   private boolean tokenized = true;
   /**
@@ -48,14 +48,20 @@ public class FieldType implements IndexableFieldType  {
   private boolean storeTermVectorPositions;
   private boolean storeTermVectorPayloads;
   /**
-   * 是否忽略规范化
+   * 是否忽略标准因子
    */
   private boolean omitNorms;
+  /**
+   * 默认情况下不会存储域信息
+   */
   private IndexOptions indexOptions = IndexOptions.NONE;
   /**
-   * 是否被冻结
+   * 是否被冻结   代表这个域相关的配置项不应该在发生变化了
    */
   private boolean frozen;
+  /**
+   * 标注文档的数据类型
+   */
   private DocValuesType docValuesType = DocValuesType.NONE;
   private int dimensionCount;
   private int indexDimensionCount;
@@ -104,6 +110,7 @@ public class FieldType implements IndexableFieldType  {
    * Prevents future changes. Note, it is recommended that this is called once
    * the FieldTypes's properties have been set, to prevent unintentional state
    * changes.
+   * 代表该索引数据不应该被修改了
    */
   public void freeze() {
     this.frozen = true;
@@ -149,6 +156,7 @@ public class FieldType implements IndexableFieldType  {
    * @throws IllegalStateException if this FieldType is frozen against
    *         future modifications.
    * @see #tokenized()
+   * 设置需要对字段进行分词
    */
   public void setTokenized(boolean value) {
     checkIfFrozen();

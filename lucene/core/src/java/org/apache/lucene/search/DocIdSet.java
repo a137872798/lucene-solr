@@ -24,7 +24,8 @@ import org.apache.lucene.util.Bits;
 
 /**
  * A DocIdSet contains a set of doc ids. Implementing classes must
- * only implement {@link #iterator} to provide access to the set. 
+ * only implement {@link #iterator} to provide access to the set.
+ * 该对象存储了一组docId  并且对外提供docId迭代器
  */
 public abstract class DocIdSet implements Accountable {
 

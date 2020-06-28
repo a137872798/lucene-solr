@@ -96,7 +96,7 @@ import java.util.Arrays;
  * <p>Created: Feb 12, 2004 10:53:57 AM
  *
  * @since   lucene 1.4
- * 用于结果排序
+ * 该排序结果是多个 SortField 共同作用的结果
  */
 public class Sort {
 
@@ -105,7 +105,7 @@ public class Sort {
    * the same results as calling
    * {@link IndexSearcher#search(Query,int) IndexSearcher#search()}without a sort criteria,
    * only with slightly more overhead.
-   * 基于相关性排序  也就是当输入某个关键字时 会将所有涉及到的数据全部查询出来
+   * 默认情况下 sort 按照得分来排序
    */
   public static final Sort RELEVANCE = new Sort();
 
@@ -114,14 +114,13 @@ public class Sort {
   public static final Sort INDEXORDER = new Sort(SortField.FIELD_DOC);
 
   // internal representation of the sort criteria
-  // 用于排序的相关字段  就是通过这些字段来判断相关性的
+  // 这里存储了一些排序规则 那么 排序的结果应该是 这些 fields的共同结果
   SortField[] fields;
 
   /**
    * Sorts by computed relevance. This is the same sort criteria as calling
    * {@link IndexSearcher#search(Query,int) IndexSearcher#search()}without a sort criteria,
    * only with slightly more overhead.
-   * 默认情况下 每个sort 就是基于SCORE  进行排序的  score 也就是相关度得分
    */
   public Sort() {
     this(SortField.FIELD_SCORE);
@@ -176,7 +175,7 @@ public class Sort {
    *        is a change
    * @throws IOException Can be thrown by the rewriting
    * @lucene.experimental
-   * 代表排序相关的字段被改动 重新生成一个排序结果
+   * searcher 内部包裹了 查询条件  当查询条件发生变更时 需要修改排序对象
    */
   public Sort rewrite(IndexSearcher searcher) throws IOException {
     boolean changed = false;

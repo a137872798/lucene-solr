@@ -30,6 +30,9 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 
+/**
+ * 该对象用于处理 词向量
+ */
 class TermVectorsConsumer extends TermsHash {
   TermVectorsWriter writer;
 

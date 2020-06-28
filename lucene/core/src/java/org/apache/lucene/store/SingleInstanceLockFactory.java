@@ -27,9 +27,8 @@ import java.util.HashSet;
  * IndexWriters for a given index are running
  * against a single shared in-process Directory instance.
  *
- * @see LockFactory
+ * @see LockFactory    只能保证线程隔离  在进程级别无法保证  不过单台机器上如果只有一个lucene应用 应该是可以使用这个对象去替代 FSLockFactory的
  */
-// 基于synchronize的一个内存锁
 public final class SingleInstanceLockFactory extends LockFactory {
 
   final HashSet<String> locks = new HashSet<>();

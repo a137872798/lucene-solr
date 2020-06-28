@@ -22,7 +22,7 @@ import java.io.IOException;
 /**
  * Base implementation for a concrete {@link Directory} that uses a {@link LockFactory} for locking.
  * @lucene.experimental
- * 目录的骨架类
+ * 该类定义了  获取文件锁的骨架
  */
 public abstract class BaseDirectory extends Directory {
 
@@ -33,7 +33,7 @@ public abstract class BaseDirectory extends Directory {
 
   /** Holds the LockFactory instance (implements locking for
    * this Directory instance). */
-  // 该对象负责生成锁
+  // 将生成锁的职能委托给 LockFactory
   protected final LockFactory lockFactory;
 
   /** Sole constructor. */

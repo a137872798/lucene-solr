@@ -32,12 +32,19 @@ import org.apache.lucene.util.Bits;
 /**
  * Expert: the Weight for BooleanQuery, used to
  * normalize, score and explain these queries.
+ * 该对象组合了 BooleanQuery 中所有 BooleanClause 对应的weight
  */
 final class BooleanWeight extends Weight {
   /** The Similarity implementation. */
   final Similarity similarity;
+  /**
+   * 对应的查询对象
+   */
   final BooleanQuery query;
 
+  /**
+   * 包装类 用于包装 BooleanClause.Query 创建的权重对象
+   */
   private static class WeightedBooleanClause {
     final BooleanClause clause;
     final Weight weight;
@@ -57,6 +64,7 @@ final class BooleanWeight extends Weight {
     this.scoreMode = scoreMode;
     this.similarity = searcher.getSimilarity();
     weightedClauses = new ArrayList<>();
+    // 这里将所有clause 生成对应的weight并组合  (创建权重对象的任务 实际上是委托到 searcher)
     for (BooleanClause c : query) {
       Weight w = searcher.createWeight(c.getQuery(), c.isScoring() ? scoreMode : ScoreMode.COMPLETE_NO_SCORES, boost);
       weightedClauses.add(new WeightedBooleanClause(c, w));

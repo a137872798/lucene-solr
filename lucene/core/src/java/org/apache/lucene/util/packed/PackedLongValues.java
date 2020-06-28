@@ -78,22 +78,28 @@ public class PackedLongValues extends LongValues implements Accountable {
     /**
      * Return a new {@link Builder} that will compress efficiently integers that
      * would be a monotonic function of their index.
+     * 构建一个 差值存储对象  首先要求 数据是单调递增的 之后每次存储的值都是上一次的差值
      */
     public static PackedLongValues.Builder monotonicBuilder(int pageSize, float acceptableOverheadRatio) {
         return new MonotonicLongValues.Builder(pageSize, acceptableOverheadRatio);
     }
 
     /**
+     * 使用差值存储规则创建  PackedLong 对象
      * @see #monotonicBuilder(int, float)
+     * @param acceptableOverheadRatio  代表使用额外的内存存储数据  压缩的越多 还原耗时就越长
      */
     public static PackedLongValues.Builder monotonicBuilder(float acceptableOverheadRatio) {
         return monotonicBuilder(DEFAULT_PAGE_SIZE, acceptableOverheadRatio);
     }
 
+    /**
+     * 该组对象 用于将压缩后的数据 以正常的方式 读取出来
+     */
     final PackedInts.Reader[] values;
     final int pageShift  // 代表 page 转换成二进制后 最右边有几个0
             , pageMask;  // pageSize - 1
-    private final long size;  // 每当写入一个数值 size都会+1 这里代表写入了多少数值
+    private final long size;  // 代表内部总计有多少个 long值
     private final long ramBytesUsed;
 
     PackedLongValues(int pageShift, int pageMask, PackedInts.Reader[] values, long size, long ramBytesUsed) {
@@ -120,27 +126,33 @@ public class PackedLongValues extends LongValues implements Accountable {
      */
     int decodeBlock(int block, long[] dest) {
         final PackedInts.Reader vals = values[block];
-        final int size = vals.size();  // 代表该reader是由多少个原始数值压缩得到的
+        final int size = vals.size();  // 内部有多少数据
         for (int k = 0; k < size; ) {
+            // 将所有数据还原 并写入到 dest中
             k += vals.get(k, dest, k, size - k);
         }
         return size;
     }
 
     /**
-     * 通过传入 原始数值的下标 内部会转换成 压缩后的起始下标 并读取数据
      *
-     * @param block
-     * @param element
+     * @param block  该值用于定位 block
+     * @param element   代表某个block下数据的下标
      * @return
      */
     long get(int block, int element) {
         return values[block].get(element);
     }
 
+    /**
+     *
+     * @param index   绝对偏移量
+     * @return
+     */
     @Override
     public final long get(long index) {
         assert index >= 0 && index < size();
+        // 定位到 block
         final int block = (int) (index >> pageShift);   // 相当于 下标除以页数  就可以得到页数的下标
         final int element = (int) (index & pageMask);  // 转换成页的下标 也就是想要读取第几个数据
         return get(block, element);
@@ -153,6 +165,7 @@ public class PackedLongValues extends LongValues implements Accountable {
 
     /**
      * Return an iterator over the values of this array.
+     * 该对象负责遍历 所有reader 内部的数据
      */
     public Iterator iterator() {
         return new Iterator();
@@ -164,9 +177,11 @@ public class PackedLongValues extends LongValues implements Accountable {
     // 返回一个迭代器对象 用于从block中读取数据
     final public class Iterator {
 
+        // 当前 reader 读取出来的数据都填装到这个数组中
         final long[] currentValues;
-        int vOff  // 代表当前读取到第几个block
-                , pOff;
+        int vOff, pOff;   // vOff 对应 reader对象的偏移量   pOff 对应 currentValues 的偏移量
+
+        // 当前 数组内部数据总量
         int currentCount; // number of entries of the current page
 
         Iterator() {
@@ -234,11 +249,14 @@ public class PackedLongValues extends LongValues implements Accountable {
         final int pageShift, pageMask;
         final float acceptableOverheadRatio;
         /**
-         * 写入的数据都会填充到该数组 同时一旦满足一个页大小 就会将数据写入到RAM中
+         * 数据会先写入到这个数组中  每当填满该数组时 进行一次压缩
          */
         long[] pending;
         long size;
 
+        /**
+         * 该组reader 对象负责从某个地方读取数据
+         */
         PackedInts.Reader[] values;
         /**
          * 用于记录该对象会使用的 RAM 大小   也就是一共占用多少字节
@@ -252,16 +270,17 @@ public class PackedLongValues extends LongValues implements Accountable {
 
         /**
          * 在初始化该对象时 规定页大小 和允许的比率
-         *
+         *s
          * @param pageSize
          * @param acceptableOverheadRatio
          */
         Builder(int pageSize, float acceptableOverheadRatio) {
+            // 确保 page 大小合理  并返回 2的x次
             pageShift = checkBlockSize(pageSize, MIN_PAGE_SIZE, MAX_PAGE_SIZE);
-            // 每当超过该大小就 写入到RAM
+            // 生成掩码
             pageMask = pageSize - 1;
             this.acceptableOverheadRatio = acceptableOverheadRatio;
-            // 默认情况会创建16个页
+            // 每个reader 对象应该是有一个读取的范围  这里通过创建16 个对象将读取范围 扩大到16倍
             values = new PackedInts.Reader[INITIAL_PAGE_COUNT];
             pending = new long[pageSize];
             valuesOff = 0;
@@ -274,8 +293,8 @@ public class PackedLongValues extends LongValues implements Accountable {
         /**
          * Build a {@link PackedLongValues} instance that contains values that
          * have been added to this builder. This operation is destructive.
+         * 构建该对象 冻结内部的数据
          */
-        // 代表内部数据已经填充好了 这时构建出PackedLongValues 对象
         public PackedLongValues build() {
             // 将剩余数据打包
             finish();
@@ -305,8 +324,8 @@ public class PackedLongValues extends LongValues implements Accountable {
 
         /**
          * Add a new element to this builder.
+         * 将数据 写入到这个压缩的数据结构中
          */
-        // 添加一个long值 内部   因为该对象实际上是一个long[]
         public Builder add(long l) {
             if (pending == null) {
                 throw new IllegalStateException("Cannot be reused after build()");
@@ -314,17 +333,16 @@ public class PackedLongValues extends LongValues implements Accountable {
             // 代表填满一个page的大小了 需要做特殊处理
             if (pendingOff == pending.length) {
                 // check size
-                // 默认情况会存储16组压缩数据
+                // 每当创建了一个 压缩结构  相应的就要初始化对应的reader 对象   当reader对象已经写满时 需要对reader对象进行扩容
                 if (values.length == valuesOff) {
                     // 对数组进行扩容 (默认在原有基础上增加 1/8)  param1 代表扩容后的最小大小   param2 声明了数组的元素类型所占字节数
                     final int newLength = ArrayUtil.oversize(valuesOff + 1, 8);
-                    // 对数组进行扩容 同时重置那个标识
                     grow(newLength);
                 }
-                // 每当填满一个pending[]时 应该是要进行压缩了
+                // 将 pending[] 内部的数据进行压缩
                 pack();
             }
-            // 将数据填充到 block数组中  每当写入的数据满时 pending内的数据 压缩 并且将pendingOff置0
+            // 将数据填充到 block数组中
             pending[pendingOff++] = l;
             // 记录当前写入了多少 long值
             size += 1;
@@ -344,7 +362,7 @@ public class PackedLongValues extends LongValues implements Accountable {
         }
 
         /**
-         * 开始压缩数据   每次pending 满的时候 才会往 values[] 中填入什么东西
+         * 开始压缩数据
          */
         private void pack() {
             pack(pending, pendingOff, valuesOff, acceptableOverheadRatio);
@@ -357,11 +375,11 @@ public class PackedLongValues extends LongValues implements Accountable {
         }
 
         /**
-         * 将一组数据打包
+         * 压缩 values 内部的数据  实际上就是将每个long值进行拆解  按照位存储
          *
          * @param values                  本次pending数组存储的数据 这些数据是待处理的
-         * @param numValues               等于 values.size
-         * @param block                   打包后生成的 mutable 是第几个
+         * @param numValues               代表 values 内部要压缩的长度
+         * @param block                   生成的 reader 对象 下标
          * @param acceptableOverheadRatio 代表在原有的基础上愿意多使用多少内存  如果使用 700% 也就是 完全不做压缩  因为原本压缩后就是 1/8
          */
         void pack(long[] values, int numValues, int block, float acceptableOverheadRatio) {
@@ -378,25 +396,24 @@ public class PackedLongValues extends LongValues implements Accountable {
             // build a new packed reader
             // 代表long[] 中每个元素都是0
             if (minValue == 0 && maxValue == 0) {
-                // 如果本次填入的数据都是0 那么构建一个空的reader对象
-                // block 也就是本次要设置的 values的下标
+                // reader 对象本身的作用是读取写入的 long值的 既然写入的都是0 直接模拟一个空对象 该方法调用 get(index) 总是返回0
                 this.values[block] = new PackedInts.NullReader(numValues);
             } else {
-                // 预测最大值需要占用多少bit   long的最大值 也就是64位
+                // 如果每次写入的值 大小还要变化 那么可能还会需要额外的信息来记录下一个long值占用了多少位
+                // 比如 length之类的  所以这里干脆就直接按照最大值占用的 位数作为统一的位数
                 final int bitsRequired = minValue < 0 ? 64 : PackedInts.bitsRequired(maxValue);
-                // 返回一个压缩对象  注意 pending[]填满后 经过对数值的比量 会返回一个packed64对象 该对象内部以位来存储数据
+                // 按照这个预期的位数 创建压缩对象   实际上每个 reader对象都只填充一次  并且下次 pending 填满时才创建新的 reader 对象
                 final PackedInts.Mutable mutable = PackedInts.getMutable(numValues, bitsRequired, acceptableOverheadRatio);
                 for (int i = 0; i < numValues; ) {
-
                     i += mutable.set(i, values, i, numValues - i);
                 }
-                // 当数据存储结束后 将values[] 对应下标设置成reader对象
+                // 填充 reader
                 this.values[block] = mutable;
             }
         }
 
         /**
-         * 按照新数组大小  或者说块的大小 进行扩容
+         * 对reader数组进行扩容   每个reader对象 负责读取一定范围的 压缩结构数据
          *
          * @param newBlockCount
          */

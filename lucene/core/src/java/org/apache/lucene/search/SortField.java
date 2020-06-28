@@ -31,7 +31,7 @@ import org.apache.lucene.util.BytesRef;
  *
  * @since   lucene 1.4
  * @see Sort
- * 用于排序的字段
+ * 会影响排序结果的某个 域
  */
 public class SortField {
 
@@ -95,14 +95,20 @@ public class SortField {
   public static final SortField FIELD_SCORE = new SortField(null, Type.SCORE);
 
   /** Represents sorting by document number (index order). */
-  // 基于 所有满足条件的doc的下标排序
+  // 按照 docId 进行排序
   public static final SortField FIELD_DOC = new SortField(null, Type.DOC);
 
 
+  /**
+   * 描述当前域名
+   */
   private String field;
+  /**
+   * 目标域按照什么规则进行排序
+   */
   private Type type;  // defaults to determining type dynamically
   /**
-   * 按照此字段正序 / 倒序排列
+   * 正序/倒序 排列
    */
   boolean reverse = false;  // defaults to natural order
 

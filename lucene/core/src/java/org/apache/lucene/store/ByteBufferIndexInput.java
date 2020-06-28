@@ -62,7 +62,16 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
   private LongBuffer[] curLongBufferViews;
 
   protected boolean isClone = false;
-  
+
+  /**
+   * 根据内部 byteBuffer的数量 分别创建2种实例  并且给对象内部还携带一个 guard对象 有一个释放内存的api
+   * @param resourceDescription
+   * @param buffers
+   * @param length
+   * @param chunkSizePower
+   * @param guard
+   * @return
+   */
   public static ByteBufferIndexInput newInstance(String resourceDescription, ByteBuffer[] buffers, long length, int chunkSizePower, ByteBufferGuard guard) {
     if (buffers.length == 1) {
       return new SingleBufferImpl(resourceDescription, buffers[0], length, chunkSizePower, guard);
@@ -407,6 +416,7 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
       if (isClone) return;
       
       // tell the guard to invalidate and later unmap the bytebuffers (if supported):
+      // 通过守卫对象关闭资源
       guard.invalidateAndUnmap(bufs);
     } finally {
       unsetBuffers();
@@ -528,6 +538,7 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
   }
   
   /** This class adds offset support to ByteBufferIndexInput, which is needed for slices. */
+  // 该对象内部有多个 ByteBuffer
   static final class MultiBufferImpl extends ByteBufferIndexInput {
     private final int offset;
     
@@ -552,7 +563,7 @@ public abstract class ByteBufferIndexInput extends IndexInput implements RandomA
     public long getFilePointer() {
       return super.getFilePointer() - offset;
     }
-    
+
     @Override
     public byte readByte(long pos) throws IOException {
       return super.readByte(pos + offset);

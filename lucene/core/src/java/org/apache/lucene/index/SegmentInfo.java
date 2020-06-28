@@ -62,7 +62,7 @@ public final class SegmentInfo {
   public final String name;
 
   /**
-   * 该段携带多少个 doc
+   * 当前段记录的最大文档号
    */
   private int maxDoc;         // number of docs in seg
 
@@ -71,7 +71,7 @@ public final class SegmentInfo {
   public final Directory dir;
 
   /**
-   * 代表该段 是否属于混合文件
+   * 标记该段生成的索引文件是  复合文件
    */
   private boolean isCompoundFile;
 
@@ -85,7 +85,7 @@ public final class SegmentInfo {
   private Codec codec;
 
   /**
-   * 诊断容器  那是啥
+   * 存储诊断信息 应该是用户根据内部存储的数据做一些检测之类的
    */
   private Map<String,String> diagnostics;
 
@@ -296,7 +296,7 @@ public final class SegmentInfo {
   private Set<String> setFiles;
 
   /** Sets the files written for this segment. */
-  // 代表该片段对应的文件数量   应该是这样 一个doc 对应一个文件 然后一个segment 对应多个file(doc)
+  // 设置本次操作段对象 所写入的全部文件
   public void setFiles(Collection<String> files) {
     setFiles = new HashSet<>();
     addFiles(files);

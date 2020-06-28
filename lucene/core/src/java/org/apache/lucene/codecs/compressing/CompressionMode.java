@@ -151,6 +151,9 @@ public abstract class CompressionMode {
 
   };
 
+  /**
+   * LZ4Fast 是 LZ4算法的原生实现
+   */
   private static final class LZ4FastCompressor extends Compressor {
 
     private final LZ4.FastCompressionHashTable ht;

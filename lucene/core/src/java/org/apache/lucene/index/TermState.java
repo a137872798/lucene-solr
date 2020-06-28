@@ -24,7 +24,7 @@ package org.apache.lucene.index;
  * @see TermsEnum#seekExact(org.apache.lucene.util.BytesRef, TermState)
  * @see TermsEnum#termState()
  * @lucene.experimental
- * 描述某个词的状态
+ * 记录当前某个词的状态
  */
 public abstract class TermState implements Cloneable {
 

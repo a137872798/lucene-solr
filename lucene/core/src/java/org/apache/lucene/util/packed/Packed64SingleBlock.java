@@ -29,6 +29,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * speed by ensuring that a single block needs to be read/written in order to
  * read/write a value.
  * 确保某个值不会跨越2个block   每次写入数据都是以block作为一个单位  所以某个值如果是多个bit就存在会划分到2个block的可能性
+ * 该对象本身已经被弃用  先不看
  */
 abstract class Packed64SingleBlock extends PackedInts.MutableImpl {
 

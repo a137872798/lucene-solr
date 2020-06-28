@@ -17,295 +17,319 @@
 package org.apache.lucene.util.packed;
 
 
-
 /**
  * Non-specialized {@link BulkOperation} for {@link PackedInts.Format#PACKED}.
- * 这个对象就是负责进行编解码的核心骨架类
+ * 该对象会以 位的形式写入
  */
 class BulkOperationPacked extends BulkOperation {
 
-  /**
-   * 代表写入时 每个值占多少bit    如果是一组数 选取其中会占用最多bit作为该值
-   */
-  private final int bitsPerValue;
+    /**
+     * 代表写入时 每个值占多少bit    如果是一组数 选取其中会占用最多bit作为该值
+     */
+    private final int bitsPerValue;
 
-  private final int longBlockCount;
-  /**
-   * 代表 64bit  按照 bitsPerValue 划分后的值
-   * 如果用index 来索引 那么index 每+1 就代表增加 bitsPerValue
-   * index & longValueCount = 0 就代表  index & （64/bitPerValue） = 0  也就代表刚好是某个block的起点 那么就可以大块的读取
-   */
-  private final int longValueCount;
-  private final int byteBlockCount;
-  private final int byteValueCount;
-  private final long mask;
-  private final int intMask;
+    private final int longBlockCount;
+    /**
+     * 当 block以 long作为数据载体时 允许存储多少个值  比如 bitsPerValue = 8 代表一个long 变量可以存储8个值   如果 bitsPerValue = 1 代表可以存储64个
+     */
+    private final int longValueCount;
+    private final int byteBlockCount;
+    private final int byteValueCount;
 
-  /**
-   * 代表每个值会使用多少bit
-   * @param bitsPerValue
-   */
-  public BulkOperationPacked(int bitsPerValue) {
-    this.bitsPerValue = bitsPerValue;
-    // 如果每个值需要 64 bit来表示 也就代表该long型的 64bit都填满了
-    assert bitsPerValue > 0 && bitsPerValue <= 64;
-    int blocks = bitsPerValue;
+    private final long mask;
+    private final int intMask;
 
-    // 能否被2整除    如果bitsPerValue 取的比较奇怪 那么 longValueCount 会变成64
-    // 如果是34 那么 longValueCount 就会变成 32
-    while ((blocks & 1) == 0) {
-      blocks >>>= 1;
-    }
-    // 假设以8bit 来考虑
-    // block 就是1
-    this.longBlockCount = blocks;
-    // 这个就是8  代表一个 block 可以写入8个值
-    this.longValueCount = 64 * longBlockCount / bitsPerValue;
-    int byteBlockCount = 8 * longBlockCount;
-    int byteValueCount = longValueCount;
-    while ((byteBlockCount & 1) == 0 && (byteValueCount & 1) == 0) {
-      byteBlockCount >>>= 1;
-      byteValueCount >>>= 1;
-    }
-    // 这2个都会变成1
-    this.byteBlockCount = byteBlockCount;
-    this.byteValueCount = byteValueCount;
-    if (bitsPerValue == 64) {
-      this.mask = ~0L;
-    } else {
-      // 掩码含义 和 Packed64 的掩码一致
-      this.mask = (1L << bitsPerValue) - 1;
-    }
-    this.intMask = (int) mask;
-    assert longValueCount * bitsPerValue == 64 * longBlockCount;
-  }
+    /**
+     * 代表每个值会使用多少bit
+     *
+     * @param bitsPerValue
+     */
+    public BulkOperationPacked(int bitsPerValue) {
+        this.bitsPerValue = bitsPerValue;
+        assert bitsPerValue > 0 && bitsPerValue <= 64;
+        int blocks = bitsPerValue;
 
-  @Override
-  public int longBlockCount() {
-    return longBlockCount;
-  }
-
-  @Override
-  public int longValueCount() {
-    return longValueCount;
-  }
-
-  @Override
-  public int byteBlockCount() {
-    return byteBlockCount;
-  }
-
-  @Override
-  public int byteValueCount() {
-    return byteValueCount;
-  }
-
-  @Override
-  public void decode(long[] blocks, int blocksOffset, long[] values,
-      int valuesOffset, int iterations) {
-    int bitsLeft = 64;
-    for (int i = 0; i < longValueCount * iterations; ++i) {
-      bitsLeft -= bitsPerValue;
-      if (bitsLeft < 0) {
-        values[valuesOffset++] =
-            ((blocks[blocksOffset++] & ((1L << (bitsPerValue + bitsLeft)) - 1)) << -bitsLeft)
-            | (blocks[blocksOffset] >>> (64 + bitsLeft));
-        bitsLeft += 64;
-      } else {
-        values[valuesOffset++] = (blocks[blocksOffset] >>> bitsLeft) & mask;
-      }
-    }
-  }
-
-  @Override
-  public void decode(byte[] blocks, int blocksOffset, long[] values,
-      int valuesOffset, int iterations) {
-    long nextValue = 0L;
-    int bitsLeft = bitsPerValue;
-    for (int i = 0; i < iterations * byteBlockCount; ++i) {
-      final long bytes = blocks[blocksOffset++] & 0xFFL;
-      if (bitsLeft > 8) {
-        // just buffer
-        bitsLeft -= 8;
-        nextValue |= bytes << bitsLeft;
-      } else {
-        // flush
-        int bits = 8 - bitsLeft;
-        values[valuesOffset++] = nextValue | (bytes >>> bits);
-        while (bits >= bitsPerValue) {
-          bits -= bitsPerValue;
-          values[valuesOffset++] = (bytes >>> bits) & mask;
+        while ((blocks & 1) == 0) {
+            blocks >>>= 1;
         }
-        // then buffer
-        bitsLeft = bitsPerValue - bits;
-        nextValue = (bytes & ((1L << bits) - 1)) << bitsLeft;
-      }
-    }
-    assert bitsLeft == bitsPerValue;
-  }
-
-  @Override
-  public void decode(long[] blocks, int blocksOffset, int[] values,
-      int valuesOffset, int iterations) {
-    if (bitsPerValue > 32) {
-      throw new UnsupportedOperationException("Cannot decode " + bitsPerValue + "-bits values into an int[]");
-    }
-    int bitsLeft = 64;
-    for (int i = 0; i < longValueCount * iterations; ++i) {
-      bitsLeft -= bitsPerValue;
-      if (bitsLeft < 0) {
-        values[valuesOffset++] = (int)
-            (((blocks[blocksOffset++] & ((1L << (bitsPerValue + bitsLeft)) - 1)) << -bitsLeft)
-            | (blocks[blocksOffset] >>> (64 + bitsLeft)));
-        bitsLeft += 64;
-      } else {
-        values[valuesOffset++] = (int) ((blocks[blocksOffset] >>> bitsLeft) & mask);
-      }
-    }
-  }
-
-  @Override
-  public void decode(byte[] blocks, int blocksOffset, int[] values,
-      int valuesOffset, int iterations) {
-    int nextValue = 0;
-    int bitsLeft = bitsPerValue;
-    for (int i = 0; i < iterations * byteBlockCount; ++i) {
-      final int bytes = blocks[blocksOffset++] & 0xFF;
-      if (bitsLeft > 8) {
-        // just buffer
-        bitsLeft -= 8;
-        nextValue |= bytes << bitsLeft;
-      } else {
-        // flush
-        int bits = 8 - bitsLeft;
-        values[valuesOffset++] = nextValue | (bytes >>> bits);
-        while (bits >= bitsPerValue) {
-          bits -= bitsPerValue;
-          values[valuesOffset++] = (bytes >>> bits) & intMask;
+        // 这个好像是在求公倍数  也就是 (longValueCount*bitsPerValue) 必须是64的倍数
+        this.longBlockCount = blocks;
+        this.longValueCount = 64 * longBlockCount / bitsPerValue;
+        int byteBlockCount = 8 * longBlockCount;
+        int byteValueCount = longValueCount;
+        while ((byteBlockCount & 1) == 0 && (byteValueCount & 1) == 0) {
+            byteBlockCount >>>= 1;
+            byteValueCount >>>= 1;
         }
-        // then buffer
-        bitsLeft = bitsPerValue - bits;
-        nextValue = (bytes & ((1 << bits) - 1)) << bitsLeft;
-      }
-    }
-    assert bitsLeft == bitsPerValue;
-  }
-
-  /**
-   * 将数据转换成bit 并填写到 blocks[] 中
-   * @param values       the values buffer
-   * @param valuesOffset the offset where to start reading values
-   * @param blocks       the long blocks that hold packed integer values
-   * @param blocksOffset the offset where to start writing blocks
-   * @param iterations   controls how much data to encode
-   */
-  @Override
-  public void encode(long[] values, int valuesOffset, long[] blocks,
-      int blocksOffset, int iterations) {
-    long nextBlock = 0;
-    int bitsLeft = 64;
-    // 每当移动longValueCount 就代表切换到下一个block  比如 64位 与8位 那么 longValueCount 就是8  代表填写8次后 自动切换到下一个block
-    for (int i = 0; i < longValueCount * iterations; ++i) {
-      // 每次填写一个值是 就移动对应的位数 这样做 << 运算时很容易就拿到想要的位数
-      bitsLeft -= bitsPerValue;
-      if (bitsLeft > 0) {
-        // 拼接上每次截取的数据
-        nextBlock |= values[valuesOffset++] << bitsLeft;
-      // 代表填满了一个 block 那么准备切换到下一个block
-      } else if (bitsLeft == 0) {
-        nextBlock |= values[valuesOffset++];
-        // 将生成的结果保存到block中 同时移动 blocksOffset 这样下次就会存入新的block
-        blocks[blocksOffset++] = nextBlock;
-        nextBlock = 0;
-        bitsLeft = 64;
-      } else { // bitsLeft < 0
-        // 可能 64位 不能被bitsPerValue整除
-        nextBlock |= values[valuesOffset] >>> -bitsLeft;
-        blocks[blocksOffset++] = nextBlock;
-        // 占用下一个block的部分位置
-        nextBlock = (values[valuesOffset++] & ((1L << -bitsLeft) - 1)) << (64 + bitsLeft);
-        bitsLeft += 64;
-      }
-    }
-  }
-
-  @Override
-  public void encode(int[] values, int valuesOffset, long[] blocks,
-      int blocksOffset, int iterations) {
-    long nextBlock = 0;
-    int bitsLeft = 64;
-    for (int i = 0; i < longValueCount * iterations; ++i) {
-      bitsLeft -= bitsPerValue;
-      if (bitsLeft > 0) {
-        nextBlock |= (values[valuesOffset++] & 0xFFFFFFFFL) << bitsLeft;
-      } else if (bitsLeft == 0) {
-        nextBlock |= (values[valuesOffset++] & 0xFFFFFFFFL);
-        blocks[blocksOffset++] = nextBlock;
-        nextBlock = 0;
-        bitsLeft = 64;
-      } else { // bitsLeft < 0
-        nextBlock |= (values[valuesOffset] & 0xFFFFFFFFL) >>> -bitsLeft;
-        blocks[blocksOffset++] = nextBlock;
-        nextBlock = (values[valuesOffset++] & ((1L << -bitsLeft) - 1)) << (64 + bitsLeft);
-        bitsLeft += 64;
-      }
-    }
-  }
-
-  @Override
-  public void encode(long[] values, int valuesOffset, byte[] blocks,
-      int blocksOffset, int iterations) {
-    int nextBlock = 0;
-    int bitsLeft = 8;
-    for (int i = 0; i < byteValueCount * iterations; ++i) {
-      final long v = values[valuesOffset++];
-      assert PackedInts.unsignedBitsRequired(v) <= bitsPerValue;
-      if (bitsPerValue < bitsLeft) {
-        // just buffer
-        nextBlock |= v << (bitsLeft - bitsPerValue);
-        bitsLeft -= bitsPerValue;
-      } else {
-        // flush as many blocks as possible
-        int bits = bitsPerValue - bitsLeft;
-        blocks[blocksOffset++] = (byte) (nextBlock | (v >>> bits));
-        while (bits >= 8) {
-          bits -= 8;
-          blocks[blocksOffset++] = (byte) (v >>> bits);
+        this.byteBlockCount = byteBlockCount;
+        this.byteValueCount = byteValueCount;
+        if (bitsPerValue == 64) {
+            this.mask = ~0L;
+        } else {
+            // 掩码含义 和 Packed64 的掩码一致
+            this.mask = (1L << bitsPerValue) - 1;
         }
-        // then buffer
-        bitsLeft = 8 - bits;
-        nextBlock = (int) ((v & ((1L << bits) - 1)) << bitsLeft);
-      }
+        this.intMask = (int) mask;
+        assert longValueCount * bitsPerValue == 64 * longBlockCount;
     }
-    assert bitsLeft == 8;
-  }
 
-  @Override
-  public void encode(int[] values, int valuesOffset, byte[] blocks,
-      int blocksOffset, int iterations) {
-    int nextBlock = 0;
-    int bitsLeft = 8;
-    for (int i = 0; i < byteValueCount * iterations; ++i) {
-      final int v = values[valuesOffset++];
-      assert PackedInts.bitsRequired(v & 0xFFFFFFFFL) <= bitsPerValue;
-      if (bitsPerValue < bitsLeft) {
-        // just buffer
-        nextBlock |= v << (bitsLeft - bitsPerValue);
-        bitsLeft -= bitsPerValue;
-      } else {
-        // flush as many blocks as possible
-        int bits = bitsPerValue - bitsLeft;
-        blocks[blocksOffset++] = (byte) (nextBlock | (v >>> bits));
-        while (bits >= 8) {
-          bits -= 8;
-          blocks[blocksOffset++] = (byte) (v >>> bits);
-        }
-        // then buffer
-        bitsLeft = 8 - bits;
-        nextBlock = (v & ((1 << bits) - 1)) << bitsLeft;
-      }
+    @Override
+    public int longBlockCount() {
+        return longBlockCount;
     }
-    assert bitsLeft == 8;
-  }
+
+    @Override
+    public int longValueCount() {
+        return longValueCount;
+    }
+
+    @Override
+    public int byteBlockCount() {
+        return byteBlockCount;
+    }
+
+    @Override
+    public int byteValueCount() {
+        return byteValueCount;
+    }
+
+    /**
+     * 将block内部的数据读取出来 填充到 values 中
+     * @param blocks       the long blocks that hold packed integer values
+     * @param blocksOffset the offset where to start reading blocks
+     * @param values       the values buffer
+     * @param valuesOffset the offset where to start writing values
+     * @param iterations   controls how much data to decode
+     */
+    @Override
+    public void decode(long[] blocks, int blocksOffset, long[] values,
+                       int valuesOffset, int iterations) {
+        int bitsLeft = 64;
+        for (int i = 0; i < longValueCount * iterations; ++i) {
+            bitsLeft -= bitsPerValue;
+            if (bitsLeft < 0) {
+                values[valuesOffset++] =
+                        ((blocks[blocksOffset++] & ((1L << (bitsPerValue + bitsLeft)) - 1)) << -bitsLeft)
+                                | (blocks[blocksOffset] >>> (64 + bitsLeft));
+                bitsLeft += 64;
+            } else {
+                values[valuesOffset++] = (blocks[blocksOffset] >>> bitsLeft) & mask;
+            }
+        }
+    }
+
+    @Override
+    public void decode(byte[] blocks, int blocksOffset, long[] values,
+                       int valuesOffset, int iterations) {
+        long nextValue = 0L;
+        int bitsLeft = bitsPerValue;
+        for (int i = 0; i < iterations * byteBlockCount; ++i) {
+            final long bytes = blocks[blocksOffset++] & 0xFFL;
+            if (bitsLeft > 8) {
+                // just buffer
+                bitsLeft -= 8;
+                nextValue |= bytes << bitsLeft;
+            } else {
+                // flush
+                int bits = 8 - bitsLeft;
+                values[valuesOffset++] = nextValue | (bytes >>> bits);
+                while (bits >= bitsPerValue) {
+                    bits -= bitsPerValue;
+                    values[valuesOffset++] = (bytes >>> bits) & mask;
+                }
+                // then buffer
+                bitsLeft = bitsPerValue - bits;
+                nextValue = (bytes & ((1L << bits) - 1)) << bitsLeft;
+            }
+        }
+        assert bitsLeft == bitsPerValue;
+    }
+
+    @Override
+    public void decode(long[] blocks, int blocksOffset, int[] values,
+                       int valuesOffset, int iterations) {
+        if (bitsPerValue > 32) {
+            throw new UnsupportedOperationException("Cannot decode " + bitsPerValue + "-bits values into an int[]");
+        }
+        int bitsLeft = 64;
+        for (int i = 0; i < longValueCount * iterations; ++i) {
+            bitsLeft -= bitsPerValue;
+            if (bitsLeft < 0) {
+                values[valuesOffset++] = (int)
+                        (((blocks[blocksOffset++] & ((1L << (bitsPerValue + bitsLeft)) - 1)) << -bitsLeft)
+                                | (blocks[blocksOffset] >>> (64 + bitsLeft)));
+                bitsLeft += 64;
+            } else {
+                values[valuesOffset++] = (int) ((blocks[blocksOffset] >>> bitsLeft) & mask);
+            }
+        }
+    }
+
+    @Override
+    public void decode(byte[] blocks, int blocksOffset, int[] values,
+                       int valuesOffset, int iterations) {
+        int nextValue = 0;
+        int bitsLeft = bitsPerValue;
+        for (int i = 0; i < iterations * byteBlockCount; ++i) {
+            final int bytes = blocks[blocksOffset++] & 0xFF;
+            if (bitsLeft > 8) {
+                // just buffer
+                bitsLeft -= 8;
+                nextValue |= bytes << bitsLeft;
+            } else {
+                // flush
+                int bits = 8 - bitsLeft;
+                values[valuesOffset++] = nextValue | (bytes >>> bits);
+                while (bits >= bitsPerValue) {
+                    bits -= bitsPerValue;
+                    values[valuesOffset++] = (bytes >>> bits) & intMask;
+                }
+                // then buffer
+                bitsLeft = bitsPerValue - bits;
+                nextValue = (bytes & ((1 << bits) - 1)) << bitsLeft;
+            }
+        }
+        assert bitsLeft == bitsPerValue;
+    }
+
+    /**
+     * @param values       the values buffer    待写入到压缩结构的数据
+     * @param valuesOffset the offset where to start reading values    values 从哪里开始压缩
+     * @param blocks       the long blocks that hold packed integer values   存储压缩结果的容器
+     * @param blocksOffset the offset where to start writing blocks    从哪个block 开始写入
+     * @param iterations   controls how much data to encode
+     */
+    @Override
+    public void encode(long[] values, int valuesOffset, long[] blocks,
+                       int blocksOffset, int iterations) {
+        // 即将写入 blocks的值
+        long nextBlock = 0;
+        int bitsLeft = 64;
+        // longValueCount * iterations 代表总计要写入多少数据
+        for (int i = 0; i < longValueCount * iterations; ++i) {
+            // 每次分配足以容纳一个数值的空间
+            bitsLeft -= bitsPerValue;
+            if (bitsLeft > 0) {
+                // 拼接上每次截取的数据     数据是从高位开始写入 走向低位
+                nextBlock |= values[valuesOffset++] << bitsLeft;
+                // 刚好写满了这个 block
+            } else if (bitsLeft == 0) {
+                // 直接拼接上最后几个位 就可以
+                nextBlock |= values[valuesOffset++];
+                // 这里重置相关标识
+                blocks[blocksOffset++] = nextBlock;
+                nextBlock = 0;
+                bitsLeft = 64;
+            } else {
+                // 也就是 bitsLeft < 0  本次分配的位 不仅抢占了 nextBlock 剩余的空间 还会抢占下个block 部分空间
+                // values[valuesOffset] >>> -bitsLeft  代表截取 某高几位  因为低位 要放到下一个block
+                nextBlock |= values[valuesOffset] >>> -bitsLeft;
+                blocks[blocksOffset++] = nextBlock;
+                // 占用下一个block的部分位置
+                nextBlock = (values[valuesOffset++] & ((1L << -bitsLeft) - 1)) << (64 + bitsLeft);
+                bitsLeft += 64;
+            }
+        }
+    }
+
+    /**
+     * 这里变成 以 int为 单位 换算成位后写入到 block中 基本与上边一致 不同点就是 int 值多做了一个切换成 long的动作
+     * @param values       the values buffer
+     * @param valuesOffset the offset where to start reading values
+     * @param blocks       the long blocks that hold packed integer values
+     * @param blocksOffset the offset where to start writing blocks
+     * @param iterations   controls how much data to encode
+     */
+    @Override
+    public void encode(int[] values, int valuesOffset, long[] blocks,
+                       int blocksOffset, int iterations) {
+        long nextBlock = 0;
+        int bitsLeft = 64;
+        for (int i = 0; i < longValueCount * iterations; ++i) {
+            bitsLeft -= bitsPerValue;
+            if (bitsLeft > 0) {
+                nextBlock |= (values[valuesOffset++] & 0xFFFFFFFFL) << bitsLeft;
+            } else if (bitsLeft == 0) {
+                nextBlock |= (values[valuesOffset++] & 0xFFFFFFFFL);
+                blocks[blocksOffset++] = nextBlock;
+                nextBlock = 0;
+                bitsLeft = 64;
+            } else { // bitsLeft < 0
+                nextBlock |= (values[valuesOffset] & 0xFFFFFFFFL) >>> -bitsLeft;
+                blocks[blocksOffset++] = nextBlock;
+                nextBlock = (values[valuesOffset++] & ((1L << -bitsLeft) - 1)) << (64 + bitsLeft);
+                bitsLeft += 64;
+            }
+        }
+    }
+
+    /**
+     * 存储的 block 变成了以 byte 为单位
+     * @param values       the values buffer
+     * @param valuesOffset the offset where to start reading values
+     * @param blocks       the long blocks that hold packed integer values
+     * @param blocksOffset the offset where to start writing blocks
+     * @param iterations   controls how much data to encode
+     */
+    @Override
+    public void encode(long[] values, int valuesOffset, byte[] blocks,
+                       int blocksOffset, int iterations) {
+        int nextBlock = 0;
+        int bitsLeft = 8;
+        for (int i = 0; i < byteValueCount * iterations; ++i) {
+            final long v = values[valuesOffset++];
+            assert PackedInts.unsignedBitsRequired(v) <= bitsPerValue;
+            // 代表不需要切换 block 直接写入就好
+            if (bitsPerValue < bitsLeft) {
+                // just buffer
+                nextBlock |= v << (bitsLeft - bitsPerValue);
+                bitsLeft -= bitsPerValue;
+            } else {
+                // flush as many blocks as possible
+                // bitsPerValue 代表 long值中有多少有效位    bitsPerValue - bitsLeft 就是除了本block之外 还有多少位没有写入block中
+                int bits = bitsPerValue - bitsLeft;
+                // 这里填充 最高bits位
+                blocks[blocksOffset++] = (byte) (nextBlock | (v >>> bits));
+                // 每有8位 填充一个block
+                while (bits >= 8) {
+                    bits -= 8;
+                    blocks[blocksOffset++] = (byte) (v >>> bits);
+                }
+                // then buffer
+                bitsLeft = 8 - bits;
+                // 将最低的几位 放在 block的高位
+                nextBlock = (int) ((v & ((1L << bits) - 1)) << bitsLeft);
+            }
+        }
+        assert bitsLeft == 8;
+    }
+
+    @Override
+    public void encode(int[] values, int valuesOffset, byte[] blocks,
+                       int blocksOffset, int iterations) {
+        int nextBlock = 0;
+        int bitsLeft = 8;
+        for (int i = 0; i < byteValueCount * iterations; ++i) {
+            final int v = values[valuesOffset++];
+            assert PackedInts.bitsRequired(v & 0xFFFFFFFFL) <= bitsPerValue;
+            if (bitsPerValue < bitsLeft) {
+                // just buffer
+                nextBlock |= v << (bitsLeft - bitsPerValue);
+                bitsLeft -= bitsPerValue;
+            } else {
+                // flush as many blocks as possible
+                int bits = bitsPerValue - bitsLeft;
+                blocks[blocksOffset++] = (byte) (nextBlock | (v >>> bits));
+                while (bits >= 8) {
+                    bits -= 8;
+                    blocks[blocksOffset++] = (byte) (v >>> bits);
+                }
+                // then buffer
+                bitsLeft = 8 - bits;
+                nextBlock = (v & ((1 << bits) - 1)) << bitsLeft;
+            }
+        }
+        assert bitsLeft == 8;
+    }
 
 }

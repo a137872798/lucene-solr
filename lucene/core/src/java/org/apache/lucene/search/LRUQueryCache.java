@@ -86,23 +86,31 @@ import static org.apache.lucene.util.RamUsageEstimator.QUERY_DEFAULT_RAM_BYTES_U
  *
  * @see QueryCachingPolicy
  * @lucene.experimental
- * 基于 LRU 的缓存对象
+ * 基于 LRU 最近使用数据规则  创建的缓存对象
  */
 public class LRUQueryCache implements QueryCache, Accountable {
 
-  private final int maxSize;
-  private final long maxRamBytesUsed;
   /**
-   * 有关是否应当被缓存的 谓语对象
+   * 缓存存储的最大长度
    */
+  private final int maxSize;
+  /**
+   * 当前占用了多少内存
+   */
+  private final long maxRamBytesUsed;
   private final Predicate<LeafReaderContext> leavesToCache;
   // maps queries that are contained in the cache to a singleton so that this
   // cache does not store several copies of the same query
+  // 应该是一个多对1的映射
   private final Map<Query, Query> uniqueQueries;
   // The contract between this set and the per-leaf caches is that per-leaf caches
   // are only allowed to store sub-sets of the queries that are contained in
   // mostRecentlyUsedQueries. This is why write operations are performed under a lock
+  // 记录最近使用的缓存
   private final Set<Query> mostRecentlyUsedQueries;
+  /**
+   * LeafCache 内部存储了一组命中的 docId
+   */
   private final Map<IndexReader.CacheKey, LeafCache> cache;
   private final ReentrantLock lock;
   private final float skipCacheFactor;
@@ -110,6 +118,9 @@ public class LRUQueryCache implements QueryCache, Accountable {
   // these variables are volatile so that we do not need to sync reads
   // but increments need to be performed under the lock
   private volatile long ramBytesUsed;
+  /**
+   * 这里还需要记录缓存命中数 和 未命中数
+   */
   private volatile long hitCount;
   private volatile long missCount;
   private volatile long cacheCount;
@@ -122,19 +133,23 @@ public class LRUQueryCache implements QueryCache, Accountable {
    *
    * Also, clauses whose cost is {@code skipCacheFactor} times more than the cost of the top-level query
    * will not be cached in order to not slow down queries too much.
+   * 通过指定缓存 尺寸和 允许使用的最大内存来创建缓存对象
    */
   public LRUQueryCache(int maxSize, long maxRamBytesUsed,
                        Predicate<LeafReaderContext> leavesToCache, float skipCacheFactor) {
     this.maxSize = maxSize;
     this.maxRamBytesUsed = maxRamBytesUsed;
     this.leavesToCache = leavesToCache;
+    // 这个值必须大于1
     if (skipCacheFactor >= 1 == false) { // NaN >= 1 evaluates false
       throw new IllegalArgumentException("skipCacheFactor must be no less than 1, get " + skipCacheFactor);
     }
     this.skipCacheFactor = skipCacheFactor;
 
+    // 该对象的key 就是 mostRecently
     uniqueQueries = new LinkedHashMap<>(16, 0.75f, true);
     mostRecentlyUsedQueries = uniqueQueries.keySet();
+    // 基于线性探测法创建的 map
     cache = new IdentityHashMap<>();
     lock = new ReentrantLock();
     ramBytesUsed = 0;
@@ -157,7 +172,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
     this(maxSize, maxRamBytesUsed, new MinSegmentSizePredicate(10000, .03f), 250);
   }
 
-  // pkg-private for testing   默认使用的缓存谓语 需要确保数据本身超过 一定值才需要缓存 并且要求该叶数据占上层数据的一定比重
+  // pkg-private for testing
   static class MinSegmentSizePredicate implements Predicate<LeafReaderContext> {
     private final int minSize;
     private final float minSizeRatio;
@@ -169,11 +184,15 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
     @Override
     public boolean test(LeafReaderContext context) {
+      // 当前页的最大doc 必须超过 minSize  每个页上的doc可能就是相对值 比如到一个新的页又是从0开始
       final int maxDoc = context.reader().maxDoc();
+      // 当数据量不大的情况不考虑缓存   (是因为数据量小查询也快吗???)
       if (maxDoc < minSize) {
         return false;
       }
+      // 获取最上层节点对应的上下文  该上下文记录的 docMax 应该就是全局范围的doc
       final IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(context);
+      // 当前叶子节点 (段)  内部存储的文档数 要在全局范围内超过最小比率才允许缓存
       final float sizeRatio = (float) context.reader().maxDoc() / topLevelContext.reader().maxDoc();
       return sizeRatio >= minSizeRatio;
     }
@@ -185,6 +204,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
    * fine-grained statistics about the query cache.
    * @see #onMiss
    * @lucene.experimental
+   * 当缓存命中时的后置函数
    */
   protected void onHit(Object readerCoreKey, Query query) {
     assert lock.isHeldByCurrentThread();
@@ -202,12 +222,15 @@ public class LRUQueryCache implements QueryCache, Accountable {
     missCount += 1;
   }
 
+  // 既可以按照 query对象来存储数据  也可以按照 docId迭代器来存储
+
   /**
    * Expert: callback when a query is added to this cache.
    * Implementing this method is typically useful in order to compute more
    * fine-grained statistics about the query cache.
    * @see #onQueryEviction
    * @lucene.experimental
+   * 当存储查询结果时 增加使用的bytes数 同时对子类开放钩子
    */
   protected void onQueryCache(Query query, long ramBytesUsed) {
     assert lock.isHeldByCurrentThread();
@@ -261,19 +284,19 @@ public class LRUQueryCache implements QueryCache, Accountable {
   }
 
   /** Whether evictions are required. */
+  // 检测是否需要清理数据
   boolean requiresEviction() {
     assert lock.isHeldByCurrentThread();
     final int size = mostRecentlyUsedQueries.size();
     if (size == 0) {
       return false;
     } else {
-      // 当前 recently队列超过指定大小  或者使用bytes 数 超过指定大小
       return size > maxSize || ramBytesUsed() > maxRamBytesUsed;
     }
   }
 
   /**
-   * 通过缓存对象 以及 helper 生成缓存数据集
+   * 根据查询对象返回一组符合条件的迭代器
    * @param key
    * @param cacheHelper
    * @return
@@ -282,22 +305,21 @@ public class LRUQueryCache implements QueryCache, Accountable {
     assert lock.isHeldByCurrentThread();
     assert key instanceof BoostQuery == false;
     assert key instanceof ConstantScoreQuery == false;
-    // 找到缓存键
     final IndexReader.CacheKey readerKey = cacheHelper.getKey();
-    // 找到缓存对象
+    // 通过缓存键 定位到cache 对象
     final LeafCache leafCache = cache.get(readerKey);
     if (leafCache == null) {
       onMiss(readerKey, key);
       return null;
     }
     // this get call moves the query to the most-recently-used position
-    // 这里做一层额外的映射
+    // 做一层额外的映射  当映射失败时认为缓存未命中
     final Query singleton = uniqueQueries.get(key);
     if (singleton == null) {
       onMiss(readerKey, key);
       return null;
     }
-    // 找到数据集
+    // cache对象内部也是一个容器   可以通过query定位到具体的文档
     final DocIdSet cached = leafCache.get(singleton);
     if (cached == null) {
       onMiss(readerKey, singleton);
@@ -307,19 +329,29 @@ public class LRUQueryCache implements QueryCache, Accountable {
     return cached;
   }
 
+  /**
+   * 将数据插入到缓存中
+   * @param query
+   * @param set  本次查询的结果集
+   * @param cacheHelper
+   */
   private void putIfAbsent(Query query, DocIdSet set, IndexReader.CacheHelper cacheHelper) {
     assert query instanceof BoostQuery == false;
     assert query instanceof ConstantScoreQuery == false;
     // under a lock to make sure that mostRecentlyUsedQueries and cache remain sync'ed
+    // 该锁的目的主要是为了确保 2个非线程安全的容器 同步操作
     lock.lock();
     try {
+      // 该容器本身应该是额外做了一层多对1的映射
       Query singleton = uniqueQueries.putIfAbsent(query, query);
+      // 代表首次插入到缓存
       if (singleton == null) {
         onQueryCache(query, LINKED_HASHTABLE_RAM_BYTES_PER_ENTRY + QUERY_DEFAULT_RAM_BYTES_USED);
       } else {
         query = singleton;
       }
       final IndexReader.CacheKey key = cacheHelper.getKey();
+      // 构建缓存键对应的 leafCache对象
       LeafCache leafCache = cache.get(key);
       if (leafCache == null) {
         leafCache = new LeafCache(key);
@@ -327,7 +359,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
         ramBytesUsed += HASHTABLE_RAM_BYTES_PER_ENTRY;
         assert previous == null;
         // we just created a new leaf cache, need to register a close listener
-        // 使用者可以主动关闭缓存对象 并通过监听器触发 该cache对象的clear方法
+        // helper对象是使用方传入的   这里为helper追加一个监听器 负责回调
         cacheHelper.addClosedListener(this::clearCoreCacheKey);
       }
       leafCache.putIfAbsent(query, set);
@@ -338,20 +370,18 @@ public class LRUQueryCache implements QueryCache, Accountable {
   }
 
   /**
-   * 检测是否有数据需要清理
+   * 检测数据是否过期
    */
   private void evictIfNecessary() {
     assert lock.isHeldByCurrentThread();
     // under a lock to make sure that mostRecentlyUsedQueries and cache keep sync'ed
     if (requiresEviction()) {
 
-      // 清除 recently 内部的数据是无序的吗
       Iterator<Query> iterator = mostRecentlyUsedQueries.iterator();
       do {
         final Query query = iterator.next();
         final int size = mostRecentlyUsedQueries.size();
         iterator.remove();
-        // put只要在锁中 应该不会出现在这种情况吧
         if (size == mostRecentlyUsedQueries.size()) {
           // size did not decrease, because the hash of the query changed since it has been
           // put into the cache
@@ -402,10 +432,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
   }
 
-  /**
-   * 移除某个 query 对应的缓存数据
-   * @param singleton
-   */
   private void onEviction(Query singleton) {
     assert lock.isHeldByCurrentThread();
     onQueryEviction(singleton, LINKED_HASHTABLE_RAM_BYTES_PER_ENTRY + QUERY_DEFAULT_RAM_BYTES_USED);
@@ -416,7 +442,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
   /**
    * Clear the content of this cache.
-   * 清空缓存内所有数据
    */
   public void clear() {
     lock.lock();
@@ -430,7 +455,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
   }
 
-  // pkg-private for testing   检测一致性
+  // pkg-private for testing
   void assertConsistent() {
     lock.lock();
     try {
@@ -483,12 +508,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
   }
 
-  /**
-   * 将权重对象包装成一个缓存对象
-   * @param weight
-   * @param policy
-   * @return
-   */
   @Override
   public Weight doCache(Weight weight, QueryCachingPolicy policy) {
     while (weight instanceof CachingWrapperWeight) {
@@ -522,38 +541,20 @@ public class LRUQueryCache implements QueryCache, Accountable {
     if (scorer.cost() * 100 >= maxDoc) {
       // FixedBitSet is faster for dense sets and will enable the random-access
       // optimization in ConjunctionDISI
-      // 该位图对象内部使用 FixBitSet
       return cacheIntoBitSet(scorer, maxDoc);
     } else {
-      // 该位图对象内部使用 RoaringDocIdSet  按照多个不同的大小创建 short[] 或者 位图对象来存储数据
-      // 使用short[] 读取docId
-      // short 本身是 4096个  而一个block是 65535 比一下大概是 1:16  也就是最坏的情况 每2个docId 相距16位  而16位刚好就是一个short
-      // 那么直接用short比较 占用的位数是差不多的 并且它的读取比位图更快  所以以该大小作为分界线  当然这是理想情况
       return cacheIntoRoaringDocIdSet(scorer, maxDoc);
     }
   }
 
-  /**
-   * 返回一个基于位图的存储对象
-   * @param scorer
-   * @param maxDoc
-   * @return
-   * @throws IOException
-   */
   private static DocIdSet cacheIntoBitSet(BulkScorer scorer, int maxDoc) throws IOException {
     final FixedBitSet bitSet = new FixedBitSet(maxDoc);
     long cost[] = new long[1];
-    // 这个动作应该就是将 docId读取到位图
     scorer.score(new LeafCollector() {
 
       @Override
       public void setScorer(Scorable scorer) throws IOException {}
 
-      /**
-       * 每当采集到docId 时 增加总数 以及填充到 bitSet中
-       * @param doc
-       * @throws IOException
-       */
       @Override
       public void collect(int doc) throws IOException {
         cost[0]++;
@@ -564,13 +565,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
     return new BitDocIdSet(bitSet, cost[0]);
   }
 
-  /**
-   * 构建了一个特殊的位图 (RoaringBitMap)
-   * @param scorer
-   * @param maxDoc
-   * @return
-   * @throws IOException
-   */
   private static DocIdSet cacheIntoRoaringDocIdSet(BulkScorer scorer, int maxDoc) throws IOException {
     RoaringDocIdSet.Builder builder = new RoaringDocIdSet.Builder(maxDoc);
     scorer.score(new LeafCollector() {
@@ -596,7 +590,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
    * {@link #getHitCount()} and {@link #getMissCount()}.
    * @see #getHitCount()
    * @see #getMissCount()
-   * 计算 缓存命中总数 + 未命中总数
    */
   public final long getTotalCount() {
     return getHitCount() + getMissCount();
@@ -656,20 +649,16 @@ public class LRUQueryCache implements QueryCache, Accountable {
    * early.
    * @see #getCacheCount()
    * @see #getCacheSize()
-   * 超过的部分代表需要被移除
    */
   public final long getEvictionCount() {
     return getCacheCount() - getCacheSize();
   }
 
   // this class is not thread-safe, everything but ramBytesUsed needs to be called under a lock
-  // 缓存对象
+  // 缓存对象  包含 query 到一组文件id的映射
   private class LeafCache implements Accountable {
 
     private final Object key;
-    /**
-     * 相同的查询对象总是返回该组 docId
-     */
     private final Map<Query, DocIdSet> cache;
     private volatile long ramBytesUsed;
 
@@ -704,10 +693,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
       }
     }
 
-    /**
-     * 将某个 query下的数据移除
-     * @param query
-     */
     void remove(Query query) {
       assert query instanceof BoostQuery == false;
       assert query instanceof ConstantScoreQuery == false;
@@ -724,22 +709,12 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
   }
 
-  /**
-   * 某个权重对象的包装器
-   */
   private class CachingWrapperWeight extends ConstantScoreWeight {
 
-    /**
-     * 内部真正的权重对象
-     */
     private final Weight in;
-    /**
-     * 采用的缓存策略
-     */
     private final QueryCachingPolicy policy;
     // we use an AtomicBoolean because Weight.scorer may be called from multiple
     // threads when IndexSearcher is created with threads
-    // 该对象本身可能会被并发访问
     private final AtomicBoolean used;
 
     CachingWrapperWeight(Weight in, QueryCachingPolicy policy) {
@@ -749,26 +724,13 @@ public class LRUQueryCache implements QueryCache, Accountable {
       used = new AtomicBoolean(false);
     }
 
-    /**
-     * 判断使用该doc 能否匹配成功
-     * @param context the reader's context to create the {@link Matches} for
-     * @param doc     the document's id relative to the given context's reader
-     * @return
-     * @throws IOException
-     */
     @Override
     public Matches matches(LeafReaderContext context, int doc) throws IOException {
       return in.matches(context, doc);
     }
 
-    /**
-     * 传入的是 上层context的maxDoc
-     * @param maxDoc
-     * @return
-     */
     private boolean cacheEntryHasReasonableWorstCaseSize(int maxDoc) {
       // The worst-case (dense) is a bit set which needs one bit per document
-      // 这里是理想情况 就是每一位都可以填充一个 docId
       final long worstCaseRamUsage = maxDoc / 8;
       final long totalRamAvailable = maxRamBytesUsed;
       // Imagine the worst-case that a cache entry is large than the size of
@@ -776,18 +738,10 @@ public class LRUQueryCache implements QueryCache, Accountable {
       // will also evict all current entries from the cache. For this reason
       // we only cache on an IndexReader if we have available room for
       // 5 different filters on this reader to avoid excessive trashing
-      // 如果每个maxDoc 相间5位  并且没有超过缓存的可使用大小 那么允许使用缓存
       return worstCaseRamUsage * 5 < totalRamAvailable;
     }
 
-    /**
-     * 为当前segment 对应的数据体建立缓存
-     * @param context
-     * @return
-     * @throws IOException
-     */
     private DocIdSet cache(LeafReaderContext context) throws IOException {
-      // 该对象在处理后 会将数据读取到 scorer中 在下面的cacheImpl中 会将数据转移到缓存中
       final BulkScorer scorer = in.bulkScorer(context);
       if (scorer == null) {
         return DocIdSet.EMPTY;
@@ -797,26 +751,17 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
 
     /** Check whether this segment is eligible for caching, regardless of the query. */
-    // 检测该数据是否应该被缓存
     private boolean shouldCache(LeafReaderContext context) throws IOException {
       return cacheEntryHasReasonableWorstCaseSize(ReaderUtil.getTopLevelContext(context).reader().maxDoc())
           && leavesToCache.test(context);
     }
 
-    /**
-     * 基于当前数据叶 生成打分对象
-     * @param context
-     * @return
-     * @throws IOException
-     */
     @Override
     public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
       if (used.compareAndSet(false, true)) {
-        // 从 weight中找到 query对象  默认的policy实现是 UsageTrackingQueryCachingPolicy  就是在使用前 记录了一下使用痕迹
         policy.onUse(getQuery());
       }
 
-      // 如果当前对象被判断不需要缓存  那么使用原始对象生成 score
       if (in.isCacheable(context) == false) {
         // this segment is not suitable for caching
         return in.scorerSupplier(context);
@@ -824,12 +769,10 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
       // Short-circuit: Check whether this segment is eligible for caching
       // before we take a lock because of #get
-      // 不支持缓存的情况直接返回 打分对象
       if (shouldCache(context) == false) {
         return in.scorerSupplier(context);
       }
 
-      // 如果不包含helper对象 不生成缓存
       final IndexReader.CacheHelper cacheHelper = context.reader().getCoreCacheHelper();
       if (cacheHelper == null) {
         // this reader has no cache helper
@@ -837,34 +780,26 @@ public class LRUQueryCache implements QueryCache, Accountable {
       }
 
       // If the lock is already busy, prefer using the uncached version than waiting
-      // 当前生成缓存的竞争严重就放弃生成缓存包装
       if (lock.tryLock() == false) {
         return in.scorerSupplier(context);
       }
 
-      // 下面是生成缓存的逻辑
       DocIdSet docIdSet;
       try {
-        // 找到缓存的数据集
         docIdSet = get(in.getQuery(), cacheHelper);
       } finally {
         lock.unlock();
       }
 
-      // 当没有找到缓存时
       if (docIdSet == null) {
-        // 检测是否应当进行缓存   里面还会关注该 query的使用次数  当使用次数比较少的时候 不会生成缓存
         if (policy.shouldCache(in.getQuery())) {
-          // 找到原始的 supplier
           final ScorerSupplier supplier = in.scorerSupplier(context);
           if (supplier == null) {
-            // 这里缓存一个空数据 并返回null
             putIfAbsent(in.getQuery(), DocIdSet.EMPTY, cacheHelper);
             return null;
           }
 
           final long cost = supplier.cost();
-          // 这里包装原始对象
           return new ScorerSupplier() {
             @Override
             public Scorer get(long leadCost) throws IOException {
@@ -873,11 +808,8 @@ public class LRUQueryCache implements QueryCache, Accountable {
                 return supplier.get(leadCost);
               }
 
-              // -------------  这些步骤就是被省略的 ------------- //
               Scorer scorer = supplier.get(Long.MAX_VALUE);
-              // 使用 scorer读取 reader内部的数据 然后填充到 docIdSet中
               DocIdSet docIdSet = cacheImpl(new DefaultBulkScorer(scorer), context.reader().maxDoc());
-              // 缓存结果集  并且 使用者可以通过 helper对象 主动释放缓存
               putIfAbsent(in.getQuery(), docIdSet, cacheHelper);
               DocIdSetIterator disi = docIdSet.iterator();
               if (disi == null) {
@@ -885,10 +817,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
                 disi = DocIdSetIterator.empty();
               }
 
-              // ------------------------------------------------- //
-
-              // 生成一个常量打分对象 将docId结果 固化在对象内部   应该是这样 能够被缓存的对象首先本身就不具备打分功能
-              // 而需要返回的又是一个scorer对象 所以这里直接指定score为0 同时将本次涉及到的docId设置进去
               return new ConstantScoreScorer(CachingWrapperWeight.this, 0f, ScoreMode.COMPLETE_NO_SCORES, disi);
             }
 
@@ -898,14 +826,11 @@ public class LRUQueryCache implements QueryCache, Accountable {
             }
           };
         } else {
-          // 不需要生成缓存时直接返回
           return in.scorerSupplier(context);
         }
       }
 
-      // 只有当首次调用  scorerSupplier 才会返回 ConstantScoreScorer  之后调用 可以获取到之前缓存的 docIdSet
       assert docIdSet != null;
-      // 为什么这里就允许返回null 了
       if (docIdSet == DocIdSet.EMPTY) {
         return null;
       }
@@ -914,7 +839,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
         return null;
       }
 
-      // 当存在缓存的时候 直接返回 scorer对象
       return new ScorerSupplier() {
         @Override
         public Scorer get(long LeadCost) throws IOException {
@@ -929,14 +853,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
     }
 
-    /**
-     * 基于当前的叶数据 生成打分对象
-     * @param context
-     *          the {@link org.apache.lucene.index.LeafReaderContext} for which to return the {@link Scorer}.
-     *
-     * @return
-     * @throws IOException
-     */
     @Override
     public Scorer scorer(LeafReaderContext context) throws IOException {
       ScorerSupplier scorerSupplier = scorerSupplier(context);
@@ -946,24 +862,11 @@ public class LRUQueryCache implements QueryCache, Accountable {
       return scorerSupplier.get(Long.MAX_VALUE);
     }
 
-    /**
-     * 检测是否支持缓存
-     * @param ctx
-     * @return
-     */
     @Override
     public boolean isCacheable(LeafReaderContext ctx) {
       return in.isCacheable(ctx);
     }
 
-    /**
-     * 生成 bulk打分对象 (什么是大块的打分对象???)  下面的步骤 和 scorerSupplier 类似
-     * @param context
-     *          the {@link org.apache.lucene.index.LeafReaderContext} for which to return the {@link Scorer}.
-     *
-     * @return
-     * @throws IOException
-     */
     @Override
     public BulkScorer bulkScorer(LeafReaderContext context) throws IOException {
       if (used.compareAndSet(false, true)) {

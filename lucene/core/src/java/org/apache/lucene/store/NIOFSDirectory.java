@@ -49,7 +49,7 @@ import java.util.concurrent.Future; // javadoc
  * {@link Future#cancel(boolean)} you should use the legacy {@code RAFDirectory}
  * from the Lucene {@code misc} module in favor of {@link NIOFSDirectory}.
  * </p>
- * 基于NIO 文件管道的目录对象  也就是需要将内核态数据 拷贝到用户态  多一次数据复制的开销
+ * 普通的文件流    没有使用mmap技术
  */
 public class NIOFSDirectory extends FSDirectory {
 

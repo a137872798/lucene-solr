@@ -24,6 +24,7 @@ import java.io.IOException;
  * This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
+ * 该对象生成的Lock对象 实际上不具备锁功能 是一个Noop对象
  */
 
 public final class NoLockFactory extends LockFactory {

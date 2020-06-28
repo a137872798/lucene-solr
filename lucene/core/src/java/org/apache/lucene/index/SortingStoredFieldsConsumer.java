@@ -31,6 +31,9 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 
+/**
+ * 在原有的基础上 增加了排序功能
+ */
 final class SortingStoredFieldsConsumer extends StoredFieldsConsumer {
   TrackingTmpOutputDirectoryWrapper tmpDirectory;
 

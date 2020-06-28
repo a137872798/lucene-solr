@@ -24,7 +24,7 @@ import org.apache.lucene.util.BytesRef;
 
 /** 
  * This class contains utility methods and constants for DocValues
- * 该对象提供了一些便于从 文档中读取数据的api
+ * 描述文档数据的类型
  */
 public final class DocValues {
 
@@ -33,7 +33,6 @@ public final class DocValues {
 
   /** 
    * An empty {@link BinaryDocValues} which returns no documents
-   * 这里返回一个空的基于 二进制的 docValues
    */
   public static final BinaryDocValues emptyBinary() {
     return new BinaryDocValues() {
@@ -65,6 +64,10 @@ public final class DocValues {
         return 0;
       }
 
+      /**
+       * 将当前文档id 以二进制的形式返回
+       * @return
+       */
       @Override
       public BytesRef binaryValue() {
         assert false;
@@ -75,11 +78,9 @@ public final class DocValues {
 
   /** 
    * An empty NumericDocValues which returns no documents
-   * 返回一个空的 docValues
    */
   public static final NumericDocValues emptyNumeric() {
     return new NumericDocValues() {
-      // 可以看到这里 docId 始终是一个无效值 并且尝试获取时 总是返回0
       private int doc = -1;
       
       @Override
@@ -329,13 +330,10 @@ public final class DocValues {
    * @throws IllegalStateException if {@code field} exists, but was not indexed with docvalues.
    * @throws IllegalStateException if {@code field} has docvalues, but the type is not {@link DocValuesType#NUMERIC}.
    * @throws IOException if an I/O error occurs.
-   * 通过指定reader 对象 以及指定的域名  读取域值
-   * 可以这样理解 reader 封装了读取某个区域的api
    */
   public static NumericDocValues getNumeric(LeafReader reader, String field) throws IOException {
     NumericDocValues dv = reader.getNumericDocValues(field);
     if (dv == null) {
-      // 抛出异常
       checkField(reader, field, DocValuesType.NUMERIC);
       return emptyNumeric();
     } else {

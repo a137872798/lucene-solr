@@ -23,6 +23,7 @@ import org.apache.lucene.util.BytesRefBuilder;
  * When mutating instances of this object, the caller is responsible for ensuring 
  * that any instance where <code>exists</code> is set to <code>false</code> must also 
  * have a <code>value</code> with a length set to 0.
+ * 内部是str 使用 BytesRef表示
  */
 public class MutableValueStr extends MutableValue {
   public BytesRefBuilder value = new BytesRefBuilder();

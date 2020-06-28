@@ -29,28 +29,40 @@ import org.apache.lucene.util.RamUsageEstimator;
  * to do this, it will grow the number of bits per value to 64.
  *
  * <p>@lucene.internal</p>
+ * 对应 PagedGrowableWriter 创建的 Mutable实现类
+ * 本对象就像是一个包装类
  */
 public class GrowableWriter extends PackedInts.Mutable {
 
   private long currentMask;
+  /**
+   * 该对象才是真正负责存储数据的
+   */
   private PackedInts.Mutable current;
   private final float acceptableOverheadRatio;
 
   /**
-   * @param startBitsPerValue       the initial number of bits per value, may grow depending on the data
-   * @param valueCount              the number of values
+   * @param startBitsPerValue       the initial number of bits per value, may grow depending on the data      每个数据会占用多少bit
+   * @param valueCount              the number of values      一共要存储多少数据
    * @param acceptableOverheadRatio an acceptable overhead ratio
    */
   public GrowableWriter(int startBitsPerValue, int valueCount, float acceptableOverheadRatio) {
     this.acceptableOverheadRatio = acceptableOverheadRatio;
+    // 生成一个符合条件的存储对象
     current = PackedInts.getMutable(valueCount, startBitsPerValue, this.acceptableOverheadRatio);
     currentMask = mask(current.getBitsPerValue());
   }
 
+  /**
+   * 计算掩码值
+   * @param bitsPerValue
+   * @return
+   */
   private static long mask(int bitsPerValue) {
     return bitsPerValue == 64 ? ~0L : PackedInts.maxValue(bitsPerValue);
   }
 
+  // 剩下的操作都是通过 委托给current实现的  它们都是非并发安全的 看来是在单线程中使用
   @Override
   public long get(int index) {
     return current.get(index);
@@ -70,16 +82,27 @@ public class GrowableWriter extends PackedInts.Mutable {
     return current;
   }
 
+  /**
+   * 检测是否有足够的空间
+   * @param value
+   */
   private void ensureCapacity(long value) {
+    // 当前写入的值 如果小于之前初始化时 规定的 那么直接在current中分配即可
     if ((value & currentMask) == value) {
       return;
     }
+    // 代表需要进行扩容
+    // 判断该数据会占用多少bit   等价于 Math.max(1, 64 - Long.numberOfLeadingZeros(bits))
     final int bitsRequired = PackedInts.unsignedBitsRequired(value);
     assert bitsRequired > current.getBitsPerValue();
+    // 获取当前已经写入的长度
     final int valueCount = size();
+    // 这里按需分配数据块
     PackedInts.Mutable next = PackedInts.getMutable(valueCount, bitsRequired, acceptableOverheadRatio);
+    // 将之前的数据拷贝进去
     PackedInts.copy(current, 0, next, 0, valueCount, PackedInts.DEFAULT_BUFFER_SIZE);
     current = next;
+    // 重新计算掩码
     currentMask = mask(current.getBitsPerValue());
   }
 

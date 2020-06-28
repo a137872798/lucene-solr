@@ -24,6 +24,7 @@ package org.apache.lucene.util;
  * worst-case quadratic runtime. Small arrays are sorted with
  * insertion sort.
  * @lucene.internal
+ * 该对象 使用快速排序算法
  */
 public abstract class IntroSorter extends Sorter {
 

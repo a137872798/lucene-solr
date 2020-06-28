@@ -28,7 +28,7 @@ import org.apache.lucene.store.IOContext;
  * {@link SegmentInfo} (segment metadata file).
  * @see SegmentInfo
  * @lucene.experimental
- * 代表以哪种格式写入 segmentInfo
+ * 生成 有关段信息的索引
  */
 public abstract class SegmentInfoFormat {
   /** Sole constructor. (For invocation by subclass 

@@ -24,6 +24,7 @@ import org.apache.lucene.store.DataOutput;
 
 /**
  * A data compressor.
+ * 压缩对象
  */
 public abstract class Compressor implements Closeable {
 
@@ -34,6 +35,7 @@ public abstract class Compressor implements Closeable {
    * Compress bytes into <code>out</code>. It is the responsibility of the
    * compressor to add all necessary information so that a {@link Decompressor}
    * will know when to stop decompressing bytes from the stream.
+   * 将数据压缩后 写入到  out中
    */
   public abstract void compress(byte[] bytes, int off, int len, DataOutput out) throws IOException;
 

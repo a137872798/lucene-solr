@@ -47,9 +47,13 @@ import org.apache.lucene.util.Bits;
  * </ol>
  * 
  * @since 2.9
+ * 权重对象骨架
  */
 public abstract class Weight implements SegmentCacheable {
 
+  /**
+   * 代表该权重对象是由哪个 Query 派生出来的
+   */
   protected final Query parentQuery;
 
   /** Sole constructor, typically invoked by sub-classes.

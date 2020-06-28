@@ -50,14 +50,24 @@ import org.apache.lucene.util.InfoStream;
 
 final class BufferedUpdatesStream implements Accountable {
 
+  // 这里存储了一组已经冻结的 更新对象  冻结的意思就是不会再为这些term 增加新的更新动作了(改动了)
   private final Set<FrozenBufferedUpdates> updates = new HashSet<>();
 
   // Starts at 1 so that SegmentInfos that have never had
   // deletes applied (whose bufferedDelGen defaults to 0)
   // will be correct:
   private long nextGen = 1;
+  /**
+   * 代表这个段已经处理完成了
+   */
   private final FinishedSegments finishedSegments;
+  /**
+   * 输出日志信息
+   */
   private final InfoStream infoStream;
+  /**
+   * 记录有关的 term数量 以及占用的内存
+   */
   private final AtomicLong bytesUsed = new AtomicLong();
   private final AtomicInteger numTerms = new AtomicInteger();
 
@@ -304,10 +314,12 @@ final class BufferedUpdatesStream implements Accountable {
   private static class FinishedSegments {
 
     /** Largest del gen, inclusive, for which all prior packets have finished applying. */
+    // 记录最后一个 delGen
     private long completedDelGen;
 
     /** This lets us track the "holes" in the current frontier of applying del
      *  gens; once the holes are filled in we can advance completedDelGen. */
+    // 存储了多个 gen
     private final Set<Long> finishedDelGens = new HashSet<>();
 
     private final InfoStream infoStream;

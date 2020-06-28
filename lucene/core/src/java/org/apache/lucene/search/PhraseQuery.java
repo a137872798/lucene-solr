@@ -66,6 +66,7 @@ import org.apache.lucene.util.BytesRef;
  * builder.add(new Term("body", "two"), 1);
  * PhraseQuery pq = builder.build();
  * </pre>
+ * 基于一组短语来查询
  */
 public class PhraseQuery extends Query {
 

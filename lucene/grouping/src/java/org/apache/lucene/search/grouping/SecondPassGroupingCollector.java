@@ -33,9 +33,13 @@ import org.apache.lucene.search.SimpleCollector;
  * @see DistinctValuesCollector
  *
  * @lucene.experimental
+ * 负责组内排序的对象
  */
 public class SecondPassGroupingCollector<T> extends SimpleCollector {
 
+  /**
+   * 该对象从索引中读取数据 并按组划分
+   */
   protected final GroupSelector<T> groupSelector;
   protected final Collection<SearchGroup<T>> groups;
   protected final GroupReducer<T, ?> groupReducer;

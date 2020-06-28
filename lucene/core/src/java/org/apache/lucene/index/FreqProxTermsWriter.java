@@ -30,6 +30,9 @@ import org.apache.lucene.util.CollectionUtil;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 
+/**
+ * 该对象负责写入 词的频率
+ */
 final class FreqProxTermsWriter extends TermsHash {
 
   public FreqProxTermsWriter(DocumentsWriterPerThread docWriter, TermsHash termVectors) {

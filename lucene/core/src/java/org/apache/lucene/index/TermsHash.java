@@ -32,10 +32,15 @@ import org.apache.lucene.util.IntBlockPool;
  *  streams per token.  Consumers of this class, eg {@link
  *  FreqProxTermsWriter} and {@link TermVectorsConsumer},
  *  write their own byte streams under each term. */
+// 该对象通过 hash函数 存储term
 abstract class TermsHash {
 
+  /**
+   * 本身还是一个链表结构
+   */
   final TermsHash nextTermsHash;
 
+  // 因为无法预先得知要申请的大块内存 这里通过一个pool 对象 按需创建内存 并在内部通过一个二维数组进行连接
   final IntBlockPool intPool;
   final ByteBlockPool bytePool;
   ByteBlockPool termBytePool;
@@ -45,6 +50,12 @@ abstract class TermsHash {
 
   final boolean trackAllocations;
 
+  /**
+   *
+   * @param docWriter
+   * @param trackAllocations  默认情况为 true
+   * @param nextTermsHash
+   */
   TermsHash(final DocumentsWriterPerThread docWriter, boolean trackAllocations, TermsHash nextTermsHash) {
     this.docState = docWriter.docState;
     this.trackAllocations = trackAllocations; 

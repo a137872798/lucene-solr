@@ -61,6 +61,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
   /** Codec name for the index. */
   public static final String INDEX_CODEC_NAME = "Lucene85FieldsIndex";
 
+  // 下面代表支持写入到文档中的字段类型
   static final int         STRING = 0x00;
   static final int       BYTE_ARR = 0x01;
   static final int    NUMERIC_INT = 0x02;

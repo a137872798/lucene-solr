@@ -33,6 +33,7 @@ public abstract class NormsFormat {
 
   /** Returns a {@link NormsConsumer} to write norms to the
    *  index. */
+  // 生成一个写入标准因子的对象
   public abstract NormsConsumer normsConsumer(SegmentWriteState state) throws IOException;
 
   /** 
@@ -44,6 +45,7 @@ public abstract class NormsFormat {
    * to open them. Under these circumstances an IOException should be thrown by 
    * the implementation. IOExceptions are expected and will automatically cause 
    * a retry of the segment opening logic with the newly revised segments.
+   * 获取一个 读取标准因子的对象
    */
   public abstract NormsProducer normsProducer(SegmentReadState state) throws IOException;
 }

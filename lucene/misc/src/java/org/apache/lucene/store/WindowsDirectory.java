@@ -37,6 +37,7 @@ import java.nio.file.Path;
  *   <li>Open indexes with WindowsDirectory and use it.
  * </ol>
  * @lucene.experimental
+ * 直接操作 window底层函数
  */
 public class WindowsDirectory extends FSDirectory {
   private static final int DEFAULT_BUFFERSIZE = 4096; /* default pgsize on ia32/amd64 */

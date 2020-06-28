@@ -24,46 +24,71 @@ import org.apache.lucene.util.packed.PackedInts.Mutable;
  * <p>You should use this class instead of the {@link PackedLongValues} related ones only when
  * you need random write-access. Otherwise this class will likely be slower and
  * less memory-efficient.
- * @lucene.internal
+ *
+ * @lucene.internal 将数据拆分并存入 大小固定的 block中
+ * 只有当需要随机访问时 才应该使用 PackedLongValues  而非 PagedGrowableWriter
+ * 并且该对象的读取可能会更耗时一些  不过更加节省内存
  */
 public final class PagedGrowableWriter extends AbstractPagedMutable<PagedGrowableWriter> {
 
-  final float acceptableOverheadRatio;
+    /**
+     * 允许付出的额外开销
+     */
+    final float acceptableOverheadRatio;
 
-  /**
-   * Create a new {@link PagedGrowableWriter} instance.
-   *
-   * @param size the number of values to store.
-   * @param pageSize the number of values per page
-   * @param startBitsPerValue the initial number of bits per value
-   * @param acceptableOverheadRatio an acceptable overhead ratio
-   */
-  public PagedGrowableWriter(long size, int pageSize,
-      int startBitsPerValue, float acceptableOverheadRatio) {
-    this(size, pageSize, startBitsPerValue, acceptableOverheadRatio, true);
-  }
-
-  PagedGrowableWriter(long size, int pageSize,int startBitsPerValue, float acceptableOverheadRatio, boolean fillPages) {
-    super(startBitsPerValue, size, pageSize);
-    this.acceptableOverheadRatio = acceptableOverheadRatio;
-    if (fillPages) {
-      fillPages();
+    /**
+     * Create a new {@link PagedGrowableWriter} instance.
+     *
+     * @param size                    the number of values to store.
+     * @param pageSize                the number of values per page
+     * @param startBitsPerValue       the initial number of bits per value
+     * @param acceptableOverheadRatio an acceptable overhead ratio
+     */
+    public PagedGrowableWriter(long size, int pageSize,
+                               int startBitsPerValue, float acceptableOverheadRatio) {
+        this(size, pageSize, startBitsPerValue, acceptableOverheadRatio, true);
     }
-  }
 
-  @Override
-  protected Mutable newMutable(int valueCount, int bitsPerValue) {
-    return new GrowableWriter(bitsPerValue, valueCount, acceptableOverheadRatio);
-  }
+    /**
+     * @param size
+     * @param pageSize                默认为 1<<27     注意这里传入的 pageSize应当为2的幂次
+     * @param startBitsPerValue       每个值会占用多少bit    默认是8
+     * @param acceptableOverheadRatio 默认情况下不适用额外的内存  但是在读取时会更耗时一些  对应 PackedInts.COMPACT
+     * @param fillPages               默认情况下为true
+     */
+    PagedGrowableWriter(long size, int pageSize, int startBitsPerValue, float acceptableOverheadRatio, boolean fillPages) {
+        super(startBitsPerValue, size, pageSize);
+        this.acceptableOverheadRatio = acceptableOverheadRatio;
+        if (fillPages) {
+            fillPages();
+        }
+    }
 
-  @Override
-  protected PagedGrowableWriter newUnfilledCopy(long newSize) {
-    return new PagedGrowableWriter(newSize, pageSize(), bitsPerValue, acceptableOverheadRatio, false);
-  }
+    /**
+     * 为每个 Mutable槽创建对象
+     *
+     * @param valueCount  该容器将会存放多少元素
+     * @param bitsPerValue
+     * @return
+     */
+    @Override
+    protected Mutable newMutable(int valueCount, int bitsPerValue) {
+        return new GrowableWriter(bitsPerValue, valueCount, acceptableOverheadRatio);
+    }
 
-  @Override
-  protected long baseRamBytesUsed() {
-    return super.baseRamBytesUsed() + Float.BYTES;
-  }
+    /**
+     * 返回一个未填充的对象
+     * @param newSize
+     * @return
+     */
+    @Override
+    protected PagedGrowableWriter newUnfilledCopy(long newSize) {
+        return new PagedGrowableWriter(newSize, pageSize(), bitsPerValue, acceptableOverheadRatio, false);
+    }
+
+    @Override
+    protected long baseRamBytesUsed() {
+        return super.baseRamBytesUsed() + Float.BYTES;
+    }
 
 }

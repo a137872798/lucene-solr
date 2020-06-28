@@ -24,7 +24,7 @@ import java.util.zip.CRC32;
 import java.util.zip.CheckedOutputStream;
 
 /** Implementation class for buffered {@link IndexOutput} that writes to an {@link OutputStream}. */
-// 一个简单的代理对象
+// 不同于 ByteBufferIndexOutput 内部存放 BBDataOutput对象    该对象内部实实在在的存放了一个outputStream
 public class OutputStreamIndexOutput extends IndexOutput {
 
   /**
@@ -46,6 +46,7 @@ public class OutputStreamIndexOutput extends IndexOutput {
    */
   public OutputStreamIndexOutput(String resourceDescription, String name, OutputStream out, int bufferSize) {
     super(resourceDescription, name);
+    // CheckedOutputStream 具备校验功能
     this.os = new BufferedOutputStream(new CheckedOutputStream(out, crc), bufferSize);
   }
 

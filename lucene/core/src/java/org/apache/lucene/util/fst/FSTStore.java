@@ -23,6 +23,7 @@ import org.apache.lucene.util.Accountable;
 import java.io.IOException;
 
 /** Abstraction for reading/writing bytes necessary for FST. */
+// 负责通过input的数据构建fst 或者将内部数据输出到一个output
 public interface FSTStore extends Accountable {
     void init(DataInput in, long numBytes) throws IOException;
     long size();

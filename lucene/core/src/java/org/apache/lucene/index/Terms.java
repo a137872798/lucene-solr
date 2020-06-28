@@ -26,8 +26,8 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
 /**
  * Access to the terms in a specific field.  See {@link Fields}.
  * @lucene.experimental
- *
  */
+
 public abstract class Terms {
 
   /** Sole constructor. (For invocation by subclass 
@@ -37,7 +37,7 @@ public abstract class Terms {
 
   /** Returns an iterator that will step through all
    *  terms. This method will not return null. */
-  // 返回一个 term的迭代器 该对象对应某个term 还可以获取 ImpactsEnum 和 PostingsEnum
+  // 返回词的迭代器对象  注意词就是一个byte[] (内部使用ByteRef表示)
   public abstract TermsEnum iterator() throws IOException;
 
   /** Returns a TermsEnum that iterates over all terms and

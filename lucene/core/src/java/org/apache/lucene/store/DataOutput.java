@@ -188,14 +188,14 @@ public abstract class DataOutput {
    * 然后 VInt 是基于 VByte 的 每次写入 7 位 换算下来 使用 2~5个VByte
    */
   public final void writeVInt(int i) throws IOException {
-    // 一个byte 的大小是256 而0x7F 是127 换算成位 就是 7位  也就是该int值每次都是按7位来取的
+    // 每超过 7 位
     while ((i & ~0x7F) != 0) {
-      // 就需要在往高位读取 直到发现某个 VByte的高位为0
+      // 先写入低7位 这里 拼接 0x80 代表最高位为1   在读取的时候每次读一个byte的长度 如果最高位是0 也就代表是一个完整的数 如果最高位是1 会继续读取byte并进行拼接
       writeByte((byte)((i & 0x7F) | 0x80));
       i >>>= 7;
     }
 
-    // 最后的7位 按照byte 直接写入 最高位没有用1占位
+    // 写入最后的7位
     writeByte((byte)i);
   }
 
@@ -227,6 +227,7 @@ public abstract class DataOutput {
    * <p>
    * The format is described further in {@link DataOutput#writeVInt(int)}.
    * @see DataInput#readVLong()
+   * 写入一个变长的 long
    */
   public final void writeVLong(long i) throws IOException {
     if (i < 0) {

@@ -443,21 +443,28 @@ public class FacetsConfig {
 
   /** Encodes ordinals into a BytesRef; expert: subclass can
    *  override this to change encoding. */
+  // 采用差值存储规则来减少内存开销
   protected BytesRef dedupAndEncode(IntsRef ordinals) {
+    // 对给定范围内的元素进行排序
     Arrays.sort(ordinals.ints, ordinals.offset, ordinals.length);
+    // 这里使用VByte 进行存储的话 一个int值最多需要5个byte
     byte[] bytes = new byte[5*ordinals.length];
     int lastOrd = -1;
     int upto = 0;
     for(int i=0;i<ordinals.length;i++) {
+      // 找到待排序的int值
       int ord = ordinals.ints[ordinals.offset+i];
       // ord could be == lastOrd, so we must dedup:
+      // 因为是差值保存策略 也就是如果出现相同的值 就直接丢弃
       if (ord > lastOrd) {
         int delta;
         if (lastOrd == -1) {
           delta = ord;
         } else {
+          // 保存差值
           delta = ord - lastOrd;
         }
+        // 这里就是 VInt的处理方式
         if ((delta & ~0x7F) == 0) {
           bytes[upto] = (byte) delta;
           upto++;
@@ -484,6 +491,7 @@ public class FacetsConfig {
           bytes[upto + 4] = (byte) (delta & 0x7F);
           upto += 5;
         }
+        // 记录上次的值  便于计算下一个值与该值的差
         lastOrd = ord;
       }
     }

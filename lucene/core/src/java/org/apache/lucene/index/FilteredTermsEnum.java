@@ -32,6 +32,7 @@ import org.apache.lucene.util.AttributeSource;
  * call {@code seek()}, it is forward only; it throws
  * {@link UnsupportedOperationException} when a seeking method
  * is called.
+ * 为terms 迭代器增加额外功能
  */
 public abstract class FilteredTermsEnum extends TermsEnum {
 

@@ -125,11 +125,13 @@ public final class CodecUtil {
    *         is more than 127 characters in length, or if id is invalid,
    *         or if the suffix is not simple ASCII, or more than 255 characters
    *         in length.
+   *         写入索引文件的文件头
    */
   public static void writeIndexHeader(DataOutput out, String codec, int version, byte[] id, String suffix) throws IOException {
     if (id.length != StringHelper.ID_LENGTH) {
       throw new IllegalArgumentException("Invalid id: " + StringHelper.idToString(id));
     }
+    // 写入头部信息
     writeHeader(out, codec, version);
     out.writeBytes(id, 0, id.length);
     BytesRef suffixBytes = new BytesRef(suffix);

@@ -48,11 +48,15 @@ import org.apache.lucene.util.IOUtils;
  * instances should use the same lock factory.</p>
  *
  * @lucene.experimental
+ * 该对象将2个 directory 整合成一个
  */
 
 public class FileSwitchDirectory extends Directory {
   private final Directory secondaryDir;
   private final Directory primaryDir;
+  /**
+   * 当文件名携带以下拓展名时 就去primaryDir
+   */
   private final Set<String> primaryExtensions;
   private boolean doClose;
   private static final Pattern EXT_PATTERN = Pattern.compile("\\.([a-zA-Z]+)");
