@@ -25,8 +25,11 @@ import org.apache.lucene.search.DocIdSetIterator;
  * 该对象负责处理 doc 
  */
 abstract class DocConsumer {
+
   abstract void processDocument() throws IOException;
+
   abstract Sorter.DocMap flush(final SegmentWriteState state) throws IOException;
+
   abstract void abort() throws IOException;
 
   /**

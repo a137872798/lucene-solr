@@ -27,7 +27,11 @@ import org.apache.lucene.util.BytesRefHash;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.IntBlockPool;
 
+/**
+ * 每个域 会携带一个term hash桶  应该是为了复用这些 term吧 因为term本身是很容易出现重复的
+ */
 abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
+
   private static final int HASH_INIT_SIZE = 4;
 
   /**

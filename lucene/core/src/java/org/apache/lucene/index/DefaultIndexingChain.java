@@ -60,7 +60,7 @@ final class DefaultIndexingChain extends DocConsumer {
    */
   final Counter bytesUsed;
   /**
-   * 当前正在处理的 doc 的状态
+   * 当前正在处理的 doc 的状态  当要处理的doc发生变化时 该属性也要变化
    */
   final DocumentsWriterPerThread.DocState docState;
   /**
@@ -74,7 +74,9 @@ final class DefaultIndexingChain extends DocConsumer {
 
   // Writes postings and term vectors:
   final TermsHash termsHash;
+
   // Writes stored fields
+  // 该对象负责存储域信息
   final StoredFieldsConsumer storedFieldsConsumer;
 
   // NOTE: I tried using Hash Map<String,PerField>
@@ -768,21 +770,40 @@ final class DefaultIndexingChain extends DocConsumer {
     info.setIndexOptions(indexOptions);
   }
 
-  /** NOTE: not static: accesses at least docState, termsHash. */
+  /**
+   * 该对象内部封装了 写入域信息的逻辑
+   */
   private final class PerField implements Comparable<PerField> {
 
+    /**
+     * 为域创建索引文件的版本  主要用于判断索引文件是否兼容
+     */
     final int indexCreatedVersionMajor;
+    /**
+     * 该对象描述了这个域的信息
+     */
     final FieldInfo fieldInfo;
+    /**
+     * 该对象负责打分
+     */
     final Similarity similarity;
 
+    /**
+     * 这个对象内部除了 域的常规属性后 还有一组 attr 对象
+     */
     FieldInvertState invertState;
+    /**
+     * 该对象存储了这个 field 下所有的 term
+     */
     TermsHashPerField termsHashPerField;
 
     // Non-null if this field ever had doc values in this
     // segment:
+    // 该对象负责写入 doc的数据
     DocValuesWriter docValuesWriter;
 
     // Non-null if this field ever had points in this segment:
+    // 写入点数据 点数据可能就是那种 有多个维度的
     PointValuesWriter pointValuesWriter;
 
     /** We use this to know when a PerField is seen for the
@@ -793,23 +814,38 @@ final class DefaultIndexingChain extends DocConsumer {
     PerField next;
 
     // Lazy init'd:
+    // 写入标准因子
     NormValuesWriter norms;
     
     // reused
+    // token 是term 通过处理后生成的词元
     TokenStream tokenStream;
 
+    /**
+     * 初始化该对象 只需要一个 fieldInfo
+     * @param indexCreatedVersionMajor
+     * @param fieldInfo
+     * @param invert
+     */
     public PerField(int indexCreatedVersionMajor, FieldInfo fieldInfo, boolean invert) {
       this.indexCreatedVersionMajor = indexCreatedVersionMajor;
       this.fieldInfo = fieldInfo;
+      // 每个doc 有自己的打分规则
       similarity = docState.similarity;
+      // 如果需要反转的话 存储反转信息
       if (invert) {
         setInvertState();
       }
     }
 
+    /**
+     * 初始化 反转信息对象
+     */
     void setInvertState() {
       invertState = new FieldInvertState(indexCreatedVersionMajor, fieldInfo.name, fieldInfo.getIndexOptions());
+      // 将反转信息填充到 termsHash中
       termsHashPerField = termsHash.addField(invertState, fieldInfo);
+      // 如果域信息存在 标准因子 那么需要初始化一个标准因子 writer
       if (fieldInfo.omitsNorms() == false) {
         assert norms == null;
         // Even if no documents actually succeed in setting a norm, we still write norms for this segment:

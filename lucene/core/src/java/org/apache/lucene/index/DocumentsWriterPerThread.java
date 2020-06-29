@@ -93,7 +93,7 @@ final class DocumentsWriterPerThread {
     };
 
     /**
-     * 携带某个文档的相关参数
+     * 当需要将某个doc 写入到索引时  会将相关信息填充到该对象
      */
     static class DocState {
         /**

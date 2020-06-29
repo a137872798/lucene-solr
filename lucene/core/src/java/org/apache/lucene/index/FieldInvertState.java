@@ -30,7 +30,6 @@ import org.apache.lucene.util.AttributeSource;
  * also used to calculate the normalization factor for a field.
  * 
  * @lucene.experimental
- * 一个简单的bean对象 记录各种信息
  */
 public final class FieldInvertState {
   final int indexCreatedVersionMajor;
@@ -47,6 +46,7 @@ public final class FieldInvertState {
   int lastPosition = 0;
   AttributeSource attributeSource;
 
+  // 下面是 域携带的一些相关属性
   OffsetAttribute offsetAttribute;
   PositionIncrementAttribute posIncrAttribute;
   PayloadAttribute payloadAttribute;
@@ -86,10 +86,10 @@ public final class FieldInvertState {
     lastStartOffset = 0;
     lastPosition = 0;
   }
-  
-  // TODO: better name?
+
   /**
    * Sets attributeSource to a new instance.
+   * 传入一个可以提供属性的  属性源   从中抽取属性并赋值
    */
   void setAttributeSource(AttributeSource attributeSource) {
     if (this.attributeSource != attributeSource) {
