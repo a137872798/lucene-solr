@@ -31,7 +31,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 
 /**
- * 该对象负责写入 词的频率
+ * 该对象负责写入 词的频率   该对象下游是写入词向量的 对象
  */
 final class FreqProxTermsWriter extends TermsHash {
 
@@ -114,8 +114,15 @@ final class FreqProxTermsWriter extends TermsHash {
 
   }
 
+  /**
+   *
+   * @param invertState  内部也是存储域信息
+   * @param fieldInfo
+   * @return
+   */
   @Override
   public TermsHashPerField addField(FieldInvertState invertState, FieldInfo fieldInfo) {
+    // 先调用下游的  addField 之后将结果作为 返回的 perField的属性
     return new FreqProxTermsWriterPerField(invertState, this, fieldInfo, nextTermsHash.addField(invertState, fieldInfo));
   }
 }

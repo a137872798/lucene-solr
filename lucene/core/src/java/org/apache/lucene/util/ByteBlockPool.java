@@ -393,18 +393,18 @@ public final class ByteBlockPool implements Accountable {
      * @param textStart  这是一个词的起点  term的存放特性是先存一个长度 然后存字符
      */
     public void setBytesRef(BytesRef term, int textStart) {
-        // 将 term.bytes 指向了block
+        // 将 term.bytes 指向了block   这样可以避免数据拷贝
         final byte[] bytes = term.bytes = buffers[textStart >> BYTE_BLOCK_SHIFT];
         int pos = textStart & BYTE_BLOCK_MASK;
         // 代表只有低7位有数据  也就是长度只有一个byte
         if ((bytes[pos] & 0x80) == 0) {
-            // length is 1 byte
+            // 第一位是长度
             term.length = bytes[pos];
-            // 读取的起点就是 pos + 1
+            // 这里指定读取的起点  配合 length 就可以读取到数据
             term.offset = pos + 1;
         } else {
             // length is 2 bytes
-            // 长度不是1就是2
+            // 代表表示长度的数据 超过一个字节
             term.length = (bytes[pos] & 0x7f) + ((bytes[pos + 1] & 0xff) << 7);
             term.offset = pos + 2;
         }

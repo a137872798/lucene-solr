@@ -25,10 +25,14 @@ import org.apache.lucene.util.BytesRef;
 // TODO: break into separate freq and prox writers as
 // codecs; make separate container (tii/tis/skip/*) that can
 // be configured as any number of files 1..N
+// 该对象是上游对象 下接TermVectorsConsumerPerField
 final class FreqProxTermsWriterPerField extends TermsHashPerField {
 
+  /**
+   * 该对象内部有多个 int[]  每个数组应该就是用来存储描述term的某个属性
+   */
   private FreqProxPostingsArray freqProxPostingsArray;
-
+  // 根据之前索引的配置确定是否要存储这些信息
   final boolean hasFreq;
   final boolean hasProx;
   final boolean hasOffsets;
@@ -48,6 +52,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
     super(fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0 ? 2 : 1, invertState, termsHash, nextPerField, fieldInfo);
     IndexOptions indexOptions = fieldInfo.getIndexOptions();
     assert indexOptions != IndexOptions.NONE;
+    // 根据索引配置 确定是否要存储某些属性
     hasFreq = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
     hasProx = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
     hasOffsets = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;
@@ -215,7 +220,18 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
     return new FreqProxPostingsArray(size, hasFreq, hasProx, hasOffsets);
   }
 
+  /**
+   * 存储频率信息的对象
+   */
   static final class FreqProxPostingsArray extends ParallelPostingsArray {
+
+    /**
+     *
+     * @param size
+     * @param writeFreqs
+     * @param writeProx
+     * @param writeOffsets
+     */
     public FreqProxPostingsArray(int size, boolean writeFreqs, boolean writeProx, boolean writeOffsets) {
       super(size);
       if (writeFreqs) {
@@ -234,9 +250,13 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       //System.out.println("PA init freqs=" + writeFreqs + " pos=" + writeProx + " offs=" + writeOffsets);
     }
 
+    /**
+     * 当需要记录 频率信息时 就要初始化该对象
+     */
     int termFreqs[];                                   // # times this term occurs in the current doc
     int lastDocIDs[];                                  // Last docID where this term occurred
     int lastDocCodes[];                                // Code for prior doc
+    // 同样只有需要存储时 才初始化容器
     int lastPositions[];                               // Last position where this term occurred
     int lastOffsets[];                                 // Last endOffset where this term occurred
 
@@ -254,6 +274,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
 
       System.arraycopy(lastDocIDs, 0, to.lastDocIDs, 0, numToCopy);
       System.arraycopy(lastDocCodes, 0, to.lastDocCodes, 0, numToCopy);
+      // 只有在初始化时设置了需要记录某属性 才会初始化数组 这里拷贝数组内的数据
       if (lastPositions != null) {
         assert to.lastPositions != null;
         System.arraycopy(lastPositions, 0, to.lastPositions, 0, numToCopy);
@@ -268,6 +289,10 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       }
     }
 
+    /**
+     * 父类3个int[] 需要的值就是 3*int.bytes   这里又多出了几个数组  需要的值就是加上这些新字段
+     * @return
+     */
     @Override
     int bytesPerPosting() {
       int bytes = ParallelPostingsArray.BYTES_PER_POSTING + 2 * Integer.BYTES;

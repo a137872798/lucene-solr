@@ -31,7 +31,7 @@ import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 
 /**
- * 该对象用于处理 词向量
+ * 该对象和SortingTermVectorsConsumer 作为 FreqProxTermsWriter 的下游 会接受它发来的数据
  */
 class TermVectorsConsumer extends TermsHash {
   /**
@@ -64,7 +64,6 @@ class TermVectorsConsumer extends TermsHash {
   private TermVectorsConsumerPerField[] perFields = new TermVectorsConsumerPerField[1];
 
   /**
-   * 该对象在创建时 不会携带下游对象
    * @param docWriter
    */
   public TermVectorsConsumer(DocumentsWriterPerThread docWriter) {

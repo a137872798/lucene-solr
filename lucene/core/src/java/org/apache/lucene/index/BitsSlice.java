@@ -25,6 +25,7 @@ import org.apache.lucene.util.Bits;
  * Exposes a slice of an existing Bits as a new Bits.
  *
  * @lucene.internal
+ * 该对象类似于  ByteBuffer.slice(同样的分片对象 一份数据2份指针) 就是源对象的基础上在 get() 方法增加了额外的偏移量
  */
 final class BitsSlice implements Bits {
   private final Bits parent;

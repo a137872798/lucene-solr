@@ -32,7 +32,9 @@ import java.util.Arrays;
  * <p>{@code BytesRef} implements {@link Comparable}. The underlying byte arrays
  * are sorted lexicographically, numerically treating elements as unsigned.
  * This is identical to Unicode codepoint order.
- * 代表一个 byte[]  封装了一些好用的api
+ * 这个对象可以无关byte[] 内部存储的数据  直接通过offset 和 length 读取byte[] 片段
+ * 这样的好处是 ByteBlockPool存储数据的基本单位就是byteRef 那么在读取数据时
+ * 不再需要进行数据的拷贝  而是直接获取到bytes[]的地址  配合offset和length读取数据
  */
 public final class BytesRef implements Comparable<BytesRef>, Cloneable {
   /** An empty byte array for convenience */

@@ -24,7 +24,7 @@ import org.apache.lucene.codecs.TermVectorsWriter;
 import org.apache.lucene.util.BytesRef;
 
 /**
- *
+ * 通过 词向量Consumer.addField 会创建一个该对象
  */
 final class TermVectorsConsumerPerField extends TermsHashPerField {
 
@@ -274,6 +274,9 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     return new TermVectorsPostingsArray(size);
   }
 
+  /**
+   * 该容器内部同样存储了很多数据
+   */
   static final class TermVectorsPostingsArray extends ParallelPostingsArray {
     public TermVectorsPostingsArray(int size) {
       super(size);
@@ -282,6 +285,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
       lastPositions = new int[size];
     }
 
+    // 这里需要额外3个数组来存储数据
     int[] freqs;                                       // How many times this term occurred in the current doc
     int[] lastOffsets;                                 // Last offset we saw
     int[] lastPositions;                               // Last position where this term occurred

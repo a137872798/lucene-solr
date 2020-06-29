@@ -18,12 +18,18 @@ package org.apache.lucene.index;
 
 import org.apache.lucene.util.ArrayUtil;
 
+/**
+ * 用于存储3种类型的数据
+ */
 class ParallelPostingsArray {
   final static int BYTES_PER_POSTING = 3 * Integer.BYTES;
 
   final int size;
   final int[] textStarts;
   final int[] intStarts;
+  /**
+   * 这个数组 将 termId 映射到 term在某个 byteBlockPool的绝对偏移量  (实际上还需要加上 stream作为一个影响因子)
+   */
   final int[] byteStarts;
 
   ParallelPostingsArray(final int size) {

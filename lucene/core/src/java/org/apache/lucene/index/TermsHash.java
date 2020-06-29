@@ -32,7 +32,7 @@ import org.apache.lucene.util.IntBlockPool;
  *  streams per token.  Consumers of this class, eg {@link
  *  FreqProxTermsWriter} and {@link TermVectorsConsumer},
  *  write their own byte streams under each term. */
-// 该对象会存储 在分词过程中产生的 term
+// 该对象会存储在分词过程中产生的 term
 abstract class TermsHash {
 
   /**
@@ -51,6 +51,9 @@ abstract class TermsHash {
    */
   final DocumentsWriterPerThread.DocState docState;
 
+  /**
+   * 设置为  true  那么该对象会与外面的对象 共用计数器
+   */
   final boolean trackAllocations;
 
   /**

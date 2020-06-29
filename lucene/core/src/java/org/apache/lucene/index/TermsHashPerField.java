@@ -28,7 +28,7 @@ import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.IntBlockPool;
 
 /**
- * 每个域 会携带一个term hash桶  应该是为了复用这些 term吧 因为term本身是很容易出现重复的
+ * 对 TermsHash 调用 addField 时 会返回该对象的子类
  */
 abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 
@@ -40,7 +40,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
   final TermsHash termsHash;
 
   /**
-   * 该对象以链表形式组成
+   * 目前只有一种情况 就是  freqPerField 下面连接 termVectorPerField
    */
   final TermsHashPerField nextPerField;
   protected final DocumentsWriterPerThread.DocState docState;
@@ -49,6 +49,10 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
   protected TermFrequencyAttribute termFreqAtt;
 
   // Copied from our perThread
+  // 这些对象 使用 thread 的 allocator进行初始化 从 TermHash 传过来
+  /**
+   * 该对象存储了 bytePool 的 endIndex
+   */
   final IntBlockPool intPool;
   final ByteBlockPool bytePool;
   final ByteBlockPool termBytePool;
@@ -58,14 +62,29 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 
   protected final FieldInfo fieldInfo;
 
+  /**
+   * 该对象借助 pool 对象写入数据  利用了pool自动扩容且不需要大量的数据拷贝的特点
+   * 该对象本身只维护了  hash到 id 到 pool偏移量的映射关系
+   */
   final BytesRefHash bytesHash;
 
+  /**
+   * 该对象内部就是很多int[] 每个数组负责存储一种数据
+   */
   ParallelPostingsArray postingsArray;
   private final Counter bytesUsed;
 
   /** streamCount: how many streams this field stores per term.
    * E.g. doc(+freq) is 1 stream, prox+offset is a second. */
 
+  /**
+   *
+   * @param streamCount 代表存储几种数据流  只有频率时是1   除此之外如果有 offset position 之类的就是2
+   * @param fieldState
+   * @param termsHash
+   * @param nextPerField   该对象本身也是链式结构  目前只有 FreqProxTermsWriterPerField 有下游对象
+   * @param fieldInfo
+   */
   public TermsHashPerField(int streamCount, FieldInvertState fieldState, TermsHash termsHash, TermsHashPerField nextPerField, FieldInfo fieldInfo) {
     intPool = termsHash.intPool;
     bytePool = termsHash.bytePool;
@@ -79,9 +98,13 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     this.fieldInfo = fieldInfo;
     this.nextPerField = nextPerField;
     PostingsBytesStartArray byteStarts = new PostingsBytesStartArray(this, bytesUsed);
+    // 默认情况下 存储 byteRefId 与 pool偏移量关系的对象是  DirectBytesStartArray 对象 而这里替换成了 PostingsBytesStartArray
     bytesHash = new BytesRefHash(termBytePool, HASH_INIT_SIZE, byteStarts);
   }
 
+  /**
+   * 重置 hash桶内部的数据 同时将重置指令传递到下游
+   */
   void reset() {
     bytesHash.clear(false);
     if (nextPerField != null) {
@@ -89,14 +112,22 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     }
   }
 
+  /**
+   *
+   * @param reader   此时reader对象还没有初始化
+   * @param termID  这里传入了某个词的id  看来一个文档被分词器处理后 每个词应该有自己的id
+   * @param stream
+   */
   public void initReader(ByteSliceReader reader, int termID, int stream) {
     assert stream < streamCount;
+    // 将id 转换成 pool的 绝对偏移量   也就是所有的词都存储在 pool 对象中
     int intStart = postingsArray.intStarts[termID];
+    // 存储int 类型数据的 block
     final int[] ints = intPool.buffers[intStart >> IntBlockPool.INT_BLOCK_SHIFT];
     final int upto = intStart & IntBlockPool.INT_BLOCK_MASK;
-    reader.init(bytePool,
-                postingsArray.byteStarts[termID]+stream*ByteBlockPool.FIRST_LEVEL_SIZE,
-                ints[upto+stream]);
+    reader.init(bytePool,   // 通过 pool对象进行初始化
+                postingsArray.byteStarts[termID]+stream*ByteBlockPool.FIRST_LEVEL_SIZE,  // 这里是 startIndex
+                ints[upto+stream]);  // endIndex 是从 ints中获取的
   }
 
   int[] sortedTermIDs;
@@ -234,8 +265,14 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     writeByte(stream, (byte) i);
   }
 
+  /**
+   * 该对象在 BytesRefHash 中使用
+   */
   private static final class PostingsBytesStartArray extends BytesStartArray {
 
+    /**
+     * 该对象存储了某个域的信息 以及 term信息
+     */
     private final TermsHashPerField perField;
     private final Counter bytesUsed;
 
