@@ -104,9 +104,8 @@ abstract class TermsHash {
   }
 
   /**
-   * 将这些信息写入到索引中
-   * @param fieldsToFlush
-   * @param state
+   * @param fieldsToFlush  每个value 都代表某个field下所有的 term信息
+   * @param state  这个对象描述了 将数据写入到段索引中相关的参数
    * @param sortMap
    * @param norms
    * @throws IOException

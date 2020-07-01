@@ -40,6 +40,7 @@ class TermVectorsConsumer extends TermsHash {
   TermVectorsWriter writer;
 
   /** Scratch term used by TermVectorsConsumerPerField.finishDocument. */
+  // 当调用 finishDocument时 每个 perField对象会处理内部的term   每当处理到某个term时 会将对象内部的指针指向 term所在的内存块
   final BytesRef flushTerm = new BytesRef();
 
   /**
@@ -106,6 +107,7 @@ class TermVectorsConsumer extends TermsHash {
   // 从0 开始直到填充到 docId 不断地调用 startDocument 和 finishDocument
   void fill(int docID) throws IOException {
     while(lastDocID < docID) {
+      // 就是在 writer 不断的填充空的 DocData
       writer.startDocument(0);
       writer.finishDocument();
       lastDocID++;

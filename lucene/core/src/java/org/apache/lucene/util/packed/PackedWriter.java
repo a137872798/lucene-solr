@@ -26,7 +26,7 @@ import java.util.Arrays;
 // Packs high order byte first, to match
 // IndexOutput.writeInt/Long/Short byte order
 // 代表一个紧凑的对象
-
+// 该对象会以紧凑的方式将数据写入到 output中
 final class PackedWriter extends PackedInts.Writer {
 
   boolean finished;
@@ -41,6 +41,14 @@ final class PackedWriter extends PackedInts.Writer {
   int off;
   int written;
 
+  /**
+   *
+   * @param format
+   * @param out
+   * @param valueCount  预计要写入多少数据
+   * @param bitsPerValue   每个数据要占用多少位
+   * @param mem
+   */
   PackedWriter(PackedInts.Format format, DataOutput out, int valueCount, int bitsPerValue, int mem) {
     super(out, valueCount, bitsPerValue);
     this.format = format;
@@ -77,6 +85,7 @@ final class PackedWriter extends PackedInts.Writer {
   public void finish() throws IOException {
     assert !finished;
     if (valueCount != -1) {
+      // 如果写入的值没有到一开始预估的  用0填充
       while (written < valueCount) {
         add(0L);
       }
@@ -86,6 +95,7 @@ final class PackedWriter extends PackedInts.Writer {
   }
 
   private void flush() throws IOException {
+    // 将写入的 int 转换成 以 byte 为单位
     encoder.encode(nextValues, 0, nextBlocks, 0, iterations);
     final int blockCount = (int) format.byteCount(PackedInts.VERSION_CURRENT, off, bitsPerValue);
     out.writeBytes(nextBlocks, blockCount);

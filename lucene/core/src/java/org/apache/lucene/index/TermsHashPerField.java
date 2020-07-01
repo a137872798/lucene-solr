@@ -115,6 +115,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * 重置 hash桶内部的数据 同时将重置指令传递到下游
      */
     void reset() {
+        // 只清理 hash桶指针  不清理 pool内的数据
         bytesHash.clear(false);
         if (nextPerField != null) {
             nextPerField.reset();

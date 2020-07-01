@@ -35,6 +35,9 @@ import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.packed.DirectMonotonicReader;
 
+/**
+ * 这个对象 就是负责读取 FieldsIndexWriter 写入的数据
+ */
 final class FieldsIndexReader extends FieldsIndex {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FieldsIndexReader.class);
@@ -49,11 +52,30 @@ final class FieldsIndexReader extends FieldsIndex {
   private final DirectMonotonicReader docs, startPointers;
   private final long maxPointer;
 
+  /**
+   * 通过指定 目录 以及segmentName 和 拓展名
+   * @param dir
+   * @param name
+   * @param suffix
+   * @param extensionPrefix
+   * @param codecName
+   * @param id
+   * @throws IOException
+   */
   FieldsIndexReader(Directory dir, String name, String suffix, String extensionPrefix, String codecName, byte[] id) throws IOException {
     try (ChecksumIndexInput metaIn = dir.openChecksumInput(IndexFileNames.segmentFileName(name, suffix, extensionPrefix + FIELDS_META_EXTENSION_SUFFIX), IOContext.READONCE)) {
       Throwable priorE = null;
       try {
         CodecUtil.checkIndexHeader(metaIn, codecName + "Meta", VERSION_START, VERSION_CURRENT, id, suffix);
+
+        /**
+         * 对应这里
+         *  // 为元数据文件写入数据
+         *       metaOut.writeInt(numDocs);
+         *       metaOut.writeInt(blockShift);
+         *       metaOut.writeInt(totalChunks + 1); // 总计刷盘多少次
+         *       metaOut.writeLong(dataOut.getFilePointer());  // 索引文件上次的偏移量
+         */
         maxDoc = metaIn.readInt();
         blockShift = metaIn.readInt();
         numChunks = metaIn.readInt();

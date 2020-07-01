@@ -35,11 +35,12 @@ public final class FieldInfo {
   /** Field's name */
   public final String name;
   /** Internal field number */
+  // field 的编号 或者说类似id的东西
   public final int number;
 
   private DocValuesType docValuesType = DocValuesType.NONE;
 
-  // True if any document indexed term vectors  是否存储了向量
+  // True if any document indexed term vectors  是否存储了向量  在解析doc 并写入 field信息的过程中 当某个 field存储了向量信息 并写入到 formatWriter后 设置为true
   private boolean storeTermVector;
 
   private boolean omitNorms; // omit norms associated with indexed fields  

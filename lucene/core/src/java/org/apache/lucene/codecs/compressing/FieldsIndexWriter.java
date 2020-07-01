@@ -85,12 +85,22 @@ public final class FieldsIndexWriter implements Closeable {
   private final IOContext ioContext;
   // 这里2个输出流 对应2个临时文件
   private IndexOutput docsOut;
+
+  /**
+   * 每当 某个索引writer 对象 finish 之前 都会先将一些信息记录在该对象中 比如 filePointersOut 就是记录当前 索引文件正要写入的偏移量
+   */
   private IndexOutput filePointersOut;
   /**
    * 记录总计写入了多少 doc
    */
   private int totalDocs;
+  /**
+   * 代表该对象对应的 索引写入对象发起了几次刷盘操作
+   */
   private int totalChunks;
+  /**
+   * 上一次 filePointer的位置 主要用于差值存储
+   */
   private long previousFP;
 
   /**
@@ -137,8 +147,8 @@ public final class FieldsIndexWriter implements Closeable {
 
   /**
    * 将信息写入到索引中
-   * @param numDocs
-   * @param startPointer
+   * @param numDocs   代表本次要写入多少doc
+   * @param startPointer  这个是 某个索引文件当前写入到的偏移量
    * @throws IOException
    */
   void writeIndex(int numDocs, long startPointer) throws IOException {
@@ -148,14 +158,14 @@ public final class FieldsIndexWriter implements Closeable {
     filePointersOut.writeVLong(startPointer - previousFP);
     previousFP = startPointer;
     totalDocs += numDocs;
-    // 每次写入以一个数据块为单位
+    // 每次写入索引对象的 flush 都对应一个chunk
     totalChunks++;
   }
 
   /**
-   * 当写入完成时 需要做持久化工作
-   * @param numDocs
-   * @param maxPointer
+   * 代表所有的 doc已经处理完毕了
+   * @param numDocs  总计写入了多少doc
+   * @param maxPointer  此时索引文件最后的偏移量
    * @throws IOException
    */
   void finish(int numDocs, long maxPointer) throws IOException {
@@ -169,7 +179,7 @@ public final class FieldsIndexWriter implements Closeable {
     // 关闭文件流  但是此时的文件后缀名还是 tmp (临时文件)
     IOUtils.close(docsOut, filePointersOut);
 
-    // 这时才创建 域索引 同时包含 index文件 和 meta 文件
+    // 创建2个元数据文件   tvm   tvx
     try (IndexOutput metaOut = dir.createOutput(IndexFileNames.segmentFileName(name, suffix, extension + FIELDS_META_EXTENSION_SUFFIX), ioContext);
         IndexOutput dataOut = dir.createOutput(IndexFileNames.segmentFileName(name, suffix, extension + FIELDS_INDEX_EXTENSION_SUFFIX), ioContext)) {
 
@@ -177,10 +187,10 @@ public final class FieldsIndexWriter implements Closeable {
       CodecUtil.writeIndexHeader(dataOut, codecName + "Idx", VERSION_CURRENT, id, suffix);
 
       // 为元数据文件写入数据
-      metaOut.writeInt(numDocs);   // 该域被多少doc共用???
+      metaOut.writeInt(numDocs);
       metaOut.writeInt(blockShift);
-      metaOut.writeInt(totalChunks + 1); // 包含多少个数据块
-      metaOut.writeLong(dataOut.getFilePointer());  // 写入 data数据长度(bytes数)
+      metaOut.writeInt(totalChunks + 1); // 总计刷盘多少次
+      metaOut.writeLong(dataOut.getFilePointer());  // 索引文件上次的偏移量
 
       // 这里声明 IOContext 是 read_once  代表只能使用输入流读取一次   校验和相关的先忽略
       try (ChecksumIndexInput docsIn = dir.openChecksumInput(docsOut.getName(), IOContext.READONCE)) {
@@ -191,6 +201,7 @@ public final class FieldsIndexWriter implements Closeable {
           // 通过2个输出流对象 创建 writer
           final DirectMonotonicWriter docs = DirectMonotonicWriter.getInstance(metaOut, dataOut, totalChunks + 1, blockShift);
           long doc = 0;
+          // 往 dataOut中写入 每次flush的doc数量
           docs.add(doc);
           for (int i = 0; i < totalChunks; ++i) {
             doc += docsIn.readVInt();
@@ -206,9 +217,11 @@ public final class FieldsIndexWriter implements Closeable {
           CodecUtil.checkFooter(docsIn, priorE);
         }
       }
+      // 删除临时文件
       dir.deleteFile(docsOut.getName());
       docsOut = null;
 
+      // 写入最后的data文件偏移量
       metaOut.writeLong(dataOut.getFilePointer());
       try (ChecksumIndexInput filePointersIn = dir.openChecksumInput(filePointersOut.getName(), IOContext.READONCE)) {
         CodecUtil.checkHeader(filePointersIn, codecName + "FilePointers", VERSION_CURRENT, VERSION_CURRENT);
@@ -216,6 +229,7 @@ public final class FieldsIndexWriter implements Closeable {
         try {
           final DirectMonotonicWriter filePointers = DirectMonotonicWriter.getInstance(metaOut, dataOut, totalChunks + 1, blockShift);
           long fp = 0;
+          // 写入每次文件的偏移量
           for (int i = 0; i < totalChunks; ++i) {
             fp += filePointersIn.readVLong();
             filePointers.add(fp);
@@ -231,6 +245,7 @@ public final class FieldsIndexWriter implements Closeable {
           CodecUtil.checkFooter(filePointersIn, priorE);
         }
       }
+      // 删除临时文件
       dir.deleteFile(filePointersOut.getName());
       filePointersOut = null;
 

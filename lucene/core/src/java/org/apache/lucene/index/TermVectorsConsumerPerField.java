@@ -95,32 +95,43 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
         TermVectorsPostingsArray postings = termVectorsPostingsArray;
         final TermVectorsWriter tv = termsWriter.writer;
 
+        // 获取当前field内所有的 term
         final int[] termIDs = sortPostings();
 
+        // writer 可以创建索引结构对象 这里是给索引对象追加field 信息   (对应实体 fieldData)
         tv.startField(fieldInfo, numPostings, doVectorPositions, doVectorOffsets, hasPayloads);
 
+        // 创建2个用来读取分片信息的对象  此时内部的指针还没有初始化
         final ByteSliceReader posReader = doVectorPositions ? termsWriter.vectorSliceReaderPos : null;
         final ByteSliceReader offReader = doVectorOffsets ? termsWriter.vectorSliceReaderOff : null;
 
+        // TODO 推测 numPosition 记录的是不同term的数量  下面通过freq 可以知道同一个term 有多少个 然后相同term的position等信息是连续存储的
         for (int j = 0; j < numPostings; j++) {
             final int termID = termIDs[j];
+            // 通过 termID 找到频率   频率实际上也就记录了这个termId在这个field中出现了几次  同时出现几次就有多少 position offset 存储
             final int freq = postings.freqs[termID];
 
-            // Get BytesRef
+            // Get BytesRef  定位到 目标term 并将flushTerm 指向内存块
             termBytePool.setBytesRef(flushTerm, postings.textStarts[termID]);
+            // 将 term 写入到 FieldData 内
             tv.startTerm(flushTerm, freq);
 
             if (doVectorPositions || doVectorOffsets) {
+                // 开始初始化 reader 对象   pos作为第一个数据流
                 if (posReader != null) {
                     initReader(posReader, termID, 0);
                 }
+                // offset 作为第二个数据流
                 if (offReader != null) {
                     initReader(offReader, termID, 1);
                 }
+                // 这里将 pos 和 off 写入到索引文件中
                 tv.addProx(freq, posReader, offReader);
             }
+            // 代表该term的相关数据采集完了
             tv.finishTerm();
         }
+        // 代表这个 field 的数据采集完了
         tv.finishField();
 
         reset();

@@ -69,20 +69,29 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
   static final int PACKED_BLOCK_SIZE = 64;
 
+  // 用于标记是否记录 term的3种属性
   static final int POSITIONS = 0x01;
   static final int   OFFSETS = 0x02;
   static final int  PAYLOADS = 0x04;
   static final int FLAGS_BITS = PackedInts.bitsRequired(POSITIONS | OFFSETS | PAYLOADS);
 
   private final String segment;
+
+
   private FieldsIndexWriter indexWriter;
   private IndexOutput vectorsStream;
 
   private final CompressionMode compressionMode;
   private final Compressor compressor;
   private final int chunkSize;
-  
+
+  /**
+   * 记录flush了几次
+   */
   private long numChunks; // number of compressed blocks written
+  /**
+   * 由于调用了 finish 导致强制刷盘的docData  此时他们的数据不一定是完整的
+   */
   private long numDirtyChunks; // number of incomplete compressed blocks written
 
   /** a pending doc */
@@ -112,9 +121,21 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       this.offStart = offStart;
       this.payStart = payStart;
     }
+
+    /**
+     * 为当前 docData 对象 添加一个 fieldData
+     * @param fieldNum  当前 field的编号
+     * @param numTerms   该对象内部有多少 term
+     * 下面代表是否要记录这3种属性
+     * @param positions
+     * @param offsets
+     * @param payloads
+     * @return
+     */
     FieldData addField(int fieldNum, int numTerms, boolean positions, boolean offsets, boolean payloads) {
       final FieldData field;
       if (fields.isEmpty()) {
+        // 第一个field 的 pos off 等属性是从上个doc默认获取的
         field = new FieldData(fieldNum, numTerms, positions, offsets, payloads, posStart, offStart, payStart);
       } else {
         final FieldData last = fields.getLast();
@@ -161,13 +182,32 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /** a pending field */
+  // 以每个doc为 单位处理写入逻辑  每个doc内部的field 会被包装成 fieldData 对象
   private class FieldData {
     final boolean hasPositions, hasOffsets, hasPayloads;
     final int fieldNum, flags, numTerms;
+    /**
+     * 分别存储 某term出现的频率  与前一个term的公共前缀长度  suffixLengths = length - prefixLengths
+     */
     final int[] freqs, prefixLengths, suffixLengths;
     final int posStart, offStart, payStart;
     int totalPositions;
+    /**
+     * 记录写入到第几个term
+     */
     int ord;
+
+    /**
+     *
+     * @param fieldNum  field 编号
+     * @param numTerms   内部有多少 term
+     * @param positions     是否记录这3种属性
+     * @param offsets
+     * @param payloads
+     * @param posStart   上个field 的值
+     * @param offStart
+     * @param payStart
+     */
     FieldData(int fieldNum, int numTerms, boolean positions, boolean offsets, boolean payloads,
         int posStart, int offStart, int payStart) {
       this.fieldNum = fieldNum;
@@ -176,6 +216,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       this.hasOffsets = offsets;
       this.hasPayloads = payloads;
       this.flags = (positions ? POSITIONS : 0) | (offsets ? OFFSETS : 0) | (payloads ? PAYLOADS : 0);
+      // 为每个term 记录存储相关信息的数据
       this.freqs = new int[numTerms];
       this.prefixLengths = new int[numTerms];
       this.suffixLengths = new int[numTerms];
@@ -185,6 +226,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       totalPositions = 0;
       ord = 0;
     }
+
+    /**
+     * 往该 field 中追加某个  term的信息
+     * @param freq   该term出现的频率
+     * @param prefixLength   与上个词相同前缀的长度
+     * @param suffixLength   剩余的部分就是后缀长度
+     */
     void addTerm(int freq, int prefixLength, int suffixLength) {
       freqs[ord] = freq;
       prefixLengths[ord] = prefixLength;
@@ -217,15 +265,35 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
   }
 
+  /**
+   * 记录当前已经写入的 doc 总数  注意这里还没有持久化
+   */
   private int numDocs; // total number of docs seen
   /**
    * 待刷盘的文档  也就是解析完doc时 并不是立即就进行持久化
    */
   private final Deque<DocData> pendingDocs; // pending docs
   private DocData curDoc; // current document
+  /**
+   * 对应当前正在采集的field
+   */
   private FieldData curField; // current field
+
+  /**
+   * 上个写入 索引结构的 term
+   */
   private final BytesRef lastTerm;
+
+  /**
+   * 每当出现一个 term 都会有自己的 position startOff 等信息 (包括那些重复的term)‘
+   * startOffsetsBuf 记录每个term的起始偏移量
+   * lengthsBuf 记录 startOffset 到 endOffset 的长度
+   */
   private int[] positionsBuf, startOffsetsBuf, lengthsBuf, payloadLengthsBuf;
+
+  /**
+   * 这里负责存储 term 当term与上个term有公共前缀的时候 只写入后缀
+   */
   private final ByteBuffersDataOutput termSuffixes; // buffered term suffixes
   private final ByteBuffersDataOutput payloadBytes; // buffered term payloads
   private final BlockPackedWriter writer;
@@ -297,18 +365,35 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     curDoc = addDocData(numVectorFields);
   }
 
+  /**
+   * 当某个 doc内部所有的数据 都写完的时候 触发该方法
+   * @throws IOException
+   */
   @Override
   public void finishDocument() throws IOException {
     // append the payload bytes of the doc after its terms
+    // 将 term携带的 payload信息写入到 termSuffixes中
     payloadBytes.copyTo(termSuffixes);
+    // 每写完一个 payload 就重置
     payloadBytes.reset();
     ++numDocs;
+    // 检测是否满足刷盘条件了
     if (triggerFlush()) {
+      // 执行刷盘操作
       flush();
     }
     curDoc = null;
   }
 
+  /**
+   * 当某个域将要写入数据时 会触发该方法 为当前正在使用的 DocData 写入 FieldData
+   * @param info
+   * @param numTerms
+   * @param positions
+   * @param offsets
+   * @param payloads
+   * @throws IOException
+   */
   @Override
   public void startField(FieldInfo info, int numTerms, boolean positions,
       boolean offsets, boolean payloads) throws IOException {
@@ -316,15 +401,26 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     lastTerm.length = 0;
   }
 
+  /**
+   * 代表当前 field 的数据采集完了
+   * @throws IOException
+   */
   @Override
   public void finishField() throws IOException {
     curField = null;
   }
 
+  /**
+   * 代表处理到了某个 term    抽取相关信息
+   * @param term
+   * @param freq
+   * @throws IOException
+   */
   @Override
   public void startTerm(BytesRef term, int freq) throws IOException {
     assert freq >= 1;
     final int prefix;
+    // 这里想要存储相同的前缀 以便节省空间
     if (lastTerm.length == 0) {
       // no previous term: no bytes to write
       prefix = 0;
@@ -332,6 +428,8 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       prefix = StringHelper.bytesDifference(lastTerm, term);
     }
     curField.addTerm(freq, prefix, term.length - prefix);
+
+    // 注意这里只写入后缀
     termSuffixes.writeBytes(term.bytes, term.offset + prefix, term.length - prefix);
     // copy last term
     if (lastTerm.bytes.length < term.length) {
@@ -339,6 +437,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
     lastTerm.offset = 0;
     lastTerm.length = term.length;
+    // 这里进行了内存拷贝
     System.arraycopy(term.bytes, term.offset, lastTerm.bytes, 0, term.length);
   }
 
@@ -352,50 +451,76 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
   }
 
+  /**
+   * 检测此时是否满足刷盘条件
+   * @return
+   */
   private boolean triggerFlush() {
+    // 此时存储的 后缀内容超过一定数量
     return termSuffixes.size() >= chunkSize
+            // 代表悬置了太多doc
         || pendingDocs.size() >= MAX_DOCUMENTS_PER_CHUNK;
   }
 
+  /**
+   * 将格式化好的 数据写入到索引文件中
+   * @throws IOException
+   */
   private void flush() throws IOException {
     final int chunkDocs = pendingDocs.size();
     assert chunkDocs > 0 : chunkDocs;
 
     // write the index file
+    // 这里记录了一些临时信息
     indexWriter.writeIndex(chunkDocs, vectorsStream.getFilePointer());
 
+    // 代表之前已经有多少 doc flush了
     final int docBase = numDocs - chunkDocs;
+    // 这里将数据写入到索引文件  先存储 之前有多少doc 写入 之后存储 本次要写入的doc
     vectorsStream.writeVInt(docBase);
     vectorsStream.writeVInt(chunkDocs);
 
     // total number of fields of the chunk
+    // 读取本次要写入的所有 doc 对应的 fieldNum
     final int totalFields = flushNumFields(chunkDocs);
 
+    // 开始写入域有关的信息
     if (totalFields > 0) {
       // unique field numbers (sorted)
+      // 将所有field 按照 fieldNum 去重并排序后 写入到 vectorsStream  并返回
       final int[] fieldNums = flushFieldNums();
       // offsets in the array of unique field numbers
+      // 这里写入 通过 field号码 找到 field数量的数组的下标
       flushFields(totalFields, fieldNums);
       // flags (does the field have positions, offsets, payloads?)
+      // 写入 flag 信息
       flushFlags(totalFields, fieldNums);
       // number of terms of each field
+      // 写入每个  termNum 注意跟上面的 flushFieldNums 是不同的
       flushNumTerms(totalFields);
       // prefix and suffix lengths for each field
+      // 记录每个 term的长度
       flushTermLengths();
       // term freqs - 1 (because termFreq is always >=1) for each term
+
+
+      // 存储 term相关的信息 freq/position/offset/payload
       flushTermFreqs();
       // positions for all terms, when enabled
       flushPositions();
       // offsets for all terms, when enabled
       flushOffsets(fieldNums);
       // payload lengths for all terms, when enabled
+      // 写入payload的长度
       flushPayloadLengths();
 
       // compress terms and payloads and write them to the output
       //
       // TODO: We could compress in the slices we already have in the buffer (min/max slice
       // can be set on the buffer itself).
+      // 取出后缀数据
       byte[] content = termSuffixes.toArrayCopy();
+      // 将后缀压缩后写入到 output中
       compressor.compress(content, 0, content.length, vectorsStream);
     }
 
@@ -407,12 +532,19 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     numChunks++;
   }
 
+  /**
+   * 写入 field 总数
+   * @param chunkDocs
+   * @return
+   * @throws IOException
+   */
   private int flushNumFields(int chunkDocs) throws IOException {
     if (chunkDocs == 1) {
       final int numFields = pendingDocs.getFirst().numFields;
       vectorsStream.writeVInt(numFields);
       return numFields;
     } else {
+      // TODO 该对象在写入数据时  会额外存入一种叫 token的东西  到时候看看怎么读取吧
       writer.reset(vectorsStream);
       int totalFields = 0;
       for (DocData dd : pendingDocs) {
@@ -425,7 +557,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /** Returns a sorted array containing unique field numbers */
+  /**
+   * 将 fieldNum 按从小到大的顺序存储到 int[] 中
+   * @return
+   * @throws IOException
+   */
   private int[] flushFieldNums() throws IOException {
+    // 这里要去重 因为 多个doc 可以存储 相同fieldNum 的 field
     SortedSet<Integer> fieldNums = new TreeSet<>();
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
@@ -435,14 +573,19 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
     final int numDistinctFields = fieldNums.size();
     assert numDistinctFields > 0;
+    // 最大的数占用的位肯定最多
     final int bitsRequired = PackedInts.bitsRequired(fieldNums.last());
+    // 这里又写入了特殊的token 值  到时候看怎么读取的就好了
     final int token = (Math.min(numDistinctFields - 1, 0x07) << 5) | bitsRequired;
     vectorsStream.writeByte((byte) token);
+
     if (numDistinctFields - 1 >= 0x07) {
       vectorsStream.writeVInt(numDistinctFields - 1 - 0x07);
     }
+    // 这里将 int 值转换成 byte 值存储到vectorsStream中
     final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, fieldNums.size(), bitsRequired, 1);
     for (Integer fieldNum : fieldNums) {
+      // 这里存储的是 去重后 且  已经排序后的 field 号码
       writer.add(fieldNum);
     }
     writer.finish();
@@ -455,10 +598,16 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     return fns;
   }
 
+  /**
+   * @param totalFields
+   * @param fieldNums  每次写入索引文件都是多个 doc    该数组是按照 每个 field的数量排序的  然后存储的是 fieldNum
+   * @throws IOException
+   */
   private void flushFields(int totalFields, int[] fieldNums) throws IOException {
     final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, totalFields, PackedInts.bitsRequired(fieldNums.length - 1), 1);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
+        //  返回所在的下标 并写入
         final int fieldNumIndex = Arrays.binarySearch(fieldNums, fd.fieldNum);
         assert fieldNumIndex >= 0;
         writer.add(fieldNumIndex);
@@ -467,9 +616,16 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 这里写入 存储的索引数据携带了  选项
+   * @param totalFields
+   * @param fieldNums  按号码大小排序的数组
+   * @throws IOException
+   */
   private void flushFlags(int totalFields, int[] fieldNums) throws IOException {
     // check if fields always have the same flags
     boolean nonChangingFlags = true;
+    // 按照 fieldNums 的顺序 记录 flag 信息
     int[] fieldFlags = new int[fieldNums.length];
     Arrays.fill(fieldFlags, -1);
     outer:
@@ -477,8 +633,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       for (FieldData fd : dd.fields) {
         final int fieldNumOff = Arrays.binarySearch(fieldNums, fd.fieldNum);
         assert fieldNumOff >= 0;
+        // 代表还未设置  进行设置
         if (fieldFlags[fieldNumOff] == -1) {
           fieldFlags[fieldNumOff] = fd.flags;
+          // 代表在多个文档中可能会出现相同的 field  并且他们的 flag发生了变化  应该是不允许的
         } else if (fieldFlags[fieldNumOff] != fd.flags) {
           nonChangingFlags = false;
           break outer;
@@ -488,6 +646,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
     if (nonChangingFlags) {
       // write one flag per field num
+      // 写入0 代表 相同号码的field 的 flag 是相同的
       vectorsStream.writeVInt(0);
       final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, fieldFlags.length, FLAGS_BITS, 1);
       for (int flags : fieldFlags) {
@@ -498,6 +657,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       writer.finish();
     } else {
       // write one flag for every field instance
+      // 代表 相同field的 flag 出现了不同的情况  所以还是将每个flag 单独写入
       vectorsStream.writeVInt(1);
       final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, totalFields, FLAGS_BITS, 1);
       for (DocData dd : pendingDocs) {
@@ -510,6 +670,11 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
   }
 
+  /**
+   * 写入 termNum
+   * @param totalFields
+   * @throws IOException
+   */
   private void flushNumTerms(int totalFields) throws IOException {
     int maxNumTerms = 0;
     for (DocData dd : pendingDocs) {
@@ -518,6 +683,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       }
     }
     final int bitsRequired = PackedInts.bitsRequired(maxNumTerms);
+    // 标记之后每多少位 是一个数值
     vectorsStream.writeVInt(bitsRequired);
     final PackedInts.Writer writer = PackedInts.getWriterNoHeader(
         vectorsStream, PackedInts.Format.PACKED, totalFields, bitsRequired, 1);
@@ -530,6 +696,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 写入每个 term 与上个 term的相同前缀长度 以及后缀长度
+   * @throws IOException
+   */
   private void flushTermLengths() throws IOException {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
@@ -556,6 +726,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         for (int i = 0; i < fd.numTerms; ++i) {
+          // TODO 这里 频率减了 1
           writer.add(fd.freqs[i] - 1);
         }
       }
@@ -563,6 +734,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 写入 position 信息
+   * @throws IOException
+   */
   private void flushPositions() throws IOException {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
@@ -571,8 +746,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
           int pos = 0;
           for (int i = 0; i < fd.numTerms; ++i) {
             int previousPosition = 0;
+            // 当某个词 出现了多次时   果然同一个词的position存放是连续的
             for (int j = 0; j < fd.freqs[i]; ++j) {
               final int position = positionsBuf[fd .posStart + pos++];
+              // 差值存储
               writer.add(position - previousPosition);
               previousPosition = position;
             }
@@ -584,17 +761,25 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 写入每个词的偏移量信息
+   * @param fieldNums
+   * @throws IOException
+   */
   private void flushOffsets(int[] fieldNums) throws IOException {
     boolean hasOffsets = false;
     long[] sumPos = new long[fieldNums.length];
     long[] sumOffsets = new long[fieldNums.length];
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
+        // 只要有一个 field 包含 offset 信息 设置该标识为true
         hasOffsets |= fd.hasOffsets;
         if (fd.hasOffsets && fd.hasPositions) {
           final int fieldNumOff = Arrays.binarySearch(fieldNums, fd.fieldNum);
           int pos = 0;
+          // TODO 需要之后再捋一下
           for (int i = 0; i < fd.numTerms; ++i) {
+            // 这里只取 某个词最后一次出现的post 的总和
             sumPos[fieldNumOff] += positionsBuf[fd.posStart + fd.freqs[i]-1 + pos];
             sumOffsets[fieldNumOff] += startOffsetsBuf[fd.offStart + fd.freqs[i]-1 + pos];
             pos += fd.freqs[i];
@@ -604,11 +789,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       }
     }
 
+    // 所有field 都没有存储 offset 信息 直接返回
     if (!hasOffsets) {
       // nothing to do
       return;
     }
 
+    // 这里存储的是比率  md我到现在还不知道 啥是 position 啥是 offset
     final float[] charsPerTerm = new float[fieldNums.length];
     for (int i = 0; i < fieldNums.length; ++i) {
       charsPerTerm[i] = (sumPos[i] <= 0 || sumOffsets[i] <= 0) ? 0 : (float) ((double) sumOffsets[i] / sumPos[i]);
@@ -622,6 +809,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
+        // 如果包含了 offset信息  这里准备存储 offset 信息
         if ((fd.flags & OFFSETS) != 0) {
           final int fieldNumOff = Arrays.binarySearch(fieldNums, fd.fieldNum);
           final float cpt = charsPerTerm[fieldNumOff];
@@ -632,6 +820,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
             for (int j = 0; j < fd.freqs[i]; ++j) {
               final int position = fd.hasPositions ? positionsBuf[fd.posStart + pos] : 0;
               final int startOffset = startOffsetsBuf[fd.offStart + pos];
+              // TODO 这是神马 ???
               writer.add(startOffset - previousOff - (int) (cpt * (position - previousPos)));
               previousPos = position;
               previousOff = startOffset;
@@ -644,6 +833,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
 
     // lengths
+    // 这里写入长度
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
@@ -661,6 +851,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 写入 payload 的 长度
+   * @throws IOException
+   */
   private void flushPayloadLengths() throws IOException {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
@@ -675,29 +869,48 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 代表本次的 doc 解析工作已结束   记录本次总计处理了多少doc
+   * @param fis
+   * @param numDocs
+   * @throws IOException
+   */
   @Override
   public void finish(FieldInfos fis, int numDocs) throws IOException {
     if (!pendingDocs.isEmpty()) {
+      // 如果此时还有未刷盘的 docData 那么先处理
       flush();
       numDirtyChunks++; // incomplete: we had to force this flush
     }
+    // 代表出现了异常
     if (numDocs != this.numDocs) {
       throw new RuntimeException("Wrote " + this.numDocs + " docs, finish called with numDocs=" + numDocs);
     }
+    // 生成元数据文件
     indexWriter.finish(numDocs, vectorsStream.getFilePointer());
+    // 记录最后的信息 并且写入校验和
     vectorsStream.writeVLong(numChunks);
     vectorsStream.writeVLong(numDirtyChunks);
     CodecUtil.writeFooter(vectorsStream);
   }
 
+  /**
+   * 加入某个 term相关的 数据流
+   * @param numProx
+   * @param positions   该数据流是有关 position的
+   * @param offsets   该数据流是有关 offset的
+   * @throws IOException
+   */
   @Override
   public void addProx(int numProx, DataInput positions, DataInput offsets)
       throws IOException {
     assert (curField.hasPositions) == (positions != null);
     assert (curField.hasOffsets) == (offsets != null);
 
+    // 如果field 要求记录 position信息
     if (curField.hasPositions) {
       final int posStart = curField.posStart + curField.totalPositions;
+      // 扩容
       if (posStart + numProx > positionsBuf.length) {
         positionsBuf = ArrayUtil.grow(positionsBuf, posStart + numProx);
       }
@@ -707,16 +920,22 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
         if (payStart + numProx > payloadLengthsBuf.length) {
           payloadLengthsBuf = ArrayUtil.grow(payloadLengthsBuf, payStart + numProx);
         }
+        // 先写入 payload 信息
+        // 同一个 term 会按照出现的频率 连续存储
         for (int i = 0; i < numProx; ++i) {
           final int code = positions.readVInt();
+          // 最低位不为0 代表包含 payload 信息
           if ((code & 1) != 0) {
             // This position has a payload
+            // 下一个值就是长度  这里的逻辑完全对应 TermVectorsConsumerPerField.writeProx
             final int payloadLength = positions.readVInt();
             payloadLengthsBuf[payStart + i] = payloadLength;
             payloadBytes.copyBytes(positions, payloadLength);
           } else {
+            // 这里代表payload 为空
             payloadLengthsBuf[payStart + i] = 0;
           }
+          // 真正的位置信息 实际上要 右移一位  注意这个position 可能就是差值存储的  所以这里开始叠加
           position += code >>> 1;
           positionsBuf[posStart + i] = position;
         }
@@ -728,7 +947,9 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       }
     }
 
+    // 这里是存储 offset 的信息
     if (curField.hasOffsets) {
+      // 应该也是差值存储  所以 需要 += 进行还原
       final int offStart = curField.offStart + curField.totalPositions;
       if (offStart + numProx > startOffsetsBuf.length) {
         final int newLength = ArrayUtil.oversize(offStart + numProx, 4);
