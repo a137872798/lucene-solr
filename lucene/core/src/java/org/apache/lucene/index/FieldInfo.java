@@ -45,6 +45,9 @@ public final class FieldInfo {
   private boolean omitNorms; // omit norms associated with indexed fields  
 
   private IndexOptions indexOptions = IndexOptions.NONE;
+  /**
+   * 标识 该field 在记录 term的position时 有没有携带 payload
+   */
   private boolean storePayloads; // whether this field stores payloads together with term positions
 
   private final Map<String,String> attributes;

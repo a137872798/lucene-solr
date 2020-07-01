@@ -31,7 +31,7 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 
 /**
- * 该对象负责写入 词的频率   该对象下游是写入词向量的 对象
+ * 该对象负责写入词的频率   该对象下游是写入词向量的对象
  */
 final class FreqProxTermsWriter extends TermsHash {
 

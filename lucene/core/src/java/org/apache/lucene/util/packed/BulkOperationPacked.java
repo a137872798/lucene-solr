@@ -30,7 +30,7 @@ class BulkOperationPacked extends BulkOperation {
 
     private final int longBlockCount;
     /**
-     * 当 block以 long作为数据载体时 允许存储多少个值  比如 bitsPerValue = 8 代表一个long 变量可以存储8个值   如果 bitsPerValue = 1 代表可以存储64个
+     * (longValueCount*bitsPerValue) 必须是64的倍数
      */
     private final int longValueCount;
     private final int byteBlockCount;

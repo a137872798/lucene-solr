@@ -57,6 +57,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * </ol>
  * 
  * @lucene.experimental
+ * 该对象负责将 词向量信息写入到索引文件中
  */
 public abstract class TermVectorsWriter implements Closeable {
   

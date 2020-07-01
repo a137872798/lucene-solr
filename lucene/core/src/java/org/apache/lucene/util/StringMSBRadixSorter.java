@@ -16,6 +16,9 @@
  */
 package org.apache.lucene.util;
 
+/**
+ * 将字符串按照 基数排序算法进行排序
+ */
 abstract class StringMSBRadixSorter extends MSBRadixSorter {
 
   StringMSBRadixSorter() {

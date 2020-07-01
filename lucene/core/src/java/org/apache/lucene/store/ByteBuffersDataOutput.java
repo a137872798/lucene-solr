@@ -79,6 +79,7 @@ public final class ByteBuffersDataOutput extends DataOutput implements Accountab
 
     public ByteBuffer allocate(int size) {
       while (!reuse.isEmpty()) {
+        // 从队列中移出来的时候 先判断大小是否是要求的  不是的话 就释放这块内存
         ByteBuffer bb = reuse.removeFirst();
         // If we don't have a buffer of exactly the requested size, discard it.
         if (bb.remaining() == size) {

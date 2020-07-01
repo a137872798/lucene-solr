@@ -122,6 +122,7 @@ import org.apache.lucene.util.packed.PackedInts;
  * </li>
  * </ol>
  * @lucene.experimental
+ * 有关 term向量信息 写入到索引文件的格式
  */
 public final class Lucene50TermVectorsFormat extends CompressingTermVectorsFormat {
 

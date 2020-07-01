@@ -51,26 +51,29 @@ import java.util.concurrent.atomic.AtomicInteger;
  * threads.  You should not call {@link #close} until all
  * threads are done using the instance.
  *
- * @lucene.internal 该对象本身是为了解决 JDK threadLocal的弊端的 也就是对象必须要很久才能被释放 除非主动调用remove
+ * @lucene.internal
+ * 首先 JDK.ThreadLocal 如果主动调用了 remove() 是不会产生内存泄漏的
+ * 但是没有手动调用的情况下 只有等待同线程的其他threadLocal 调用get()，set()时 间接清理 这样就可能会引发内存泄漏  使得大块的对象与thread的生命周期绑定
+ *
+ * 他这个对象的生命周期不是也绑定在线程上吗 ???
+ * 不管了 反正它就是多一个 close方法 能够释放所有创建的value  并且调用close后 不应该再使用该对象了
  */
 public class CloseableThreadLocal<T> implements Closeable {
 
+
     /**
-     * 通过该对象维护的值 会被一个弱引用包裹   为什么要这么做   因为 JDK原生的 ThreadLocal 是将自己作为一个 WeakReference key  ，而value是存在内存泄漏问题的
-     * 当调用remove ， set ， get 时 会间接检测当前是否有过期的 ThreadLocalMap.entry 这时才可能将之前的对象释放
-     * 这里的解决策略是  将value 也是用weak 包裹 这样value在没有其他引用指向时就会自动的被回收了
-     * 但是这里又有一个问题  那就是如果key还存在的时候 value却被回收了
+     * 该对象作为一个连接对象   当t对应的threadLocal 被回收时 触发 value的置空 而value本身又被弱引用修饰  (其他对象可以监控到t被回收的动作)
      */
     private ThreadLocal<WeakReference<T>> t = new ThreadLocal<>();
 
     // Use a WeakHashMap so that if a Thread exits and is
     // GC'able, its entry may be removed:
-    // 只要当前线程还存活 T 就无法被回收  同时weakHashMap也存在跟ThreadLocal 类似的问题 就是 value都是惰性删除 这样value的删除就依赖于weakHashMap的删除机制了
-    // 一旦value被删除 那么 t也自然会被移除
+    // 该对象本身会被并发访问 所以需要在同步块内调用
+    // 这里为 监听了thread的回收动作    当thread被回收时 会惰性清除value
     private Map<Thread, T> hardRefs = new WeakHashMap<>();
 
     // Increase this to decrease frequency of purging in get:
-    // 类似与一个因子
+    // 类似于一个因子
     private static int PURGE_MULTIPLIER = 20;
 
     // On each get or set we decrement this; when it hits 0 we
@@ -85,12 +88,12 @@ public class CloseableThreadLocal<T> implements Closeable {
     }
 
     public T get() {
-        // 如果不使用额外的强引用关联它  那么刚好被 回收了 那么存进去的值也读取不到  就白存了
         WeakReference<T> weakRef = t.get();
         if (weakRef == null) {
             T iv = initialValue();
             if (iv != null) {
-                // 将正常生成的值 通过弱引用包裹  确保能够使得value被自动回收   以及 通过weakHashMap强引用关联使得 value不会在不恰当的时机被回收
+                // 将正常生成的值 通过弱引用包裹  确保能够使得value被自动回收
+                // 通过 hardRerfs 将数值 与线程的生命周期绑定在一起
                 set(iv);
                 return iv;
             } else {
@@ -104,22 +107,19 @@ public class CloseableThreadLocal<T> implements Closeable {
     }
 
     public void set(T object) {
-
+        // 线程隔离的功能还是由 threadLocal 实现 但是写入的对象本身被弱引用包裹
         t.set(new WeakReference<>(object));
 
-        // 追加一个强引用   这里将当前线程与创建的变量绑定在一起 同时  key也是弱引用的  那么在没有其他引用 指向该变量时  只要创建变量的线程还存活 该变量也是不会被回收的
-        // 直到创建该变量的线程被回收了  且外部也没有其他引用指向该变量时  该变量就会被真正回收 (实际上能够以正常方式获取到该变量的情况也不存在了 因为正常使用方式就是在
-        // 创建该对象的线程下访问 ThreadLocal)
-        // 该容器对象本身是会被并发访问的所以需要做同步处理
         synchronized (hardRefs) {
-            // put会惰性触发删除
+            // 该容器的作用是 只要线程还存在就能确保数据本身不被清除
+            // 同时当线程本身被回收时 value的一个强引用会被释放  如果此时正好是最后一个强引用 那么object就会从t中被清除 避免了内存泄漏
             hardRefs.put(Thread.currentThread(), object);
             maybePurge();
         }
     }
 
     /**
-     * 代表多次获取值 所以要进行清理
+     * 每当操作该对象多少次时 可能就会触发一次清理动作
      */
     private void maybePurge() {
         if (countUntilPurge.getAndDecrement() == 0) {
@@ -128,12 +128,13 @@ public class CloseableThreadLocal<T> implements Closeable {
     }
 
     // Purge dead threads
+    // 这里相当于给 JDK.ThreadLocal 增加了一个清除数据的触发点  也就是每当操作 n次时 进行一次清理
     private void purge() {
         synchronized (hardRefs) {
             int stillAliveCount = 0;
-            // 同时在迭代过程中 会间接的删除过期的键值对 释放value
+            // 在迭代器过程中 清除掉被释放的线程 以及绑定的强引用对象   进而回收在 t中被弱引用包裹的对象
             for (Iterator<Thread> it = hardRefs.keySet().iterator(); it.hasNext(); ) {
-                // 如果强引用队列中存在已经失活的线程 那么主动移除它 这样对应的value 就可以 被GC回收
+                // 如果强引用队列中存在已经失活的线程 那么主动移除它 会间接触发value的引用释放 就可以 被GC回收
                 final Thread t = it.next();
                 if (!t.isAlive()) {
                     it.remove();
@@ -151,16 +152,18 @@ public class CloseableThreadLocal<T> implements Closeable {
         }
     }
 
+    /**
+     * 当某个线程调用该方法后 其他线程不应该再去操作它了
+     */
     @Override
     public void close() {
         // Clear the hard refs; then, the only remaining refs to
         // all values we were storing are weak (unless somewhere
         // else is still using them) and so GC may reclaim them:
-        // 当清理强引用时 剩下的value 都被弱引用包裹 自然会被GC回收
+        // 该容器只会在本对象内被引用 一旦释放 map就会被回收  value的强引用也会释放  然后 t的弱引用也会释放
         hardRefs = null;
         // Take care of the current thread right now; others will be
         // taken care of via the WeakReferences.
-        // 执行close的线程本身还没有被回收 所以要手动移除 value
         if (t != null) {
             t.remove();
         }

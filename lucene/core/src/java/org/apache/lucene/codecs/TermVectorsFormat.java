@@ -26,6 +26,7 @@ import org.apache.lucene.store.IOContext;
 
 /**
  * Controls the format of term vectors
+ * 描述词向量的格式
  */
 public abstract class TermVectorsFormat {
   /** Sole constructor. (For invocation by subclass 
@@ -35,9 +36,11 @@ public abstract class TermVectorsFormat {
 
   /** Returns a {@link TermVectorsReader} to read term
    *  vectors. */
+  // 创建索引读取对象
   public abstract TermVectorsReader vectorsReader(Directory directory, SegmentInfo segmentInfo, FieldInfos fieldInfos, IOContext context) throws IOException;
 
   /** Returns a {@link TermVectorsWriter} to write term
    *  vectors. */
+  // 创建索引写入对象
   public abstract TermVectorsWriter vectorsWriter(Directory directory, SegmentInfo segmentInfo, IOContext context) throws IOException;
 }

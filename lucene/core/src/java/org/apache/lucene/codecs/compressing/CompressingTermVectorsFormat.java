@@ -33,11 +33,21 @@ import org.apache.lucene.store.IOContext;
  * A {@link TermVectorsFormat} that compresses chunks of documents together in
  * order to improve the compression ratio.
  * @lucene.experimental
+ * 该对象在写入词向量数据到索引文件时 会采用压缩的方式
  */
 public class CompressingTermVectorsFormat extends TermVectorsFormat {
 
+  /**
+   * 标明 压缩的格式  比如 "Lucene50TermVectorsData"
+   */
   private final String formatName;
+  /**
+   * 在生成索引文件前 还要携带段的后缀
+   */
   private final String segmentSuffix;
+  /**
+   * 记录了使用的压缩算法
+   */
   private final CompressionMode compressionMode;
   private final int chunkSize;
   private final int blockSize;

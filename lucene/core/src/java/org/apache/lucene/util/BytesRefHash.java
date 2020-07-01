@@ -193,7 +193,7 @@ public final class BytesRefHash implements Accountable {
    * Note: This is a destructive operation. {@link #clear()} must be called in
    * order to reuse this {@link BytesRefHash} instance.
    * </p>
-   * TODO  MSB 啥玩意???
+   * 使用基数排序算法
    */
   public int[] sort() {
     final int[] compact = compact();
@@ -415,7 +415,7 @@ public final class BytesRefHash implements Accountable {
    *  directly and instead reference the byte[] term
    *  already stored by the postings BytesRefHash.  See
    *  add(int textStart) in TermsHashPerField. */
-  // 通过指定pool的偏移量 提前预定一个 bytesRef  (虽然并没有写入数据)
+  // 通过指定pool的偏移量 提前预定一个 bytesRef  (虽然并没有写入数据)  在lucene的应用场景中就是 为term开辟空间 当term已经存在时 就会返回    return -(e + 1);
   public int addByPoolOffset(int offset) {
     assert bytesStart != null : "Bytesstart is null - not initialized";
     // final position

@@ -43,6 +43,9 @@ abstract class TermsHash {
   // 因为无法预先得知要申请的大块内存 这里通过一个pool 对象 按需创建内存 并在内部通过一个二维数组进行连接
   final IntBlockPool intPool;
   final ByteBlockPool bytePool;
+  /**
+   * 这个对象是存储 term数据的
+   */
   ByteBlockPool termBytePool;
   final Counter bytesUsed;
 
@@ -122,7 +125,7 @@ abstract class TermsHash {
   }
 
   /**
-   * 为当前对象追加一个 域信息
+   * 传入一个域对象 生成一个从 field中抽取属性的对象
    * @param fieldInvertState
    * @param fieldInfo
    * @return

@@ -40,6 +40,10 @@ public final class FieldInvertState {
   int numOverlap;
   int offset;
   int maxTermFrequency;
+  /**
+   * 就是该域下词去重后的数量   因为一个域下可能有多个相同的 term
+   * 相同的term 在不同doc重复时 认为是出现了2次
+   */
   int uniqueTermCount;
   // we must track these across field instances (multi-valued case)
   int lastStartOffset = 0;

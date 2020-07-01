@@ -33,6 +33,7 @@ import org.apache.lucene.util.compress.LZ4;
  * A compression mode. Tells how much effort should be spent on compression and
  * decompression of stored fields.
  * @lucene.experimental
+ * 这里描述了压缩的方式
  */
 public abstract class CompressionMode {
 

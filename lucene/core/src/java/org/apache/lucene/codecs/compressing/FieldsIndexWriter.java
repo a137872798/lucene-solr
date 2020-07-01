@@ -44,6 +44,7 @@ import org.apache.lucene.util.packed.DirectMonotonicWriter;
  * {@link DirectMonotonicReader} that records start pointers.
  * @lucene.internal
  * 该对象 负责将 域信息写入到索引文件中
+ * 每当创建一个  索引文件时 就需要该对象写入数据
  */
 public final class FieldsIndexWriter implements Closeable {
 
@@ -92,6 +93,18 @@ public final class FieldsIndexWriter implements Closeable {
   private int totalChunks;
   private long previousFP;
 
+  /**
+   *
+   * @param dir  写入目标
+   * @param name  segmentName
+   * @param suffix  segmentSuffix
+   * @param extension  拓展名 由索引文件格式决定
+   * @param codecName   编码方式名
+   * @param id   segmentId
+   * @param blockShift
+   * @param ioContext
+   * @throws IOException
+   */
   FieldsIndexWriter(Directory dir, String name, String suffix, String extension,
       String codecName, byte[] id, int blockShift, IOContext ioContext) throws IOException {
     this.dir = dir;
@@ -102,6 +115,8 @@ public final class FieldsIndexWriter implements Closeable {
     this.id = id;
     this.blockShift = blockShift;
     this.ioContext = ioContext;
+
+    // 每当要写入索引文件时 会伴随着2个临时文件  -doc_ids 和 file_pointers
     // 这里创建临时文件
     this.docsOut = dir.createTempOutput(name, codecName + "-doc_ids", ioContext);
     boolean success = false;

@@ -23,6 +23,7 @@ import java.util.Arrays;
  *  of the buckets to sort becomes small. It is <b>NOT</b> stable.
  *  Worst-case memory usage is about {@code 2.3 KB}.
  *  @lucene.internal */
+// 这里利用基数排序算法  (一种桶算法  通过额外的内存降低时间复杂度)
 public abstract class MSBRadixSorter extends Sorter {
 
   // after that many levels of recursion we fall back to introsort anyway
@@ -44,7 +45,7 @@ public abstract class MSBRadixSorter extends Sorter {
 
   /**
    * Sole constructor.
-   * @param maxLength the maximum length of keys, pass {@link Integer#MAX_VALUE} if unknown.
+   * @param maxLength the maximum length of keys, pass {@link Integer#MAX_VALUE} if unknown.    这里需要指定最大入参的长度 用于判断要排序多少次
    */
   protected MSBRadixSorter(int maxLength) {
     this.maxLength = maxLength;

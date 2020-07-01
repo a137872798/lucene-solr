@@ -56,6 +56,7 @@ import org.apache.lucene.store.DataOutput;
  * @see BlockPackedReaderIterator
  * @see BlockPackedReader
  * @lucene.internal
+ * 只存储增量数据
  */
 public final class BlockPackedWriter extends AbstractBlockPackedWriter {
   
@@ -67,6 +68,10 @@ public final class BlockPackedWriter extends AbstractBlockPackedWriter {
     super(out, blockSize);
   }
 
+  /**
+   * 每当上层存储数据的容器满了 就会触发该方法
+   * @throws IOException
+   */
   protected void flush() throws IOException {
     assert off > 0;
     long min = Long.MAX_VALUE, max = Long.MIN_VALUE;
@@ -85,13 +90,16 @@ public final class BlockPackedWriter extends AbstractBlockPackedWriter {
       min = Math.max(0L, max - PackedInts.maxValue(bitsRequired));
     }
 
+    // TODO 这里又是先通过特殊计算 获取一个token值
     final int token = (bitsRequired << BPV_SHIFT) | (min == 0 ? MIN_VALUE_EQUALS_0 : 0);
     out.writeByte((byte) token);
 
     if (min != 0) {
+      // 这里将 min压缩后写入
       writeVLong(out, zigZagEncode(min) - 1);
     }
 
+    // 采用差值存储的方式
     if (bitsRequired > 0) {
       if (min != 0) {
         for (int i = 0; i < off; ++i) {

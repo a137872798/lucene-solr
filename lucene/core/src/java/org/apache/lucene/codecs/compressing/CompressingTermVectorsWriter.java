@@ -52,6 +52,7 @@ import org.apache.lucene.util.packed.PackedInts;
 /**
  * {@link TermVectorsWriter} for {@link CompressingTermVectorsFormat}.
  * @lucene.experimental
+ * 该 对象会将要写入到索引文件的词向量数据压缩
  */
 public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
@@ -85,10 +86,25 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   private long numDirtyChunks; // number of incomplete compressed blocks written
 
   /** a pending doc */
+  // 记录了有关doc的数据
   private class DocData {
+    /**
+     * 该doc 内部有多少field
+     */
     final int numFields;
+    /**
+     * 存储 field的详细数据
+     */
     final Deque<FieldData> fields;
     final int posStart, offStart, payStart;
+
+    /**
+     *
+     * @param numFields  标明该 doc内部有多少个 field
+     * @param posStart
+     * @param offStart
+     * @param payStart
+     */
     DocData(int numFields, int posStart, int offStart, int payStart) {
       this.numFields = numFields;
       this.fields = new ArrayDeque<>(numFields);
@@ -112,19 +128,29 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
   }
 
+  /**
+   * 代表当前doc 要存储多少个 field的数据
+   * @param numVectorFields
+   * @return
+   */
   private DocData addDocData(int numVectorFields) {
     FieldData last = null;
+    // 这里主要就是获取上一个文档相关的信息
+    // 将双端队列的数据 倒序返回
     for (Iterator<DocData> it = pendingDocs.descendingIterator(); it.hasNext(); ) {
       final DocData doc = it.next();
+      // 只要某个 doc的 field 列表不为空 并且这里会返回最后一个
       if (!doc.fields.isEmpty()) {
         last = doc.fields.getLast();
         break;
       }
     }
+    // 如果此时还没有创建 docData 此时创建一个新对象
     final DocData doc;
     if (last == null) {
       doc = new DocData(numVectorFields, 0, 0, 0);
     } else {
+      // 如果存在上一个doc  以上一个文档的数据作为起点 生成新的 docData
       final int posStart = last.posStart + (last.hasPositions ? last.totalPositions : 0);
       final int offStart = last.offStart + (last.hasOffsets ? last.totalPositions : 0);
       final int payStart = last.payStart + (last.hasPayloads ? last.totalPositions : 0);
@@ -192,6 +218,9 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   private int numDocs; // total number of docs seen
+  /**
+   * 待刷盘的文档  也就是解析完doc时 并不是立即就进行持久化
+   */
   private final Deque<DocData> pendingDocs; // pending docs
   private DocData curDoc; // current document
   private FieldData curField; // current field
@@ -212,21 +241,26 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
     numDocs = 0;
     pendingDocs = new ArrayDeque<>();
+    // 创建2个具备回收功能的 BB dataOutput
     termSuffixes = ByteBuffersDataOutput.newResettableInstance();
     payloadBytes = ByteBuffersDataOutput.newResettableInstance();
     lastTerm = new BytesRef(ArrayUtil.oversize(30, 1));
 
     boolean success = false;
     try {
+      // 这里会创建 segmentName_suffix.tvd 的索引文件
       vectorsStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, VECTORS_EXTENSION),
                                                      context);
+      // 写入文件头
       CodecUtil.writeIndexHeader(vectorsStream, formatName, VERSION_CURRENT, si.getId(), segmentSuffix);
       assert CodecUtil.indexHeaderLength(formatName, segmentSuffix) == vectorsStream.getFilePointer();
 
+      // 这里构建一个写入索引的对象
       indexWriter = new FieldsIndexWriter(directory, segment, segmentSuffix, VECTORS_INDEX_EXTENSION_PREFIX, VECTORS_INDEX_CODEC_NAME, si.getId(), blockShift, context);
 
       vectorsStream.writeVInt(PackedInts.VERSION_CURRENT);
       vectorsStream.writeVInt(chunkSize);
+      // 这里创建一个采用差值存储的对象
       writer = new BlockPackedWriter(vectorsStream, PACKED_BLOCK_SIZE);
 
       positionsBuf = new int[1024];
@@ -236,6 +270,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
       success = true;
     } finally {
+      // 文件创建失败时 抛出异常
       if (!success) {
         IOUtils.closeWhileHandlingException(vectorsStream, indexWriter, indexWriter);
       }
@@ -252,6 +287,11 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
   }
 
+  /**
+   * 当某个 doc的数据处理完了后 会触发该方法  代表即将要存储多少个 field的词向量信息
+   * @param numVectorFields
+   * @throws IOException
+   */
   @Override
   public void startDocument(int numVectorFields) throws IOException {
     curDoc = addDocData(numVectorFields);
