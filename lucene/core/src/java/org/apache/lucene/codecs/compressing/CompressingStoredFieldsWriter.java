@@ -323,9 +323,11 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     //
     // TODO: do we need to slice it since we already have the slices in the buffer? Perhaps
     // we should use max-block-bits restriction on the buffer itself, then we won't have to check it here.
+    // 这个对象内部存储的是 termValue
     byte [] content = bufferedDocs.toArrayCopy();
     bufferedDocs.reset();
 
+    // 以chunk为单位进行压缩  并将结果写入到 索引文件中
     if (sliced) {
       // big chunk, slice it
       for (int compressed = 0; compressed < content.length; compressed += chunkSize) {
@@ -565,8 +567,15 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
   }
 
+  /**
+   * 代表此时已经处理完所有数据
+   * @param fis
+   * @param numDocs
+   * @throws IOException
+   */
   @Override
   public void finish(FieldInfos fis, int numDocs) throws IOException {
+    // 此时还有未刷盘的数据
     if (numBufferedDocs > 0) {
       flush();
       numDirtyChunks++; // incomplete: we had to force this flush
