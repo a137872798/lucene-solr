@@ -81,10 +81,14 @@ final class DefaultIndexingChain extends DocConsumer {
 
   // NOTE: I tried using Hash Map<String,PerField>
   // but it was ~2% slower on Wiki and Geonames with Java
-  // 1.7.0_25:     hash桶对象 利用拉链法解决hash冲突
+  // 1.7.0_25:
+  // 记录在处理某个域时 使用了几个对象采集域的数据  目前只有一个freq 和 vector 对象 负责从field中采集数据
   private PerField[] fieldHash = new PerField[2];
   private int hashMask = 1;
 
+  /**
+   * 应该是记录 总计处理了多少 field  注意不同的doc 可能会包含 fieldNum相同的field
+   */
   private int totalFieldCount;
   /**
    * 每当处理一个新的  doc时 就会增加年代
@@ -110,16 +114,16 @@ final class DefaultIndexingChain extends DocConsumer {
     final TermsHash termVectorsWriter;
     // 每个thread 存储的文档会被归结到 某个segment中 在这个段中 可以规定排序规则
     if (docWriter.getSegmentInfo().getIndexSort() == null) {
-      // 生成一个处理 field 的对象
+      // 该对象对外暴露处理doc的api 内部维护了 向索引文件写入数据的 writer
       storedFieldsConsumer = new StoredFieldsConsumer(docWriter);
-      // 生成一个 处理词向量的对象
+      // 同上 不过该对象写入的是向量数据
       termVectorsWriter = new TermVectorsConsumer(docWriter);
     } else {
       // 当声明了排序规则时 创建2个排序对象
       storedFieldsConsumer = new SortingStoredFieldsConsumer(docWriter);
       termVectorsWriter = new SortingTermVectorsConsumer(docWriter);
     }
-    // 该对象负责记录 term的频率信息
+    // 该对象负责记录 term的频率信息  同时设置下游对象
     termsHash = new FreqProxTermsWriter(docWriter, termVectorsWriter);
   }
 

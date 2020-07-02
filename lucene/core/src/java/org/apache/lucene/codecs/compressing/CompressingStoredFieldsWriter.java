@@ -64,9 +64,12 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
   /** Codec name for the index. */
   public static final String INDEX_CODEC_NAME = "Lucene85FieldsIndex";
 
-  // 下面代表支持写入到文档中的字段类型
+  // 代表field 的数据类型是 string
   static final int         STRING = 0x00;
+  // 代表field 的数据类型是二进制流
   static final int       BYTE_ARR = 0x01;
+
+  // 代表field的数据类型是 Number
   static final int    NUMERIC_INT = 0x02;
   static final int  NUMERIC_FLOAT = 0x03;
   static final int   NUMERIC_LONG = 0x04;
@@ -81,6 +84,9 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
   private final String segment;
   private FieldsIndexWriter indexWriter;
+  /**
+   * 对应索引文件
+   */
   private IndexOutput fieldsStream;
 
   /**
@@ -91,19 +97,51 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
    * 这里指定了压缩格式
    */
   private final CompressionMode compressionMode;
+  /**
+   * 代表每写入多少数据触发一次刷盘
+   */
   private final int chunkSize;
+  /**
+   * 每写入多少 doc 触发一次刷盘
+   */
   private final int maxDocsPerChunk;
 
+  /**
+   * field值会先存储在这个BB对象中
+   */
   private final ByteBuffersDataOutput bufferedDocs;
+
+  /**
+   * numBufferedDocs作为下标  value 对应该doc下有多少field
+   */
   private int[] numStoredFields; // number of stored fields
+  /**
+   * numBufferedDocs作为下标 value对应存储了数据后 bufferedDocs的偏移量
+   */
   private int[] endOffsets; // end offsets in bufferedDocs
   private int docBase; // doc ID at the beginning of the chunk
+
+  /**
+   * 代表当前已经处理了多少doc  每当刷盘一次后 这个值就会重置   并且更新docBase的值
+   */
   private int numBufferedDocs; // docBase + numBufferedDocs == current doc ID
   
   private long numChunks; // number of compressed blocks written
   private long numDirtyChunks; // number of incomplete compressed blocks written
 
-  /** Sole constructor. */
+  /**
+   * Sole constructor.
+   * @param directory
+   * @param si
+   * @param segmentSuffix
+   * @param context
+   * @param formatName
+   * @param compressionMode
+   * @param chunkSize   每往BB内写入多少长度触发刷盘
+   * @param maxDocsPerChunk  每当写入多少doc 触发刷盘
+   * @param blockShift
+   * @throws IOException
+   */
   CompressingStoredFieldsWriter(Directory directory, SegmentInfo si, String segmentSuffix, IOContext context,
       String formatName, CompressionMode compressionMode, int chunkSize, int maxDocsPerChunk, int blockShift) throws IOException {
     assert directory != null;
@@ -121,12 +159,13 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
     boolean success = false;
     try {
-      // 创建输出流
+      // 创建文件输出流
       fieldsStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, FIELDS_EXTENSION), context);
       // 写入文件头
       CodecUtil.writeIndexHeader(fieldsStream, formatName, VERSION_CURRENT, si.getId(), segmentSuffix);
       assert CodecUtil.indexHeaderLength(formatName, segmentSuffix) == fieldsStream.getFilePointer();
 
+      // 这里也会创建对应的临时文件   当该文件写入完毕后 indexWriter 会记录写入的doc总数 file最后的偏移量之类的信息 并转存到 Meta文件 和 Index文件 同时删除临时文件
       indexWriter = new FieldsIndexWriter(directory, segment, segmentSuffix, INDEX_EXTENSION_PREFIX, INDEX_CODEC_NAME, si.getId(), blockShift, context);
 
       fieldsStream.writeVInt(chunkSize);
@@ -151,14 +190,26 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
   }
 
+  /**
+   * 记录在当前文档中已经存储了多少field的信息
+   */
   private int numStoredFieldsInDoc;
 
+  /**
+   * 代表此时开始处理一个新的 doc   这里没有任何操作
+   * @throws IOException
+   */
   @Override
   public void startDocument() throws IOException {
   }
 
+  /**
+   * 当某个 doc 下所有field 都处理完时调用该方法
+   * @throws IOException
+   */
   @Override
   public void finishDocument() throws IOException {
+    // 代表当前已经处理了多少doc
     if (numBufferedDocs == this.numStoredFields.length) {
       final int newLength = ArrayUtil.oversize(numBufferedDocs + 1, 4);
       this.numStoredFields = ArrayUtil.growExact(this.numStoredFields, newLength);
@@ -168,13 +219,22 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     numStoredFieldsInDoc = 0;
     endOffsets[numBufferedDocs] = Math.toIntExact(bufferedDocs.size());
     ++numBufferedDocs;
+    // 检测是否满足刷盘条件
     if (triggerFlush()) {
       flush();
     }
   }
 
+  /**
+   * 存储int[] 数据
+   * @param values
+   * @param length
+   * @param out
+   * @throws IOException
+   */
   private static void saveInts(int[] values, int length, DataOutput out) throws IOException {
     assert length > 0;
+    // 当长度为1时 直接写入数据
     if (length == 1) {
       out.writeVInt(values[0]);
     } else {
@@ -185,6 +245,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
           break;
         }
       }
+      // 当全部相同时 存入一个特殊标识
       if (allEqual) {
         out.writeVInt(0);
         out.writeVInt(values[0]);
@@ -193,22 +254,37 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         for (int i = 0; i < length; ++i) {
           max |= values[i];
         }
+        // 通过 |= 计算 获取最大值需要多少位表示
         final int bitsRequired = PackedInts.bitsRequired(max);
+        // 记录这个值 就代表在解析时  每多少位就是一个值
         out.writeVInt(bitsRequired);
+        // 在写入的时候 还没有按位转换
         final PackedInts.Writer w = PackedInts.getWriterNoHeader(out, PackedInts.Format.PACKED, length, bitsRequired, 1);
+        // 按位存储数据
         for (int i = 0; i < length; ++i) {
           w.add(values[i]);
         }
+        // 调用该方法时 才是将long 值转化成按位存储 并转存
         w.finish();
       }
     }
   }
 
+  /**
+   *
+   * @param docBase  本次 numStoredFields lengths 内部数据的 在哪个doc之上
+   * @param numBufferedDocs  本次处理了多少doc (+docBase 才是绝对值 )
+   * @param numStoredFields 本次处理的每个doc 各有多少field
+   * @param lengths  每个doc写入的数据总长度
+   * @param sliced
+   * @throws IOException
+   */
   private void writeHeader(int docBase, int numBufferedDocs, int[] numStoredFields, int[] lengths, boolean sliced) throws IOException {
     final int slicedBit = sliced ? 1 : 0;
     
     // save docBase and numBufferedDocs
     fieldsStream.writeVInt(docBase);
+    // TODO slicedBit这个标识怎么用     这里相当于已经存入了长度信息
     fieldsStream.writeVInt((numBufferedDocs) << 1 | slicedBit);
 
     // save numStoredFields
@@ -223,16 +299,24 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         numBufferedDocs >= maxDocsPerChunk;
   }
 
+  /**
+   * 满足刷盘条件时 将BB 内部的数据持久化到索引文件
+   * @throws IOException
+   */
   private void flush() throws IOException {
+    // 写入本次刷盘多少doc 以及刷盘前索引文件的偏移量
     indexWriter.writeIndex(numBufferedDocs, fieldsStream.getFilePointer());
 
     // transform end offsets into lengths
     final int[] lengths = endOffsets;
     for (int i = numBufferedDocs - 1; i > 0; --i) {
+      // 差值就是某个doc 往BB总计写入的 数据长度
       lengths[i] = endOffsets[i] - endOffsets[i - 1];
       assert lengths[i] >= 0;
     }
+    // 代表此时BB内部的数据已经比较多了
     final boolean sliced = bufferedDocs.size() >= 2 * chunkSize;
+    // 往索引文件中写入相关信息
     writeHeader(docBase, numBufferedDocs, numStoredFields, lengths, sliced);
 
     // compress stored fields to fieldsStream.
@@ -257,17 +341,25 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     bufferedDocs.reset();
     numChunks++;
   }
-  
+
+  /**
+   * 将某个域的信息 先写入到内存中
+   * @param info  这个是描述 field的元数据信息
+   * @param field
+   * @throws IOException
+   */
   @Override
   public void writeField(FieldInfo info, IndexableField field)
       throws IOException {
 
+    // 代表在当前文档中又存储了一个 field
     ++numStoredFieldsInDoc;
 
     int bits = 0;
     final BytesRef bytes;
     final String string;
 
+    // 尝试以 num的形式读取 field的值
     Number number = field.numericValue();
     if (number != null) {
       if (number instanceof Byte || number instanceof Short || number instanceof Integer) {
@@ -284,11 +376,13 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
       string = null;
       bytes = null;
     } else {
+      // 代表数据是二进制流类型
       bytes = field.binaryValue();
       if (bytes != null) {
         bits = BYTE_ARR;
         string = null;
       } else {
+        // 代表是文本型数据
         bits = STRING;
         string = field.stringValue();
         if (string == null) {
@@ -297,13 +391,16 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
       }
     }
 
+    // 存储的第一个值 代表 field的数据类型
     final long infoAndBits = (((long) info.number) << TYPE_BITS) | bits;
     bufferedDocs.writeVLong(infoAndBits);
 
     if (bytes != null) {
+      // 先写入 二进制数据的长度 之后写入数据体
       bufferedDocs.writeVInt(bytes.length);
       bufferedDocs.writeBytes(bytes.bytes, bytes.offset, bytes.length);
     } else if (string != null) {
+      // 写入string 实际上就会拆解成上面2步
       bufferedDocs.writeString(string);
     } else {
       if (number instanceof Byte || number instanceof Short || number instanceof Integer) {
