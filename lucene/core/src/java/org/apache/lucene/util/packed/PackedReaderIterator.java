@@ -24,6 +24,9 @@ import java.util.Arrays;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.util.LongsRef;
 
+/**
+ * 该对象按照位读取数据
+ */
 final class PackedReaderIterator extends PackedInts.ReaderIteratorImpl {
 
   final int packedIntsVersion;
@@ -34,6 +37,15 @@ final class PackedReaderIterator extends PackedInts.ReaderIteratorImpl {
   final int iterations;
   int position;
 
+  /**
+   *
+   * @param format
+   * @param packedIntsVersion
+   * @param valueCount  代表该对象总计有多少个值
+   * @param bitsPerValue
+   * @param in
+   * @param mem
+   */
   PackedReaderIterator(PackedInts.Format format, int packedIntsVersion, int valueCount, int bitsPerValue, DataInput in, int mem) {
     super(valueCount, bitsPerValue, in);
     this.format = format;
@@ -42,11 +54,18 @@ final class PackedReaderIterator extends PackedInts.ReaderIteratorImpl {
     iterations = bulkOperation.computeIterations(valueCount, mem);
     assert valueCount == 0 || iterations > 0;
     nextBlocks = new byte[iterations * bulkOperation.byteBlockCount()];
+    // 创建存储多个结果的 数组
     nextValues = new LongsRef(new long[iterations * bulkOperation.byteValueCount()], 0, 0);
     nextValues.offset = nextValues.longs.length;
     position = -1;
   }
 
+  /**
+   *
+   * @param count  代表往下读取几个值  每个值在创建时已经声明了占用多少位
+   * @return
+   * @throws IOException
+   */
   @Override
   public LongsRef next(int count) throws IOException {
     assert nextValues.length >= 0;
@@ -61,14 +80,20 @@ final class PackedReaderIterator extends PackedInts.ReaderIteratorImpl {
     }
     count = Math.min(remaining, count);
 
+    // 代表第一次加载数据
     if (nextValues.offset == nextValues.longs.length) {
+      // 代表装载所有的数据 需要多少个 byte
       final long remainingBlocks = format.byteCount(packedIntsVersion, remaining, bitsPerValue);
       final int blocksToRead = (int) Math.min(remainingBlocks, nextBlocks.length);
+      // 将数据按位读取出来 并填满 nextBlocks
       in.readBytes(nextBlocks, 0, blocksToRead);
+      // 这里读取出来的还是数据块  现在才要根据位将 byte数据转换成 存入的值
       if (blocksToRead < nextBlocks.length) {
+        // 剩余的部分用0 填充
         Arrays.fill(nextBlocks, blocksToRead, nextBlocks.length, (byte) 0);
       }
 
+      // 将byte数据解码后 存入到nextValues 中
       bulkOperation.decode(nextBlocks, 0, nextValues.longs, 0, iterations);
       nextValues.offset = 0;
     }

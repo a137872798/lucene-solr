@@ -84,6 +84,7 @@ final class FieldsIndexReader extends FieldsIndex {
         docsEndPointer = startPointersStartPointer = metaIn.readLong();
         startPointersMeta = DirectMonotonicReader.loadMeta(metaIn, numChunks, blockShift);
         startPointersEndPointer = metaIn.readLong();
+        // 索引文件最后的偏移量
         maxPointer = metaIn.readLong();
       } finally {
         CodecUtil.checkFooter(metaIn, priorE);

@@ -284,7 +284,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     
     // save docBase and numBufferedDocs
     fieldsStream.writeVInt(docBase);
-    // TODO slicedBit这个标识怎么用     这里相当于已经存入了长度信息
+    // sliced 代表分片压缩
     fieldsStream.writeVInt((numBufferedDocs) << 1 | slicedBit);
 
     // save numStoredFields

@@ -196,6 +196,7 @@ public abstract class DataOutput {
     }
 
     // 写入最后的7位
+    // 如果一开始写入的就是0  那么直接在这里 writerByte一个0
     writeByte((byte)i);
   }
 

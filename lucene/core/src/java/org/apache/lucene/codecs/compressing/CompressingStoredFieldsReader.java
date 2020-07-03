@@ -337,6 +337,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
   /**
    * A serialized document, you need to decode its input in order to get an actual
    * {@link Document}.
+   * 该reader 对象会将索引文件的数据读取出来 并包装成 doc 对象
    */
   static class SerializedDocument {
 
@@ -346,7 +347,10 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     // the number of bytes on which the document is encoded
     final int length;
 
-    // the number of stored fields
+    /**
+     * the number of stored fields
+     * 记录该doc下有多少field
+     */
     final int numStoredFields;
 
     private SerializedDocument(DataInput in, int length, int numStoredFields) {
@@ -367,13 +371,23 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     // whether the block has been sliced, this happens for large documents
     private boolean sliced;
 
+    // offsets numStoredFields 存储的都是某次flush的doc相关数据
+    /**
+     * 记录某个 doc  的起始偏移量   offset 从1开始
+     */
     private int[] offsets = IntsRef.EMPTY_INTS;
+    /**
+     * 代表某批flush的doc   每个携带的 field 数量
+     */
     private int[] numStoredFields = IntsRef.EMPTY_INTS;
 
     // the start pointer at which you can read the compressed documents
     private long startPointer;
 
     private final BytesRef spare = new BytesRef();
+    /**
+     * 该对象存储 从索引文件读取的数据
+     */
     private final BytesRef bytes = new BytesRef();
 
     boolean contains(int docID) {
@@ -401,9 +415,16 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
       }
     }
 
+    /**
+     * 通过传入 docId 对某个文档的数据进行还原
+     * @param docID
+     * @throws IOException
+     */
     private void doReset(int docID) throws IOException {
       docBase = fieldsStream.readVInt();
+      // token 值由 2个属性拼接而成   对应    fieldsStream.writeVInt((numBufferedDocs) << 1 | slicedBit);
       final int token = fieldsStream.readVInt();
+      // 代表对应的数据 在刷盘时 写入了多少doc
       chunkDocs = token >>> 1;
       if (contains(docID) == false
           || docBase + chunkDocs > numDocs) {
@@ -412,22 +433,28 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
             + ", numDocs=" + numDocs, fieldsStream);
       }
 
+      // 最低位代表当时写入数据时 是否采用了 分片压缩的方式
       sliced = (token & 1) != 0;
 
+      // ！！！ 这个offset 从1开始
       offsets = ArrayUtil.grow(offsets, chunkDocs + 1);
       numStoredFields = ArrayUtil.grow(numStoredFields, chunkDocs);
 
+      // 代表只写入了一个 doc 直接读取数据
       if (chunkDocs == 1) {
         numStoredFields[0] = fieldsStream.readVInt();
         offsets[1] = fieldsStream.readVInt();
       } else {
         // Number of stored fields per document
+        // 先检测第一个值是否是0  如果是的话 代表所有值都一样
         final int bitsPerStoredFields = fieldsStream.readVInt();
         if (bitsPerStoredFields == 0) {
+          // 按照doc 数量 全部使用这个值填充
           Arrays.fill(numStoredFields, 0, chunkDocs, fieldsStream.readVInt());
         } else if (bitsPerStoredFields > 31) {
           throw new CorruptIndexException("bitsPerStoredFields=" + bitsPerStoredFields, fieldsStream);
         } else {
+          // 按位读取数据   这里写入的时候没有按照差值存储的规则
           final PackedInts.ReaderIterator it = PackedInts.getReaderIteratorNoHeader(fieldsStream, PackedInts.Format.PACKED, packedIntsVersion, chunkDocs, bitsPerStoredFields, 1);
           for (int i = 0; i < chunkDocs; ++i) {
             numStoredFields[i] = (int) it.next();
@@ -436,7 +463,9 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
         // The stream encodes the length of each document and we decode
         // it into a list of monotonically increasing offsets
+        // 这里开始读取某个 doc总计占用多少长度 解析规则与之前一样 不过 offsets 起点从1开始
         final int bitsPerLength = fieldsStream.readVInt();
+        // 所有值都相同 触发这种情况
         if (bitsPerLength == 0) {
           final int length = fieldsStream.readVInt();
           for (int i = 0; i < chunkDocs; ++i) {
@@ -445,6 +474,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
         } else if (bitsPerStoredFields > 31) {
           throw new CorruptIndexException("bitsPerLength=" + bitsPerLength, fieldsStream);
         } else {
+          // 存储的时候每次都是 length  这里会将 length 进行累加 就变成了 offset
           final PackedInts.ReaderIterator it = PackedInts.getReaderIteratorNoHeader(fieldsStream, PackedInts.Format.PACKED, packedIntsVersion, chunkDocs, bitsPerLength, 1);
           for (int i = 0; i < chunkDocs; ++i) {
             offsets[i + 1] = (int) it.next();
@@ -465,11 +495,14 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
       }
 
+      // 获取 索引文件的偏移量
       startPointer = fieldsStream.getFilePointer();
 
+      // TODO
       if (merging) {
         final int totalLength = offsets[chunkDocs];
         // decompress eagerly
+        // 如果数据量过大 采用分批压缩  将解压后的数据存储到 byteRef中
         if (sliced) {
           bytes.offset = bytes.length = 0;
           for (int decompressed = 0; decompressed < totalLength; ) {
@@ -492,21 +525,27 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     /**
      * Get the serialized representation of the given docID. This docID has
      * to be contained in the current block.
+     * 此时数据已经加载到 bytes 中 现在要将内部的数据还原成 doc的形式
      */
     SerializedDocument document(int docID) throws IOException {
       if (contains(docID) == false) {
         throw new IllegalArgumentException();
       }
 
+      // 得到对应doc的偏移量
       final int index = docID - docBase;
       final int offset = offsets[index];
+      // 通过求差 得到这个doc的数据总长度
       final int length = offsets[index+1] - offset;
+      // 最后一个doc 记录的就是总长度
       final int totalLength = offsets[chunkDocs];
+      // 找到该doc 下共有多少 field
       final int numStoredFields = this.numStoredFields[index];
 
       final DataInput documentInput;
       if (length == 0) {
         // empty
+        // 代表该doc 下没有数据
         documentInput = new ByteArrayDataInput();
       } else if (merging) {
         // already decompressed
@@ -566,6 +605,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
   SerializedDocument document(int docID) throws IOException {
     if (state.contains(docID) == false) {
       fieldsStream.seek(indexReader.getStartPointer(docID));
+      // 从索引文件中还原数据 并加载到内存中
       state.reset(docID);
     }
     assert state.contains(docID);
