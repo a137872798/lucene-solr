@@ -266,7 +266,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 记录当前已经写入的 doc 总数  注意这里还没有持久化
+   * 记录写入的doc总数  注意这里还没有持久化
    */
   private int numDocs; // total number of docs seen
   /**
@@ -544,7 +544,6 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       vectorsStream.writeVInt(numFields);
       return numFields;
     } else {
-      // TODO 该对象在写入数据时  会额外存入一种叫 token的东西  到时候看看怎么读取吧
       writer.reset(vectorsStream);
       int totalFields = 0;
       for (DocData dd : pendingDocs) {
@@ -575,7 +574,11 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     assert numDistinctFields > 0;
     // 最大的数占用的位肯定最多
     final int bitsRequired = PackedInts.bitsRequired(fieldNums.last());
-    // 这里又写入了特殊的token 值  到时候看怎么读取的就好了
+
+    // 这里是这样 首先 bitsRequired 最大为 31 也就是2的5次  如果field 本身的值比较小 那么可以将他们压缩成一个byte   如果field的值 超过了剩余的3位能表示的值 8
+    // 那么只能额外使用一个VInt  来记录 field真正的数量
+    // token值的解析 看 CompressingTermVectorsReader       final int token = vectorsStream.readByte() & 0xFF;   的逻辑
+    // 7 需要3位 加上这里的  << 5 代表这个token 最多只占 8 位  并且最低位代表 每个数据使用多少 bit 来存储
     final int token = (Math.min(numDistinctFields - 1, 0x07) << 5) | bitsRequired;
     vectorsStream.writeByte((byte) token);
 

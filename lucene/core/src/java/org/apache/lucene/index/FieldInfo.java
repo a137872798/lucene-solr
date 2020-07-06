@@ -38,6 +38,9 @@ public final class FieldInfo {
   // field 的编号 或者说类似id的东西
   public final int number;
 
+  /**
+   * 代表该 field 描述的相关docValue 类型
+   */
   private DocValuesType docValuesType = DocValuesType.NONE;
 
   // True if any document indexed term vectors  是否存储了向量  在解析doc 并写入 field信息的过程中 当某个 field存储了向量信息 并写入到 formatWriter后 设置为true
@@ -68,6 +71,7 @@ public final class FieldInfo {
    * Sole constructor.
    *
    * @lucene.experimental
+   * 代表一个 field 对象
    */
   public FieldInfo(String name, int number, boolean storeTermVector, boolean omitNorms, boolean storePayloads,
                    IndexOptions indexOptions, DocValuesType docValues, long dvGen, Map<String,String> attributes,
@@ -257,6 +261,7 @@ public final class FieldInfo {
   }
 
   /** Record the {@link IndexOptions} to use with this field. */
+  // 填充索引相关选项
   public void setIndexOptions(IndexOptions newIndexOptions) {
     if (indexOptions != newIndexOptions) {
       if (indexOptions == IndexOptions.NONE) {
@@ -266,6 +271,7 @@ public final class FieldInfo {
       }
     }
 
+    // DOCS_AND_FREQS_AND_POSITIONS 以上代表会存储 payload 否则不会存储
     if (indexOptions == IndexOptions.NONE || indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) < 0) {
       // cannot store payloads if we don't store positions:
       storePayloads = false;

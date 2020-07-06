@@ -39,6 +39,7 @@ import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /** Buffers up pending byte[]s per doc, deref and sorting via
  *  int ord, then flushes when segment flushes. */
+// 这里负责存储二进制数据 并在填充完某个doc后 会先将结果进行排序
 class SortedSetDocValuesWriter extends DocValuesWriter {
   final BytesRefHash hash;
   private PackedLongValues.Builder pending; // stream of all termIDs
@@ -92,6 +93,7 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
   }
   
   // finalize currentDoc: this deduplicates the current term ids
+  // 只有当切换doc时 才真正存入到 pending中
   private void finishCurrentDoc() {
     if (currentDoc == -1) {
       return;

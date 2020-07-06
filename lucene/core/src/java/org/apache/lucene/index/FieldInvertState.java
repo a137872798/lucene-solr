@@ -30,13 +30,23 @@ import org.apache.lucene.util.AttributeSource;
  * also used to calculate the normalization factor for a field.
  * 
  * @lucene.experimental
+ * 存储域的反转信息
  */
 public final class FieldInvertState {
   final int indexCreatedVersionMajor;
   final String name;
   final IndexOptions indexOptions;
+  /**
+   * 代表当前指向的偏移量   每当解析token流时
+   */
   int position;
+  /**
+   * 这个长度信息  每次会叠加 termFreq      长度信息跟 freq应该没关系吧???
+   */
   int length;
+  /**
+   * 当解析某个token时   pos 没有变化  则numOverlap++   代表一种重复现象???
+   */
   int numOverlap;
   int offset;
   int maxTermFrequency;
@@ -46,7 +56,11 @@ public final class FieldInvertState {
    */
   int uniqueTermCount;
   // we must track these across field instances (multi-valued case)
+  // 每当解析完某个token时  在 OffsetAttr中会记录新的 start 之后会设置到该属性中
   int lastStartOffset = 0;
+  /**
+   * 每当解析某个 term后 该值会与 position 同步
+   */
   int lastPosition = 0;
   AttributeSource attributeSource;
 
@@ -79,6 +93,7 @@ public final class FieldInvertState {
 
   /**
    * Re-initialize the state
+   * 每当在一个新的 doc中处理之前出现过的 field 会通过该方法重置内部属性
    */
   void reset() {
     position = -1;
@@ -94,6 +109,7 @@ public final class FieldInvertState {
   /**
    * Sets attributeSource to a new instance.
    * 传入一个可以提供属性的  属性源   从中抽取属性并赋值
+   * 一般传入的就是 tokenStream
    */
   void setAttributeSource(AttributeSource attributeSource) {
     if (this.attributeSource != attributeSource) {

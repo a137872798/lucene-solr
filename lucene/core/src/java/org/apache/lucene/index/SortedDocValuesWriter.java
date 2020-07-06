@@ -35,7 +35,6 @@ import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /** Buffers up pending byte[] per doc, deref and sorting via
  *  int ord, then flushes when segment flushes. */
-// 用于生成 SortedDocValues
 class SortedDocValuesWriter extends DocValuesWriter {
   final BytesRefHash hash;
   private PackedLongValues.Builder pending;
@@ -54,6 +53,7 @@ class SortedDocValuesWriter extends DocValuesWriter {
     this.iwBytesUsed = iwBytesUsed;
     hash = new BytesRefHash(
         new ByteBlockPool(
+                // 该对象在每次分配和回收内存时 会修改计数器对应的值
             new ByteBlockPool.DirectTrackingAllocator(iwBytesUsed)),
             BytesRefHash.DEFAULT_CAPACITY,
             new DirectBytesStartArray(BytesRefHash.DEFAULT_CAPACITY, iwBytesUsed));
@@ -85,6 +85,10 @@ class SortedDocValuesWriter extends DocValuesWriter {
     updateBytesUsed();
   }
 
+  /**
+   * 在存储数据时 并没有体现排序的含义
+   * @param value
+   */
   private void addOneValue(BytesRef value) {
     int termID = hash.add(value);
     if (termID < 0) {

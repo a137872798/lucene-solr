@@ -40,6 +40,9 @@ public final class PagedBytes implements Accountable {
   private final int blockSize;
   private final int blockBits;
   private final int blockMask;
+  /**
+   * 标记当前正在执行 copy
+   */
   private boolean didSkipBytes;
   private boolean frozen;
   private int upto;
@@ -50,7 +53,7 @@ public final class PagedBytes implements Accountable {
 
   /** Provides methods to read BytesRefs from a frozen
    *  PagedBytes.
-   *
+   * 该对象专门负责从已经存储了 压缩数据的pagedBytes中读取数据
    * @see #freeze */
   public final static class Reader implements Accountable {
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Reader.class);
@@ -60,6 +63,10 @@ public final class PagedBytes implements Accountable {
     private final int blockSize;
     private final long bytesUsedPerBlock;
 
+    /**
+     *
+     * @param pagedBytes  该对象内部存储了已经准备好的数据
+     */
     private Reader(PagedBytes pagedBytes) {
       blocks = ArrayUtil.copyOfSubArray(pagedBytes.blocks, 0, pagedBytes.numBlocks);
       blockBits = pagedBytes.blockBits;
@@ -142,6 +149,7 @@ public final class PagedBytes implements Accountable {
 
   /** 1&lt;&lt;blockBits must be bigger than biggest single
    *  BytesRef slice that will be pulled */
+  // 这里只是设置一些基本属性 还没有开辟内存
   public PagedBytes(int blockBits) {
     assert blockBits > 0 && blockBits <= 31 : blockBits;
     this.blockSize = 1 << blockBits;
@@ -152,6 +160,10 @@ public final class PagedBytes implements Accountable {
     numBlocks = 0;
   }
 
+  /**
+   * 通过 blocks[] 指向 currentBlock  之后便于重置currentBlock的引用
+   * @param block
+   */
   private void addBlock(byte[] block) {
     blocks = ArrayUtil.grow(blocks, numBlocks + 1);
     blocks[numBlocks++] = block;
@@ -207,13 +219,16 @@ public final class PagedBytes implements Accountable {
   }
 
   /** Commits final byte[], trimming it if necessary and if trim=true */
+  // 将当前数据标识成无法修改 同时生成一个reader对象 用于读取之前写入的数据
   public Reader freeze(boolean trim) {
     if (frozen) {
       throw new IllegalStateException("already frozen");
     }
+    // 在copy时 无法执行冻结
     if (didSkipBytes) {
       throw new IllegalStateException("cannot freeze when copy(BytesRef, BytesRef) was used");
     }
+    // 代表将当前 block 缩小
     if (trim && upto < blockSize) {
       final byte[] newBlock = new byte[upto];
       System.arraycopy(currentBlock, 0, newBlock, 0, upto);
@@ -350,6 +365,9 @@ public final class PagedBytes implements Accountable {
     }
   }
 
+  /**
+   * 该对象是一个内部类 负责往
+   */
   public final class PagedBytesDataOutput extends DataOutput {
     @Override
     public void writeByte(byte b) {

@@ -21,7 +21,7 @@ import java.io.IOException;
 
 /**
  * A per-document numeric value.
- * 记录每个文档 以数字方式记录的值
+ * 一个迭代docId的容器 同时每切换一个docId 还可以读取它绑定的value
  */
 public abstract class NumericDocValues extends DocValuesIterator {
   

@@ -152,6 +152,9 @@ class SortingLeafReader extends FilterLeafReader {
 
   }
 
+  /**
+   * 该对象只是一个包装类 实际上 dvs 已经将doc重新排序了
+   */
   static class SortingBinaryDocValues extends BinaryDocValues {
 
     private final CachedBinaryDVs dvs;
@@ -202,8 +205,17 @@ class SortingLeafReader extends FilterLeafReader {
 
   private final Map<String,CachedNumericDVs> cachedNumericDVs = new HashMap<>();
 
+  /**
+   * 存储 Num 类型的docValue
+   */
   static class CachedNumericDVs {
+    /**
+     * docId 作为下标可以读取到绑定的值
+     */
     private final long[] values;
+    /**
+     * 位图上已经按照docId 填充了对应的位置
+     */
     private final BitSet docsWithField;
 
     public CachedNumericDVs(long[] values, BitSet docsWithField) {
@@ -214,6 +226,9 @@ class SortingLeafReader extends FilterLeafReader {
 
   private final Map<String,CachedBinaryDVs> cachedBinaryDVs = new HashMap<>();
 
+  /**
+   * 这里存储的是已经完成新排序的 docId 以及绑定的 docValue
+   */
   static class CachedBinaryDVs {
     // TODO: at least cutover to BytesRefArray here:
     private final BytesRef[] values;

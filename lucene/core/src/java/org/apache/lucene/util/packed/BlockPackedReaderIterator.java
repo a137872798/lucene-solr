@@ -36,6 +36,7 @@ import org.apache.lucene.util.LongsRef;
  * Reader for sequences of longs written with {@link BlockPackedWriter}.
  * @see BlockPackedWriter
  * @lucene.internal
+ * 这个类不细看了 大概知道怎么读取数据
  */
 public final class BlockPackedReaderIterator {
 
@@ -70,6 +71,9 @@ public final class BlockPackedReaderIterator {
     return i;
   }
 
+  /**
+   * 数据流来源
+   */
   DataInput in;
   final int packedIntsVersion;
   long valueCount;
@@ -197,6 +201,10 @@ public final class BlockPackedReaderIterator {
     return valuesRef;
   }
 
+  /**
+   * 从in 中读取数据 并填满当前数组
+   * @throws IOException
+   */
   private void refill() throws IOException {
     final int token = in.readByte() & 0xFF;
     final boolean minEquals0 = (token & MIN_VALUE_EQUALS_0) != 0;

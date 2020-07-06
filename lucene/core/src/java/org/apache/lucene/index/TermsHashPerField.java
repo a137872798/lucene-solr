@@ -47,6 +47,9 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     final TermsHashPerField nextPerField;
     protected final DocumentsWriterPerThread.DocState docState;
     protected final FieldInvertState fieldState;
+    /**
+     * 该属性 对应 fieldState.termAttribute
+     */
     TermToBytesRefAttribute termAtt;
     protected TermFrequencyAttribute termFreqAtt;
 
@@ -217,6 +220,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * Called once per inverted token.  This is the primary
      * entry point (for first TermsHash); postings use this
      * API.
+     * 在此前已经解析了一个token 现在要将解析出来的结果存起来
      */
     void add() throws IOException {
         // We are first in the chain so we must "intern" the
@@ -227,7 +231,9 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 
         //System.out.println("add term=" + termBytesRef.utf8ToString() + " doc=" + docState.docID + " termID=" + termID);
 
+        // 代表首次添加
         if (termID >= 0) {// New posting
+            // 这里实际上只是做一个校验  因为没有利用返回值
             bytesHash.byteStart(termID);
             // Init stream slices
             // 开始为 slice 创建足够空间
@@ -394,8 +400,8 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * Start adding a new field instance; first is true if
      * this is the first time this field name was seen in the
      * document.
+     * 此时 fieldState中已经设置了 attrSource 可以获取各种 attr
      */
-    // 当调用start 时 从 state中读取属性
     boolean start(IndexableField field, boolean first) {
         termAtt = fieldState.termAttribute;
         termFreqAtt = fieldState.termFreqAttribute;

@@ -33,7 +33,7 @@ import static org.apache.lucene.codecs.lucene80.Lucene80NormsFormat.VERSION_CURR
 
 /**
  * Writer for {@link Lucene80NormsFormat}
- * 默认实现
+ * 有关标准因子的索引写入对象
  */
 final class Lucene80NormsConsumer extends NormsConsumer {
 
@@ -60,6 +60,7 @@ final class Lucene80NormsConsumer extends NormsConsumer {
       data = state.directory.createOutput(dataName, state.context);
       // 写入头部信息
       CodecUtil.writeIndexHeader(data, dataCodec, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+      // 看来标准因子不需要创建那2个啥  x  m 文件的
       // 生成元数据索引文件
       String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
       meta = state.directory.createOutput(metaName, state.context);
@@ -96,9 +97,16 @@ final class Lucene80NormsConsumer extends NormsConsumer {
     }
   }
 
+  /**
+   *
+   * @param field field information  代表该标准因子是属于哪个 field的
+   * @param normsProducer NormsProducer of the numeric norm values  该对象可以获取到某个docId 绑定的标准因子的值
+   * @throws IOException
+   */
   @Override
   public void addNormsField(FieldInfo field, NormsProducer normsProducer) throws IOException {
     NumericDocValues values = normsProducer.getNorms(field);
+    // 代表当前已经为多少doc写入标准因子
     int numDocsWithValue = 0;
     long min = Long.MAX_VALUE;
     long max = Long.MIN_VALUE;
@@ -110,29 +118,40 @@ final class Lucene80NormsConsumer extends NormsConsumer {
     }
     assert numDocsWithValue <= maxDoc;
 
+    // 标明之后的数据是针对 fieldNum 为多少的  field
     meta.writeInt(field.number);
 
+    // 当该field 不包含任何doc时
     if (numDocsWithValue == 0) {
+      // 写入特殊值
       meta.writeLong(-2); // docsWithFieldOffset
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
     } else if (numDocsWithValue == maxDoc) {
+      // 写入特殊值
       meta.writeLong(-1); // docsWithFieldOffset
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
     } else {
+      // 获取当前的文件偏移量
       long offset = data.getFilePointer();
+      // 写入文件偏移量
       meta.writeLong(offset); // docsWithFieldOffset
+      // 某个域对应的 标准因子 实际上是关联多个doc的
       values = normsProducer.getNorms(field);
+      // TODO 这里写入一个什么值
       final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
+      // 将文件的偏移量变化写入元数据文件
       meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength
       meta.writeShort(jumpTableEntryCount);
       meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
     }
 
+    // 基础值写完后 写入一个  doc数量
     meta.writeInt(numDocsWithValue);
+    // 获取每个值 是多少byte
     int numBytesPerValue = numBytesPerValue(min, max);
 
     meta.writeByte((byte) numBytesPerValue);
@@ -141,6 +160,7 @@ final class Lucene80NormsConsumer extends NormsConsumer {
     } else {
       meta.writeLong(data.getFilePointer()); // normsOffset
       values = normsProducer.getNorms(field);
+      // 将标准因子的值写入到 data文件中
       writeValues(values, numBytesPerValue, data);
     }
   }

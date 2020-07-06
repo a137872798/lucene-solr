@@ -88,7 +88,6 @@ import org.apache.lucene.util.RoaringDocIdSet;
  * This ensures locality and keeps logistics simple.
  *
  * @lucene.internal
- * docId的迭代器   在很多场景下会需要迭代docId  比如查看某个段下 多少个文档设置了某个域
  */
 final class IndexedDISI extends DocIdSetIterator {
 
@@ -182,6 +181,7 @@ final class IndexedDISI extends DocIdSetIterator {
    *         This should be stored in meta and used when creating an instance of IndexedDISI.
    */
   static short writeBitSet(DocIdSetIterator it, IndexOutput out, byte denseRankPower) throws IOException {
+    // 获取当前写入的起点
     final long origo = out.getFilePointer(); // All jumps are relative to the origo
     if ((denseRankPower < 7 || denseRankPower > 15) && denseRankPower != -1) {
       throw new IllegalArgumentException("Acceptable values for denseRankPower are 7-15 (every 128-32768 docIDs). " +

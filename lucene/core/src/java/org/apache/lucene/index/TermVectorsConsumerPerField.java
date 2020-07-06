@@ -140,7 +140,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     }
 
     /**
-     * 代表预备读取一个新的doc
+     * 代表预备读取一个新的 field
      * @param field
      * @param first
      * @return
@@ -150,10 +150,10 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
         super.start(field, first);
         assert field.fieldType().indexOptions() != IndexOptions.NONE;
 
-        // 代表加载第一个doc
+        // 代表该doc 首次加载该field的数据
         if (first) {
 
-            // 如果首次读取一个 doc 那么需要清除之前 hash桶中的数据
+            // 如果首次读取一个 field 那么需要清除之前 hash桶中的数据
             if (bytesHash.size() != 0) {
                 // Only necessary if previous doc hit a
                 // non-aborting exception while writing vectors in
@@ -219,6 +219,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
             }
         }
 
+        // 这里获取各种 attr  attr 都是从 attrSource 中获取的  而attrSource 是field通过解析器解析后生成的tokenStream中获得的
         if (doVectors) {
             if (doVectorOffsets) {
                 offsetAttribute = fieldState.offsetAttribute;

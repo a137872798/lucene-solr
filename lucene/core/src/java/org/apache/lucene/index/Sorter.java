@@ -302,11 +302,13 @@ final class Sorter {
    *  allocates arrays[maxDoc] to hold the native values needed for comparison, but 1) they are transient (only alive while sorting this one
    *  segment), and 2) in the typical index sorting case, they are only used to sort newly flushed segments, which will be smaller than
    *  merged segments.  */
+  // 获取一个可以对doc 进行排序的对象
   static DocComparator getDocComparator(int maxDoc,
                                         SortField sortField,
                                         SortedDocValuesSupplier sortedProvider,
                                         NumericDocValuesSupplier numericProvider) throws IOException {
 
+    // 正序or倒序
     final int reverseMul = sortField.getReverse() ? -1 : 1;
     final SortField.Type sortType = getSortFieldType(sortField);
 
@@ -316,6 +318,7 @@ final class Sorter {
       {
         final SortedDocValues sorted = sortedProvider.get();
         final int missingOrd;
+        // 这里是默认值
         if (sortField.getMissingValue() == SortField.STRING_LAST) {
           missingOrd = Integer.MAX_VALUE;
         } else {
@@ -325,10 +328,12 @@ final class Sorter {
         final int[] ords = new int[maxDoc];
         Arrays.fill(ords, missingOrd);
         int docID;
+        // 因为docId 不一定是连续的 这里设置到一个连续数组中
         while ((docID = sorted.nextDoc()) != NO_MORE_DOCS) {
           ords[docID] = sorted.ordValue();
         }
 
+        // 如果设置了 ord值 按照ord 排序
         return new DocComparator() {
           @Override
           public int compare(int docID1, int docID2) {
@@ -352,6 +357,7 @@ final class Sorter {
           values[docID] = dvs.longValue();
         }
 
+        // 按照long进行排序
         return new DocComparator() {
           @Override
           public int compare(int docID1, int docID2) {

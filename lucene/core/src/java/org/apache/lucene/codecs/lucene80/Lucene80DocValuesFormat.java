@@ -128,6 +128,7 @@ import org.apache.lucene.util.packed.DirectWriter;
  *   <li><code>.dvm</code>: DocValues metadata</li>
  * </ol>
  * @lucene.experimental
+ * 该对象是负责存储 负责生成存储/读取 docValue 索引文件的对象
  */
 public final class Lucene80DocValuesFormat extends DocValuesFormat {
 

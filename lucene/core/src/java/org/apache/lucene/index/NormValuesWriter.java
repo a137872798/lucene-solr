@@ -28,7 +28,7 @@ import org.apache.lucene.util.packed.PackedLongValues;
 
 /** Buffers up pending long per doc, then flushes when
  *  segment flushes. */
-// 该对象负责将 标准因子写入到 索引文件中
+// 该对象负责将 标准因子写入到 索引文件中   跟 普通的docValueWriter类似
 class NormValuesWriter {
 
   private DocsWithFieldSet docsWithField;
@@ -39,8 +39,7 @@ class NormValuesWriter {
   private int lastDocID = -1;
 
   /**
-   * 这个标准因子是属于哪个段的
-   * @param fieldInfo
+   * @param fieldInfo   是否忽略标准因子的信息是携带在 field 上的  当 omitNorm 为false时 才会创建对应的对象
    * @param iwBytesUsed   多个对象共用这个计数器 用来统计内存开销
    */
   public NormValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed) {
@@ -74,16 +73,25 @@ class NormValuesWriter {
   public void finish(int maxDoc) {
   }
 
+  /**
+   * 将标准因子的信息写入到 索引文件中
+   * @param state
+   * @param sortMap
+   * @param normsConsumer
+   * @throws IOException
+   */
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, NormsConsumer normsConsumer) throws IOException {
     final PackedLongValues values = pending.build();
     final SortingLeafReader.CachedNumericDVs sorted;
+    // 代表根据 docValue 做了排序
     if (sortMap != null) {
       sorted = NumericDocValuesWriter.sortDocValues(state.segmentInfo.maxDoc(), sortMap,
           new BufferedNorms(values, docsWithField.iterator()));
     } else {
       sorted = null;
     }
-    normsConsumer.addNormsField(fieldInfo,
+    // 设置某个field 有关的标准因子信息
+    normsConsumer.addNormsField(fieldInfo,   // 存储了field的详细信息
                                 new NormsProducer() {
                                   @Override
                                   public NumericDocValues getNorms(FieldInfo fieldInfo2) {
@@ -93,6 +101,7 @@ class NormValuesWriter {
                                    if (sorted == null) {
                                      return new BufferedNorms(values, docsWithField.iterator());
                                    } else {
+                                     // 该对象也是 NumericDocValues 的子类 只是读取数据的时候是按照 docValue的顺序所对应的docId的顺序 而不是自然顺序
                                      return new SortingLeafReader.SortingNumericDocValues(sorted);
                                    }
                                   }

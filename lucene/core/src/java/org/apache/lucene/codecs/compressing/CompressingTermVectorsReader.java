@@ -68,11 +68,18 @@ import static org.apache.lucene.codecs.compressing.CompressingTermVectorsWriter.
 /**
  * {@link TermVectorsReader} for {@link CompressingTermVectorsFormat}.
  * @lucene.experimental
+ * 该对象 对应CompressingTermVectorsWriter
  */
 public final class CompressingTermVectorsReader extends TermVectorsReader implements Closeable {
 
   private final FieldInfos fieldInfos;
+  /**
+   * 对应元数据存储文件
+   */
   final FieldsIndex indexReader;
+  /**
+   * 对应 存储词向量的索引文件
+   */
   final IndexInput vectorsStream;
   private final int version;
   private final int packedIntsVersion;
@@ -104,7 +111,10 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     this.closed = false;
   }
 
-  /** Sole constructor. */
+  /**
+   * Sole constructor
+   * 先通过 元数据文件 读取对应索引文件相关数据的偏移量 以及 doc数据 等等信息
+   */
   public CompressingTermVectorsReader(Directory d, SegmentInfo si, String segmentSuffix, FieldInfos fn,
       IOContext context, String formatName, CompressionMode compressionMode) throws IOException {
     this.compressionMode = compressionMode;
@@ -125,6 +135,7 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
 
       if (version < VERSION_OFFHEAP_INDEX) {
         // Load the index into memory
+        // 兼容旧版本的 先忽略
         final String indexName = IndexFileNames.segmentFileName(segment, segmentSuffix, "tvx");
         try (ChecksumIndexInput indexStream = d.openChecksumInput(indexName, context)) {
           Throwable priorE = null;
@@ -149,11 +160,14 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
         indexReader = fieldsIndexReader;
         maxPointer = fieldsIndexReader.getMaxPointer();
       }
-
+      // 该对象在初始化的时候 会根据拓展名前缀 和 segmentName 找到 m 文件 和 x 文件
       this.indexReader = indexReader;
+      // 索引文件最后的偏移量
       this.maxPointer = maxPointer;
 
+      // 获取索引文件当前的偏移量   主要用于复位
       long pos = vectorsStream.getFilePointer();
+      // 这是当前元数据文件记录的索引文件最后的偏移量    因为在写入元数据文件之后 还会对索引文件追加几个数据
       vectorsStream.seek(maxPointer);
       numChunks = vectorsStream.readVLong();
       numDirtyChunks = vectorsStream.readVLong();
@@ -171,6 +185,7 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       packedIntsVersion = vectorsStream.readVInt();
       chunkSize = vectorsStream.readVInt();
       decompressor = compressionMode.newDecompressor();
+      // 词向量对象内部的数据 没有按位存储 只是使用了 VInt 之类的自定义变量
       this.reader = new BlockPackedReaderIterator(vectorsStream, packedIntsVersion, PACKED_BLOCK_SIZE, 0);
 
       success = true;
@@ -239,35 +254,52 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     return new CompressingTermVectorsReader(this);
   }
 
+  /**
+   * 通过传入一个 docId  将doc 内部的词向量信息读取到内存中
+   * @param doc
+   * @return
+   * @throws IOException
+   */
   @Override
   public Fields get(int doc) throws IOException {
     ensureOpen();
 
     // seek to the right place
     {
+      // 找到doc 对应的起始偏移量
       final long startPointer = indexReader.getStartPointer(doc);
+      // 定位索引文件的光标
       vectorsStream.seek(startPointer);
     }
 
     // decode
     // - docBase: first doc ID of the chunk
     // - chunkDocs: number of docs of the chunk
+    // 记录本批doc 是从哪个docId 开始的
     final int docBase = vectorsStream.readVInt();
+    // 本批数据有多少 doc
     final int chunkDocs = vectorsStream.readVInt();
     if (doc < docBase || doc >= docBase + chunkDocs || docBase + chunkDocs > numDocs) {
       throw new CorruptIndexException("docBase=" + docBase + ",chunkDocs=" + chunkDocs + ",doc=" + doc, vectorsStream);
     }
 
+    // 第一个要解析的数据是 当前doc 下有多少 field
     final int skip; // number of fields to skip
     final int numFields; // number of fields of the document we're looking for
     final int totalFields; // total number of fields of the chunk (sum for all docs)
+    // 如果当前doc 只有一个 那么直接读取一个Vint就好 它就代表有多少field
     if (chunkDocs == 1) {
       skip = 0;
       numFields = totalFields = vectorsStream.readVInt();
     } else {
+      // 这里的数据 都是按位写入  (内部还会涉及到期望值 和 min的计算)
       reader.reset(vectorsStream, chunkDocs);
       int sum = 0;
+      // 这里分3次读取 第一次读取的是本批 docId 小于 查询的目标id 的数据
+      // 第二次刚好查询目标id 对应的数据
+      // 第三次查询的数据是 超过id 的数据
       for (int i = docBase; i < doc; ++i) {
+        // 读取出来的每个值 都是某个doc 下包含的field数量
         sum += reader.next();
       }
       skip = sum;
@@ -279,22 +311,28 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       totalFields = sum;
     }
 
+    // 代表该doc下刚好没有任何field 数据 那么就没有词向量数据
     if (numFields == 0) {
       // no vectors
       return null;
     }
 
     // read field numbers that have term vectors
+    // 这段逻辑存储的是本批doc 下所有的field 在去重后的 fieldNum信息
     final int[] fieldNums;
     {
+      // 从 writer的逻辑中可以看到  token 最多只占 8 位
       final int token = vectorsStream.readByte() & 0xFF;
       assert token != 0; // means no term vectors, cannot happen since we checked for numFields == 0
+      // 最低位 记录这些 fieldNum 最多需要多少位来存储
       final int bitsPerFieldNum = token & 0x1F;
       int totalDistinctFields = token >>> 5;
+      // 代表fieldNum 的长度超过了 7 就需要额外读取一个VInt值 并将这个值 + 7
       if (totalDistinctFields == 0x07) {
         totalDistinctFields += vectorsStream.readVInt();
       }
       ++totalDistinctFields;
+      // 这里将值读取出来  并存储到 对应的数组中
       final PackedInts.ReaderIterator it = PackedInts.getReaderIteratorNoHeader(vectorsStream, PackedInts.Format.PACKED, packedIntsVersion, totalDistinctFields, bitsPerFieldNum, 1);
       fieldNums = new int[totalDistinctFields];
       for (int i = 0; i < totalDistinctFields; ++i) {
@@ -306,32 +344,45 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     final int[] fieldNumOffs = new int[numFields];
     final PackedInts.Reader flags;
     {
+      // 这里是下标 占用多少位
       final int bitsPerOff = PackedInts.bitsRequired(fieldNums.length - 1);
+
+      // 上面相当于存储的是唯一的 field数据体  这里按照doc 下所有携带的 fieldNum 找到上面对应数据体所在的下标  这样就可以节省空间了
+      // 这里只占当前这个 doc 下所有 field 在 fieldNums[] 中对应的下标
+      // PackedInts.getReaderNoHeader 这个对象是先从 input 中读取一块数据到内存 之后根据 下标 通过每个值需要的bit 推算出起点 然后读取值
       final PackedInts.Reader allFieldNumOffs = PackedInts.getReaderNoHeader(vectorsStream, PackedInts.Format.PACKED, packedIntsVersion, totalFields, bitsPerOff);
+      // 这里是判断  相同fieldNum 对应的 field的 flag 是否完全相同
       switch (vectorsStream.readVInt()) {
         case 0:
+          // 代表所有 fieldNum 相同的 field  flag 完全相同  那么写入flag 的顺序与 fieldNums[] 一样
           final PackedInts.Reader fieldFlags = PackedInts.getReaderNoHeader(vectorsStream, PackedInts.Format.PACKED, packedIntsVersion, fieldNums.length, FLAGS_BITS);
           PackedInts.Mutable f = PackedInts.getMutable(totalFields, FLAGS_BITS, PackedInts.COMPACT);
           for (int i = 0; i < totalFields; ++i) {
+            // 找到对应的field 在 fieldNums[] 的下标
             final int fieldNumOff = (int) allFieldNumOffs.get(i);
             assert fieldNumOff >= 0 && fieldNumOff < fieldNums.length;
+            // 这里就读取对应的值
             final int fgs = (int) fieldFlags.get(fieldNumOff);
+            // 将结果又写入压缩的结构中
             f.set(i, fgs);
           }
           flags = f;
           break;
         case 1:
+          // 这种情况就是 每个field (不去重) 对应一个  flag
           flags = PackedInts.getReaderNoHeader(vectorsStream, PackedInts.Format.PACKED, packedIntsVersion, totalFields, FLAGS_BITS);
           break;
         default:
           throw new AssertionError();
       }
+      // 开始读取 该doc 下所有 field 对应的 fieldNum 在 fieldNums[] 的下标
       for (int i = 0; i < numFields; ++i) {
         fieldNumOffs[i] = (int) allFieldNumOffs.get(skip + i);
       }
     }
 
     // number of terms per field for all fields
+    // 这里读取 term 相关的信息  每个field 下term数量
     final PackedInts.Reader numTerms;
     final int totalTerms;
     {
@@ -350,15 +401,20 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     final int[][] prefixLengths = new int[numFields][];
     final int[][] suffixLengths = new int[numFields][];
     {
+      // 代表 重新从input 中读取对应的长度 用于填充内存的数据
       reader.reset(vectorsStream, totalTerms);
       // skip
+      // 读取每个term的前缀长度
       int toSkip = 0;
       for (int i = 0; i < skip; ++i) {
         toSkip += numTerms.get(i);
       }
       reader.skip(toSkip);
       // read prefix lengths
+      // 通过读取前面的数据 已经知道了某个 term下有多少field 这里读取对应数量的值 每个值内存储了 前缀长度和后缀长度
+      // numField 代表 doc下有多少 field   numTerms 代表 field 下有多少 term
       for (int i = 0; i < numFields; ++i) {
+        // 直接定位到目标 field 下有多少term
         final int termCount = (int) numTerms.get(skip + i);
         final int[] fieldPrefixLengths = new int[termCount];
         prefixLengths[i] = fieldPrefixLengths;
@@ -369,6 +425,7 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
           }
         }
       }
+      // TODO  不细看了  核心就是将写入到索引文件的数据 重新读取到内存中
       reader.skip(totalTerms - reader.ord());
 
       reader.reset(vectorsStream, totalTerms);
@@ -655,12 +712,33 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     return positions;
   }
 
+  /**
+   * 这个对象就是将 索引文件解析后 生成了 存储了某个doc数据的对象
+   */
   private class TVFields extends Fields {
 
     private final int[] fieldNums, fieldFlags, fieldNumOffs, numTerms, fieldLengths;
     private final int[][] prefixLengths, suffixLengths, termFreqs, positionIndex, positions, startOffsets, lengths, payloadIndex;
     private final BytesRef suffixBytes, payloadBytes;
 
+    /**
+     *
+     * @param fieldNums  存储某次刷盘所有doc的fieldNum  的数组  fieldNum 就像一个id   与field数量无必然关系
+     * @param fieldFlags
+     * @param fieldNumOffs   对应 fieldNums的偏移量  长度对应field的数量
+     * @param numTerms
+     * @param fieldLengths
+     * @param prefixLengths
+     * @param suffixLengths
+     * @param termFreqs
+     * @param positionIndex
+     * @param positions
+     * @param startOffsets
+     * @param lengths
+     * @param payloadBytes
+     * @param payloadIndex
+     * @param suffixBytes
+     */
     public TVFields(int[] fieldNums, int[] fieldFlags, int[] fieldNumOffs, int[] numTerms, int[] fieldLengths,
         int[][] prefixLengths, int[][] suffixLengths, int[][] termFreqs,
         int[][] positionIndex, int[][] positions, int[][] startOffsets, int[][] lengths,
@@ -683,6 +761,10 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       this.suffixBytes = suffixBytes;
     }
 
+    /**
+     * 返回具备遍历内部元素的迭代器
+     * @return
+     */
     @Override
     public Iterator<String> iterator() {
       return new Iterator<String>() {
@@ -706,6 +788,12 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       };
     }
 
+    /**
+     * 返回某个域下所有的 term
+     * @param field
+     * @return
+     * @throws IOException
+     */
     @Override
     public Terms terms(String field) throws IOException {
       final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
@@ -748,6 +836,9 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
 
   }
 
+  /**
+   * 描述某个 field 下所有的 term 信息
+   */
   private static class TVTerms extends Terms {
 
     private final int numTerms, flags;

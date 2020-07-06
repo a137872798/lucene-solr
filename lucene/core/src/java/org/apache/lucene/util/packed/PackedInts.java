@@ -543,12 +543,12 @@ public class PackedInts {
     }
 
     /**
-     * 读取数据的迭代器
+     * 定义了一个 按照位读取数据的 基类
      */
     static abstract class ReaderIteratorImpl implements ReaderIterator {
 
         /**
-         * 简单的看作一个输入流 可以从内部读取数据
+         * 对应数据源
          */
         protected final DataInput in;
         /**

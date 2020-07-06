@@ -63,7 +63,7 @@ class TermVectorsConsumer extends TermsHash {
   int numVectorFields;
   int lastDocID;
   /**
-   * 每次 reset时 会置空这个数组    TermVectorsConsumerPerField 该对象负责从term中抽取信息
+   * 每次 reset时 会置空这个数组    TermVectorsConsumerPerField 该对象负责以 field 为单位 从term中抽取信息
    */
   private TermVectorsConsumerPerField[] perFields = new TermVectorsConsumerPerField[1];
 

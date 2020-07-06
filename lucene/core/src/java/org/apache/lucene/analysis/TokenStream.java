@@ -148,7 +148,7 @@ public abstract class TokenStream extends AttributeSource implements Closeable {
    * {@link #incrementToken()}.
    * 
    * @return false for end of stream; true otherwise
-   * 往流中添加 token
+   * 解析token 并根据解析出来的属性 为 各个 attr赋值
    */
   public abstract boolean incrementToken() throws IOException;
   

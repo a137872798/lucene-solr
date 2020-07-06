@@ -34,15 +34,28 @@ import org.apache.lucene.util.packed.PackedLongValues;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 /** Buffers up pending long[] per doc, sorts, then flushes when segment flushes. */
+
+/**
+ * 该对象也是存储 数字类型的 docValue  同时还具备排序的功能
+ */
 class SortedNumericDocValuesWriter extends DocValuesWriter {
   private PackedLongValues.Builder pending; // stream of all values
+  /**
+   * 记录每个 doc写入了多少数据
+   */
   private PackedLongValues.Builder pendingCounts; // count of values per doc
   private DocsWithFieldSet docsWithField;
   private final Counter iwBytesUsed;
   private long bytesUsed; // this only tracks differences in 'pending' and 'pendingCounts'
   private final FieldInfo fieldInfo;
   private int currentDoc = -1;
+  /**
+   * 记录当前写入的值 (未排序)
+   */
   private long currentValues[] = new long[8];
+  /**
+   * 记录当前doc已经写入了多少数据
+   */
   private int currentUpto = 0;
 
   private PackedLongValues finalValues;
@@ -60,6 +73,7 @@ class SortedNumericDocValuesWriter extends DocValuesWriter {
 
   public void addValue(int docID, long value) {
     assert docID >= currentDoc;
+    // 以doc为单位 每次切换doc前 将之前写入的数据排序后写入pending中
     if (docID != currentDoc) {
       finishCurrentDoc();
       currentDoc = docID;
@@ -71,9 +85,11 @@ class SortedNumericDocValuesWriter extends DocValuesWriter {
   
   // finalize currentDoc: this sorts the values in the current doc
   private void finishCurrentDoc() {
+    // 初始状态忽略该动作
     if (currentDoc == -1) {
       return;
     }
+    // 每次在真正写入 pending前 先将现在存储的数据进行排序
     Arrays.sort(currentValues, 0, currentUpto);
     for (int i = 0; i < currentUpto; i++) {
       pending.add(currentValues[i]);
@@ -90,6 +106,10 @@ class SortedNumericDocValuesWriter extends DocValuesWriter {
     finishCurrentDoc();
   }
 
+  /**
+   *
+   * @param value
+   */
   private void addOneValue(long value) {
     if (currentUpto == currentValues.length) {
       currentValues = ArrayUtil.grow(currentValues, currentValues.length+1);

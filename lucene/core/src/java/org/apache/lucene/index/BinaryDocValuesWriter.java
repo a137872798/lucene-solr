@@ -37,6 +37,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 /** Buffers up pending byte[] per doc, then flushes when
  *  segment flushes. */
+// 存储的是二进制数据
 class BinaryDocValuesWriter extends DocValuesWriter {
 
   /** Maximum length for a binary field. */
@@ -45,10 +46,16 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   // 32 KB block sizes for PagedBytes storage:
   private final static int BLOCK_BITS = 15;
 
+  /**
+   * 该对象内部的block是byte[] (用于存储二进制数据)
+   */
   private final PagedBytes bytes;
   private final DataOutput bytesOut;
 
   private final Counter iwBytesUsed;
+  /**
+   * 该对象专门存储long型的数据  这里用于保存二进制数据的长度
+   */
   private final PackedLongValues.Builder lengths;
   private DocsWithFieldSet docsWithField;
   private final FieldInfo fieldInfo;
@@ -67,6 +74,11 @@ class BinaryDocValuesWriter extends DocValuesWriter {
     iwBytesUsed.addAndGet(bytesUsed);
   }
 
+  /**
+   * 代表此时写入了某个 doc 关联的值
+   * @param docID
+   * @param value
+   */
   public void addValue(int docID, BytesRef value) {
     if (docID <= lastDocID) {
       throw new IllegalArgumentException("DocValuesField \"" + fieldInfo.name + "\" appears more than once in this document (only one value is allowed per field)");
@@ -86,6 +98,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
       // Should never happen!
       throw new RuntimeException(ioe);
     }
+    // 使用位图来存储 docId
     docsWithField.add(docID);
     updateBytesUsed();
 
@@ -102,10 +115,19 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   public void finish(int maxDoc) {
   }
 
+  /**
+   * 该对象代表内部的数据已经完成排序
+   * @param maxDoc
+   * @param sortMap
+   * @param oldValues
+   * @return
+   * @throws IOException
+   */
   private SortingLeafReader.CachedBinaryDVs sortDocValues(int maxDoc, Sorter.DocMap sortMap, BinaryDocValues oldValues) throws IOException {
     FixedBitSet docsWithField = new FixedBitSet(maxDoc);
     BytesRef[] values = new BytesRef[maxDoc];
     while (true) {
+      // 遍历 原来的docId
       int docID = oldValues.nextDoc();
       if (docID == NO_MORE_DOCS) {
         break;
@@ -122,10 +144,20 @@ class BinaryDocValuesWriter extends DocValuesWriter {
     throw new IllegalArgumentException("It is forbidden to sort on a binary field");
   }
 
+  /**
+   * 将 docValue 写入到文件中
+   * @param state
+   * @param sortMap  代表doc 已经重新排序过了
+   * @param dvConsumer  该对象就是 负责将数据写入到 索引文件的对象
+   * @throws IOException
+   */
   @Override
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, DocValuesConsumer dvConsumer) throws IOException {
+    // 冻结bytes 对象 无法再写入数据
     bytes.freeze(false);
+    // 该对象专门用于存储 每个docValue的长度
     final PackedLongValues lengths = this.lengths.build();
+    // 跟 norm 一个套路 如果携带了 sortMap 就将docValue 排序
     final SortingLeafReader.CachedBinaryDVs sorted;
     if (sortMap != null) {
       sorted = sortDocValues(state.segmentInfo.maxDoc(), sortMap,
@@ -153,6 +185,9 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   private static class BufferedBinaryDocValues extends BinaryDocValues {
     final BytesRefBuilder value;
     final PackedLongValues.Iterator lengthsIterator;
+    /**
+     * 这个位图是用来存储 docId的  （该迭代器是位图生成的）
+     */
     final DocIdSetIterator docsWithField;
     final DataInput bytesIterator;
     
@@ -174,6 +209,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
       int docID = docsWithField.nextDoc();
       if (docID != NO_MORE_DOCS) {
         int length = Math.toIntExact(lengthsIterator.next());
+        // 根据长度 从value中读取数据
         value.setLength(length);
         bytesIterator.readBytes(value.bytes(), 0, length);
       }

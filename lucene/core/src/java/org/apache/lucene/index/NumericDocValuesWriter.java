@@ -41,7 +41,13 @@ class NumericDocValuesWriter extends DocValuesWriter {
   private final FieldInfo fieldInfo;
   private int lastDocID = -1;
 
+  /**
+   *
+   * @param fieldInfo docValueType 都是设置在某个field上的
+   * @param iwBytesUsed  该对象一般都是不断传递进来 用于估量当前使用的总内存的  可以先不看
+   */
   public NumericDocValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed) {
+    // 生成一个增量存储的 packed 对象  packed本身的特性是按位存储数据
     pending = PackedLongValues.deltaPackedBuilder(PackedInts.COMPACT);
     docsWithField = new DocsWithFieldSet();
     bytesUsed = pending.ramBytesUsed() + docsWithField.ramBytesUsed();
@@ -50,12 +56,21 @@ class NumericDocValuesWriter extends DocValuesWriter {
     iwBytesUsed.addAndGet(bytesUsed);
   }
 
+  /**
+   * 存储 某个doc下该field 存储的值
+   * 在处理多个doc时  field可能会出现重复的情况 然后每个 field对象对应一个 DocValueWriter对象  在处理doc时 按照docId 触发该方法
+   * @param docID
+   * @param value
+   */
   public void addValue(int docID, long value) {
+    // 要求id单调递增
     if (docID <= lastDocID) {
       throw new IllegalArgumentException("DocValuesField \"" + fieldInfo.name + "\" appears more than once in this document (only one value is allowed per field)");
     }
 
+    // 写入到差值存储的容器中
     pending.add(value);
+    // 追加关联关系  内部使用了 位图
     docsWithField.add(docID);
 
     updateBytesUsed();
@@ -73,6 +88,13 @@ class NumericDocValuesWriter extends DocValuesWriter {
   public void finish(int maxDoc) {
   }
 
+  /**
+   * 根据传入的  sortedField 对象获取对应的排序对象
+   * @param maxDoc
+   * @param sortField
+   * @return
+   * @throws IOException
+   */
   @Override
   Sorter.DocComparator getDocComparator(int maxDoc, SortField sortField) throws IOException {
     assert finalValues == null;
@@ -87,16 +109,27 @@ class NumericDocValuesWriter extends DocValuesWriter {
     return docsWithField.iterator();
   }
 
+  /**
+   *
+   * @param maxDoc 当前最大的docId
+   * @param sortMap   docId 根据对应的值已经排序过了  该对象可以通过docId的自然顺序找到排序后的位置
+   * @param oldDocValues  该对象可以遍历 docId 并获取绑定的value
+   * @return
+   * @throws IOException
+   */
   static SortingLeafReader.CachedNumericDVs sortDocValues(int maxDoc, Sorter.DocMap sortMap, NumericDocValues oldDocValues) throws IOException {
     FixedBitSet docsWithField = new FixedBitSet(maxDoc);
+    // 该数组存放 docId 上读取出来的值
     long[] values = new long[maxDoc];
     while (true) {
       int docID = oldDocValues.nextDoc();
       if (docID == NO_MORE_DOCS) {
         break;
       }
+      // 找到排序后的位置
       int newDocID = sortMap.oldToNew(docID);
       docsWithField.set(newDocID);
+      // 在对应的位置设置 绑定的值
       values[newDocID] = oldDocValues.longValue();
     }
     return new SortingLeafReader.CachedNumericDVs(values, docsWithField);
@@ -136,6 +169,7 @@ class NumericDocValuesWriter extends DocValuesWriter {
   }
 
   // iterates over the values we have in ram
+  // 该对象就是之前写入的 docValue的读取器
   private static class BufferedNumericDocValues extends NumericDocValues {
     final PackedLongValues.Iterator iter;
     final DocIdSetIterator docsWithField;
