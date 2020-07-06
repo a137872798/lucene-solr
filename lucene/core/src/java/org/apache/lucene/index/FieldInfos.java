@@ -252,6 +252,9 @@ public class FieldInfos implements Iterable<FieldInfo> {
     return byNumber[fieldNumber];
   }
 
+  /**
+   * 描述某个域的 维度信息
+   */
   static final class FieldDimensions {
     public final int dimensionCount;
     public final int indexDimensionCount;
@@ -285,6 +288,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
     private int lowestUnassignedFieldNumber = -1;
 
     // The soft-deletes field from IWC to enforce a single soft-deletes field
+    // 代表采用 软删除措施的field 好像只能存在一个
     private final String softDeletesFieldName;
     
     FieldNumbers(String softDeletesFieldName) {
@@ -301,9 +305,13 @@ public class FieldInfos implements Iterable<FieldInfo> {
      * does not exist yet it tries to add it with the given preferred field
      * number assigned if possible otherwise the first unassigned field number
      * is used as the field number.
+     * 通过指定fieldName  创建一个新的field对象 并且赋予一个 number
      */
     synchronized int addOrGet(String fieldName, int preferredFieldNumber, IndexOptions indexOptions, DocValuesType dvType, int dimensionCount, int indexDimensionCount, int dimensionNumBytes, boolean isSoftDeletesField) {
+      // 套路都是类似的 存在则进行校验 如果不存在 则新建并填充到map中
+
       if (indexOptions != IndexOptions.NONE) {
+        // 添加映射关系
         IndexOptions currentOpts = this.indexOptions.get(fieldName);
         if (currentOpts == null) {
           this.indexOptions.put(fieldName, indexOptions);
@@ -311,6 +319,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
           throw new IllegalArgumentException("cannot change field \"" + fieldName + "\" from index options=" + currentOpts + " to inconsistent index options=" + indexOptions);
         }
       }
+      // 这里存储了 field 的docValue 类型
       if (dvType != DocValuesType.NONE) {
         DocValuesType currentDVType = docValuesType.get(fieldName);
         if (currentDVType == null) {
@@ -319,6 +328,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
           throw new IllegalArgumentException("cannot change DocValues type from " + currentDVType + " to " + dvType + " for field \"" + fieldName + "\"");
         }
       }
+      // 存储维度信息
       if (dimensionCount != 0) {
         FieldDimensions dims = dimensions.get(fieldName);
         if (dims != null) {
@@ -335,6 +345,8 @@ public class FieldInfos implements Iterable<FieldInfo> {
           dimensions.put(fieldName, new FieldDimensions(dimensionCount, indexDimensionCount, dimensionNumBytes));
         }
       }
+
+      // 至少以 FieldNumbers 来说 name相同的field 共用一个号码
       Integer fieldNumber = nameToNumber.get(fieldName);
       if (fieldNumber == null) {
         final Integer preferredBoxed = Integer.valueOf(preferredFieldNumber);
@@ -349,6 +361,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
           fieldNumber = lowestUnassignedFieldNumber;
         }
         assert fieldNumber >= 0;
+        // 存储正反向索引
         numberToName.put(fieldNumber, fieldName);
         nameToNumber.put(fieldName, fieldNumber);
       }
@@ -435,13 +448,26 @@ public class FieldInfos implements Iterable<FieldInfo> {
       dimensions.clear();
     }
 
+    /**
+     * 填充索引信息
+     * @param number
+     * @param name
+     * @param indexOptions
+     */
     synchronized void setIndexOptions(int number, String name, IndexOptions indexOptions) {
       verifyConsistent(number, name, indexOptions);
       this.indexOptions.put(name, indexOptions);
     }
 
+    /**
+     *
+     * @param number   某个fieldNumber
+     * @param name   某个fieldName
+     * @param dvType  该field 描述的docValueType
+     */
     synchronized void setDocValuesType(int number, String name, DocValuesType dvType) {
       verifyConsistent(number, name, dvType);
+      // 存储映射关系
       docValuesType.put(name, dvType);
     }
 
@@ -494,6 +520,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
     }
 
     /** Create a new field, or return existing one. */
+    // 创建一个使用该名字的 fieldInfo 对象
     public FieldInfo getOrAdd(String name) {
       FieldInfo fi = fieldInfo(name);
       if (fi == null) {
@@ -503,10 +530,16 @@ public class FieldInfos implements Iterable<FieldInfo> {
         // number for this field.  If the field was seen
         // before then we'll get the same name and number,
         // else we'll allocate a new one:
+        // 判断该 field 是否是软删除的域
         final boolean isSoftDeletesField = name.equals(globalFieldNumbers.softDeletesFieldName);
+        // 既然是新建的 field 需要分配一个全局的 num
+        // 如果同名的field已经存在 共用一个number  否则重新分配一个num
+        // 注意这里的 fieldName相同的情况下 就会对属性进行校验 确保使用相同fieldName的 field 属性相同
         final int fieldNumber = globalFieldNumbers.addOrGet(name, -1, IndexOptions.NONE, DocValuesType.NONE, 0, 0, 0, isSoftDeletesField);
+        // 创建一个空对象  相关属性默认值都是 false
         fi = new FieldInfo(name, fieldNumber, false, false, false, IndexOptions.NONE, DocValuesType.NONE, -1, new HashMap<>(), 0, 0, 0, isSoftDeletesField);
         assert !byName.containsKey(fi.name);
+        // 一致性校验 忽略
         globalFieldNumbers.verifyConsistent(Integer.valueOf(fi.number), fi.name, DocValuesType.NONE);
         byName.put(fi.name, fi);
       }

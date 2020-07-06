@@ -50,7 +50,7 @@ public final class PagedBytes implements Accountable {
 
   /** Provides methods to read BytesRefs from a frozen
    *  PagedBytes.
-   *
+   * 该对象专门负责从已经存储了 压缩数据的pagedBytes中读取数据
    * @see #freeze */
   public final static class Reader implements Accountable {
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Reader.class);
@@ -142,6 +142,7 @@ public final class PagedBytes implements Accountable {
 
   /** 1&lt;&lt;blockBits must be bigger than biggest single
    *  BytesRef slice that will be pulled */
+  // 这里只是设置一些基本属性 还没有开辟内存
   public PagedBytes(int blockBits) {
     assert blockBits > 0 && blockBits <= 31 : blockBits;
     this.blockSize = 1 << blockBits;
@@ -350,6 +351,9 @@ public final class PagedBytes implements Accountable {
     }
   }
 
+  /**
+   * 该对象是一个内部类 负责往
+   */
   public final class PagedBytesDataOutput extends DataOutput {
     @Override
     public void writeByte(byte b) {

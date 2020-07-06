@@ -27,6 +27,7 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.Counter;
 
 /** Buffers up pending byte[][] value(s) per doc, then flushes when segment flushes. */
+// 该对象负责存储某个field的向量信息
 class PointValuesWriter {
   private final FieldInfo fieldInfo;
   private final ByteBlockPool bytes;

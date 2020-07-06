@@ -24,6 +24,8 @@ import org.apache.lucene.util.RamUsageEstimator;
 
 /** Accumulator for documents that have a value for a field. This is optimized
  *  for the case that all documents have a value. */
+// 每个field 可能会出现在多个doc中  这里是一个容器对象 与field一一对应的关系  标记了该field所关联的所有docId
+// 通过位图来存储 docId 是非常节省空间的  一个long 可以表示 64个docId
 final class DocsWithFieldSet extends DocIdSet {
 
   private static long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(DocsWithFieldSet.class);
@@ -36,12 +38,15 @@ final class DocsWithFieldSet extends DocIdSet {
     if (docID <= lastDocId) {
       throw new IllegalArgumentException("Out of order doc ids: last=" + lastDocId + ", next=" + docID);
     }
+    // 正常情况下 就是 根据docId 设置对应的位
     if (set != null) {
+      // 进行扩容
       set = FixedBitSet.ensureCapacity(set, docID);
       set.set(docID);
     } else if (docID != cost) {
       // migrate to a sparse encoding using a bit set
       set = new FixedBitSet(docID + 1);
+      // 这里是填写连续的位  docId 又不一定是连续的
       set.set(0, cost);
       set.set(docID);
     }

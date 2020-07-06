@@ -37,6 +37,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 /** Buffers up pending byte[] per doc, then flushes when
  *  segment flushes. */
+// 存储的是二进制数据
 class BinaryDocValuesWriter extends DocValuesWriter {
 
   /** Maximum length for a binary field. */
@@ -45,10 +46,16 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   // 32 KB block sizes for PagedBytes storage:
   private final static int BLOCK_BITS = 15;
 
+  /**
+   * 该对象内部的block是byte[] (用于存储二进制数据)
+   */
   private final PagedBytes bytes;
   private final DataOutput bytesOut;
 
   private final Counter iwBytesUsed;
+  /**
+   * 该对象专门存储long型的数据  这里用于保存二进制数据的长度
+   */
   private final PackedLongValues.Builder lengths;
   private DocsWithFieldSet docsWithField;
   private final FieldInfo fieldInfo;
@@ -67,6 +74,11 @@ class BinaryDocValuesWriter extends DocValuesWriter {
     iwBytesUsed.addAndGet(bytesUsed);
   }
 
+  /**
+   * 代表此时写入了某个 doc 关联的值
+   * @param docID
+   * @param value
+   */
   public void addValue(int docID, BytesRef value) {
     if (docID <= lastDocID) {
       throw new IllegalArgumentException("DocValuesField \"" + fieldInfo.name + "\" appears more than once in this document (only one value is allowed per field)");
@@ -86,6 +98,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
       // Should never happen!
       throw new RuntimeException(ioe);
     }
+    // 使用位图来存储 docId
     docsWithField.add(docID);
     updateBytesUsed();
 

@@ -396,7 +396,6 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     }
 
     // term lengths
-    // 读取每个 term 的长度
     int docOff = 0, docLen = 0, totalLen;
     final int[] fieldLengths = new int[numFields];
     final int[][] prefixLengths = new int[numFields][];
@@ -405,14 +404,17 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       // 代表 重新从input 中读取对应的长度 用于填充内存的数据
       reader.reset(vectorsStream, totalTerms);
       // skip
+      // 读取每个term的前缀长度
       int toSkip = 0;
       for (int i = 0; i < skip; ++i) {
         toSkip += numTerms.get(i);
       }
       reader.skip(toSkip);
       // read prefix lengths
-      // 这里只读取 该doc下所有 term 的前缀长度
+      // 通过读取前面的数据 已经知道了某个 term下有多少field 这里读取对应数量的值 每个值内存储了 前缀长度和后缀长度
+      // numField 代表 doc下有多少 field   numTerms 代表 field 下有多少 term
       for (int i = 0; i < numFields; ++i) {
+        // 直接定位到目标 field 下有多少term
         final int termCount = (int) numTerms.get(skip + i);
         final int[] fieldPrefixLengths = new int[termCount];
         prefixLengths[i] = fieldPrefixLengths;
@@ -423,6 +425,7 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
           }
         }
       }
+      // TODO  不细看了  核心就是将写入到索引文件的数据 重新读取到内存中
       reader.skip(totalTerms - reader.ord());
 
       reader.reset(vectorsStream, totalTerms);
@@ -709,12 +712,33 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
     return positions;
   }
 
+  /**
+   * 这个对象就是将 索引文件解析后 生成了 存储了某个doc数据的对象
+   */
   private class TVFields extends Fields {
 
     private final int[] fieldNums, fieldFlags, fieldNumOffs, numTerms, fieldLengths;
     private final int[][] prefixLengths, suffixLengths, termFreqs, positionIndex, positions, startOffsets, lengths, payloadIndex;
     private final BytesRef suffixBytes, payloadBytes;
 
+    /**
+     *
+     * @param fieldNums  存储某次刷盘所有doc的fieldNum  的数组  fieldNum 就像一个id   与field数量无必然关系
+     * @param fieldFlags
+     * @param fieldNumOffs   对应 fieldNums的偏移量  长度对应field的数量
+     * @param numTerms
+     * @param fieldLengths
+     * @param prefixLengths
+     * @param suffixLengths
+     * @param termFreqs
+     * @param positionIndex
+     * @param positions
+     * @param startOffsets
+     * @param lengths
+     * @param payloadBytes
+     * @param payloadIndex
+     * @param suffixBytes
+     */
     public TVFields(int[] fieldNums, int[] fieldFlags, int[] fieldNumOffs, int[] numTerms, int[] fieldLengths,
         int[][] prefixLengths, int[][] suffixLengths, int[][] termFreqs,
         int[][] positionIndex, int[][] positions, int[][] startOffsets, int[][] lengths,
@@ -737,6 +761,10 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       this.suffixBytes = suffixBytes;
     }
 
+    /**
+     * 返回具备遍历内部元素的迭代器
+     * @return
+     */
     @Override
     public Iterator<String> iterator() {
       return new Iterator<String>() {
@@ -760,6 +788,12 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
       };
     }
 
+    /**
+     * 返回某个域下所有的 term
+     * @param field
+     * @return
+     * @throws IOException
+     */
     @Override
     public Terms terms(String field) throws IOException {
       final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
@@ -802,6 +836,9 @@ public final class CompressingTermVectorsReader extends TermVectorsReader implem
 
   }
 
+  /**
+   * 描述某个 field 下所有的 term 信息
+   */
   private static class TVTerms extends Terms {
 
     private final int numTerms, flags;

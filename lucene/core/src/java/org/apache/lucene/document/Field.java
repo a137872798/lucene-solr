@@ -485,7 +485,6 @@ public class Field implements IndexableField {
   }
 
   /**
-   * 返回一个token流对象
    * @param analyzer Analyzer that should be used to create the TokenStreams from
    * @param reuse TokenStream for a previous instance of this field <b>name</b>. This allows
    *              custom field types (like StringField and NumericField) that do not use
@@ -493,18 +492,20 @@ public class Field implements IndexableField {
    *              may be inappropriate, for example if you mix up different types of Fields
    *              for the same field name. So it's the responsibility of the implementation to
    *              check.
+   *              尝试复用上一个 field对应的tokenStream
    * @return
    */
   @Override
   public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
+    // 如果该field 本身不需要存储信息 不需要生成token 流   在lucene流程中 DefaultIndexingChain 已经确保了能进入该方法的 时候必然设置了 索引选项
     if (fieldType().indexOptions() == IndexOptions.NONE) {
       // Not indexed
       return null;
     }
 
-    // 代表token流不需要被分析
+    // 如果已经设置了值的情况 选择复用上一个对象
     if (!fieldType().tokenized()) {
-      // 直接返回二进制流或者 string流
+      // 如果该field 内部的属性已经被设置   将结果设置到上游对象 并直接返回上游对象 这样该对象占用的内存就可以释放
       if (stringValue() != null) {
         if (!(reuse instanceof StringTokenStream)) {
           // lazy init the TokenStream as it is heavy to instantiate
@@ -526,6 +527,7 @@ public class Field implements IndexableField {
       }
     }
 
+    // 已经生成token流 返回 否则使用分析器 分析后 返回结果
     if (tokenStream != null) {
       return tokenStream;
     // 选择将该field 包装成 tokenStream
@@ -578,6 +580,9 @@ public class Field implements IndexableField {
 
   private static final class StringTokenStream extends TokenStream {
     private final CharTermAttribute termAttribute = addAttribute(CharTermAttribute.class);
+    /**
+     * 有关偏移量的 属性就是记录一个起点offset 和一个 终止offset 刚好对应的string的长度(0,length)
+     */
     private final OffsetAttribute offsetAttribute = addAttribute(OffsetAttribute.class);
     private boolean used = true;
     private String value = null;
