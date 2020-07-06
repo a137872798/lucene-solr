@@ -72,11 +72,15 @@ import org.apache.lucene.util.packed.PackedInts;
 /**
  * {@link StoredFieldsReader} impl for {@link CompressingStoredFieldsFormat}.
  * @lucene.experimental
+ * 该对象与 CompressingStoredFieldsWriter 对应  负责读取格式化的数据
  */
 public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
   private final int version;
   private final FieldInfos fieldInfos;
+  /**
+   * 该对象负责读取有关元数据的信息
+   */
   private final FieldsIndex indexReader;
   private final long maxPointer;
   private final IndexInput fieldsStream;
@@ -110,22 +114,37 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     this.closed = false;
   }
 
-  /** Sole constructor. */
+  /**
+   * Sole constructor.
+   * @param d   通过指定目录和 段名 找到对应的索引文件 并通过索引文件找到 fieldValue
+   * @param si
+   * @param segmentSuffix
+   * @param fn
+   * @param context
+   * @param formatName
+   * @param compressionMode
+   * @throws IOException
+   */
   public CompressingStoredFieldsReader(Directory d, SegmentInfo si, String segmentSuffix, FieldInfos fn,
       IOContext context, String formatName, CompressionMode compressionMode) throws IOException {
     this.compressionMode = compressionMode;
     final String segment = si.name;
     boolean success = false;
     fieldInfos = fn;
+    // 获取当前段中 最大的docId
     numDocs = si.maxDoc();
 
+    // 找到 writer对象写入的索引文件
     final String fieldsStreamFN = IndexFileNames.segmentFileName(segment, segmentSuffix, FIELDS_EXTENSION);
     try {
       // Open the data file and read metadata
+      // 尝试打开文件
       fieldsStream = d.openInput(fieldsStreamFN, context);
+      // 校验头部信息
       version = CodecUtil.checkIndexHeader(fieldsStream, formatName, VERSION_START, VERSION_CURRENT, si.getId(), segmentSuffix);
       assert CodecUtil.indexHeaderLength(formatName, segmentSuffix) == fieldsStream.getFilePointer();
 
+      // 这里完全对应 writer的构造函数
       chunkSize = fieldsStream.readVInt();
       packedIntsVersion = fieldsStream.readVInt();
       decompressor = compressionMode.newDecompressor();
@@ -136,18 +155,22 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
       // but for now we at least verify proper structure of the checksum footer: which looks
       // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
       // such as file truncation.
+      // 校验 CRC 数据
       CodecUtil.retrieveChecksum(fieldsStream);
 
       long maxPointer = -1;
       FieldsIndex indexReader = null;
 
+      // TODO 文件兼容逻辑就先不看吧
       if (version < VERSION_OFFHEAP_INDEX) {
         // Load the index into memory
+        // 该文件记录了每次刷盘前 索引文件的偏移量
         final String indexName = IndexFileNames.segmentFileName(segment, segmentSuffix, "fdx");
         try (ChecksumIndexInput indexStream = d.openChecksumInput(indexName, context)) {
           Throwable priorE = null;
           try {
             assert formatName.endsWith("Data");
+            // 获取索引格式的名字 用于判断是否兼容
             final String codecNameIdx = formatName.substring(0, formatName.length() - "Data".length()) + "Index";
             final int version2 = CodecUtil.checkIndexHeader(indexStream, codecNameIdx, VERSION_START, VERSION_CURRENT, si.getId(), segmentSuffix);
             if (version != version2) {
@@ -163,15 +186,20 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
           }
         }
       } else {
+        // 代表版本号匹配的情况  创建读取元数据的reader对象
         FieldsIndexReader fieldsIndexReader = new FieldsIndexReader(d, si.name, segmentSuffix, INDEX_EXTENSION_PREFIX, INDEX_CODEC_NAME, si.getId());
         indexReader = fieldsIndexReader;
+        // 这个是当时写入数据时索引文件最后的偏移量
         maxPointer = fieldsIndexReader.getMaxPointer();
       }
 
       this.maxPointer = maxPointer;
       this.indexReader = indexReader;
 
+      // 直接定位到索引文件的最后
       fieldsStream.seek(maxPointer);
+      // 索引文件在写完数据时 会先生成元数据文件 也就是对应 FieldsIndex 写入的数据 之后会写入 numChunks 代表总计刷盘了多少次
+      // numDirtyChunks 代表在finish时 还有数据未刷盘
       numChunks = fieldsStream.readVLong();
       numDirtyChunks = fieldsStream.readVLong();
       if (numDirtyChunks > numChunks) {
@@ -180,6 +208,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
       success = true;
     } finally {
+      // 校验文件失败时
       if (!success) {
         IOUtils.closeWhileHandlingException(this);
       }
@@ -206,12 +235,22 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     }
   }
 
+  /**
+   * CompressingStoredFieldsWriter 负责写入 field的 数值 这里就是返回来读取数值
+   * @param in
+   * @param visitor
+   * @param info
+   * @param bits
+   * @throws IOException
+   */
   private static void readField(DataInput in, StoredFieldVisitor visitor, FieldInfo info, int bits) throws IOException {
+    // 判别数值类型
     switch (bits & TYPE_MASK) {
       case BYTE_ARR:
         int length = in.readVInt();
         byte[] data = new byte[length];
         in.readBytes(data, 0, length);
+        // visitor 具备将field信息 还原成 doc的功能 这里是在还原doc
         visitor.binaryField(info, data);
         break;
       case STRING:
@@ -376,6 +415,11 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     private final BytesRef spare = new BytesRef();
     private final BytesRef bytes = new BytesRef();
 
+    /**
+     * 该对象是否包含 doc的数据
+     * @param docID
+     * @return
+     */
     boolean contains(int docID) {
       return docID >= docBase && docID < docBase + chunkDocs;
     }
@@ -401,7 +445,18 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
       }
     }
 
+    /**
+     * 读取对应的doc数据填充成员变量
+     * @param docID
+     * @throws IOException
+     */
     private void doReset(int docID) throws IOException {
+      // 代表当前doc的起始偏移量   那么docId 应该是个相对值吧
+      /**
+       * 这段逻辑对应  writer的
+       *     // save docBase and numBufferedDocs
+       *     fieldsStream.writeVInt(docBase);
+       */
       docBase = fieldsStream.readVInt();
       final int token = fieldsStream.readVInt();
       chunkDocs = token >>> 1;
@@ -563,9 +618,17 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
   }
 
+  /**
+   * 传入 docId 找到某个 文档对象
+   * @param docID
+   * @return
+   * @throws IOException
+   */
   SerializedDocument document(int docID) throws IOException {
     if (state.contains(docID) == false) {
+      // 定位到某个 doc的偏移量
       fieldsStream.seek(indexReader.getStartPointer(docID));
+      // 读取fieldsStream内部的数据 填充内部字段
       state.reset(docID);
     }
     assert state.contains(docID);

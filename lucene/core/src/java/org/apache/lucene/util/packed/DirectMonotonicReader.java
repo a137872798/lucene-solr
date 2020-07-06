@@ -46,6 +46,7 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
 
   /** In-memory metadata that needs to be kept around for
    *  {@link DirectMonotonicReader} to read data from disk. */
+  // 将数据读取出来后 存放在 Meta对象中
   public static class Meta implements Accountable {
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Meta.class);
 
@@ -58,6 +59,7 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
 
     Meta(long numValues, int blockShift) {
       this.blockShift = blockShift;
+      // 获取块的下标
       long numBlocks = numValues >>> blockShift;
       if ((numBlocks << blockShift) < numValues) {
         numBlocks += 1;
@@ -83,10 +85,13 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
    *  @see DirectMonotonicReader#getInstance(Meta, RandomAccessInput) */
   public static Meta loadMeta(IndexInput metaIn, long numValues, int blockShift) throws IOException {
     Meta meta = new Meta(numValues, blockShift);
+    // 将内部数据全部读取出来 并写入到 meta 中
     for (int i = 0; i < meta.numBlocks; ++i) {
       meta.mins[i] = metaIn.readLong();
       meta.avgs[i] = Float.intBitsToFloat(metaIn.readInt());
+      // 代表 data 在本次 flush 写入了多少数据
       meta.offsets[i] = metaIn.readLong();
+      // 代表增量数据使用了多少位表示  如果是0代表所有数据都是一样的
       meta.bpvs[i] = metaIn.readByte();
     }
     return meta;
@@ -94,13 +99,16 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
 
   /**
    * Retrieves an instance from the specified slice.
+   * 通过一个元数据对象 返回一个 reader 该reader 会根据元数据信息读取  data内的数据
    */
   public static DirectMonotonicReader getInstance(Meta meta, RandomAccessInput data) throws IOException {
     final LongValues[] readers = new LongValues[meta.numBlocks];
     for (int i = 0; i < meta.mins.length; ++i) {
       if (meta.bpvs[i] == 0) {
+        // 这里返回的是基本值 在读取的时候 还要加上差值 以及  avg   0 代表data中没有写入任何数据 同时所有的值都是一样的
         readers[i] = EMPTY;
       } else {
+        // offsets[i] 偏移量
         readers[i] = DirectReader.getInstance(data, meta.bpvs[i], meta.offsets[i]);
       }
     }
@@ -115,6 +123,14 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
   private final byte[] bpvs;
   private final int nonZeroBpvs;
 
+  /**
+   * 该对象在读取值的时候 会通过 mins 和 avgs 对数据进行还原
+   * @param blockShift
+   * @param readers
+   * @param mins
+   * @param avgs
+   * @param bpvs
+   */
   private DirectMonotonicReader(int blockShift, LongValues[] readers, long[] mins, float[] avgs, byte[] bpvs) {
     this.blockShift = blockShift;
     this.readers = readers;
@@ -124,6 +140,8 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
     if (readers.length != mins.length || readers.length != avgs.length || readers.length != bpvs.length) {
       throw new IllegalArgumentException();
     }
+    // ZeroBpvs 代表某批写入的数值 完全一样
+    // bpvs 代表某批写入的数值 每个占用多少bit
     int nonZeroBpvs = 0;
     for (byte b : bpvs) {
       if (b != 0) {
@@ -133,6 +151,11 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
     this.nonZeroBpvs = nonZeroBpvs;
   }
 
+  /**
+   * 通过传入某个偏移量得到具体的值
+   * @param index
+   * @return
+   */
   @Override
   public long get(long index) {
     final int block = (int) (index >>> blockShift);
@@ -159,6 +182,7 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
    * like {@link Arrays#binarySearch(long[], int, int, long)}.
    *
    * @see Arrays#binarySearch(long[], int, int, long)
+   * 通过传入 key 进行二分查找
    */
   public long binarySearch(long fromIndex, long toIndex, long key) {
     if (fromIndex < 0 || fromIndex > toIndex) {

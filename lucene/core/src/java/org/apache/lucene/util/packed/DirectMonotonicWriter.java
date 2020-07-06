@@ -32,6 +32,7 @@ import org.apache.lucene.util.ArrayUtil;
  * @see DirectMonotonicReader
  * @lucene.internal
  * 按照单调趋势写入数据 (单调递增 or 单调递减)
+ * FieldsIndexWriter 写入数据时 就是依靠该对象
  */
 public final class DirectMonotonicWriter {
 
@@ -95,7 +96,7 @@ public final class DirectMonotonicWriter {
   private void flush() throws IOException {
     assert bufferSize != 0;
 
-    // 通过减去平均每个值的变化量 使得 差距尽可能的减小
+    // 这里减期望有什么用???
     final float avgInc = (float) ((double) (buffer[bufferSize-1] - buffer[0]) / Math.max(1, bufferSize - 1));
     for (int i = 0; i < bufferSize; ++i) {
       final long expected = (long) (avgInc * (long) i);
@@ -120,7 +121,7 @@ public final class DirectMonotonicWriter {
     // 写入用于还原数据的2个关键变量  min 和 avg
     meta.writeLong(min);
     meta.writeInt(Float.floatToIntBits(avgInc));
-    // 这里是 写入数据的长度
+    // 代表偏移量信息
     meta.writeLong(data.getFilePointer() - baseDataPointer);
     // 代表所有的值都是一样的 也就是 数据的变化是平稳的
     if (maxDelta == 0) {
@@ -144,7 +145,7 @@ public final class DirectMonotonicWriter {
   /** Write a new value. Note that data might not make it to storage until
    * {@link #finish()} is called.
    *  @throws IllegalArgumentException if values don't come in order */
-  // 将数据写入到 buffer 中
+  // 将数据写入到 buffer 中   并且写入的数据 必然是单调递增的
   public void add(long v) throws IOException {
     if (v < previous) {
       throw new IllegalArgumentException("Values do not come in order: " + previous + ", " + v);

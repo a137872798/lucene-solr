@@ -190,19 +190,20 @@ public final class FieldsIndexWriter implements Closeable {
       metaOut.writeInt(numDocs);
       metaOut.writeInt(blockShift);
       metaOut.writeInt(totalChunks + 1); // 总计刷盘多少次
-      metaOut.writeLong(dataOut.getFilePointer());  // 索引文件上次的偏移量
+      metaOut.writeLong(dataOut.getFilePointer());  // dataOut文件上次的偏移量
 
-      // 这里声明 IOContext 是 read_once  代表只能使用输入流读取一次   校验和相关的先忽略
+      // docsOut 记录每次flush 多少文档
       try (ChecksumIndexInput docsIn = dir.openChecksumInput(docsOut.getName(), IOContext.READONCE)) {
         // 检查头部与之前写入的是否一致
         CodecUtil.checkHeader(docsIn, codecName + "Docs", VERSION_CURRENT, VERSION_CURRENT);
         Throwable priorE = null;
         try {
-          // 通过2个输出流对象 创建 writer
+          // 通过2个输出流对象 创建 writer   因为本次是最后一次刷盘 所以totalChunk + 1
           final DirectMonotonicWriter docs = DirectMonotonicWriter.getInstance(metaOut, dataOut, totalChunks + 1, blockShift);
           long doc = 0;
-          // 往 dataOut中写入 每次flush的doc数量
+          // 往 dataOut中写入 每次flush的doc数量   先写入基数0
           docs.add(doc);
+          // 以单调递增的方式 写入
           for (int i = 0; i < totalChunks; ++i) {
             doc += docsIn.readVInt();
             docs.add(doc);
@@ -223,6 +224,7 @@ public final class FieldsIndexWriter implements Closeable {
 
       // 写入最后的data文件偏移量
       metaOut.writeLong(dataOut.getFilePointer());
+      // 这里将文件的偏移量数据 也写入到 metaOut中
       try (ChecksumIndexInput filePointersIn = dir.openChecksumInput(filePointersOut.getName(), IOContext.READONCE)) {
         CodecUtil.checkHeader(filePointersIn, codecName + "FilePointers", VERSION_CURRENT, VERSION_CURRENT);
         Throwable priorE = null;

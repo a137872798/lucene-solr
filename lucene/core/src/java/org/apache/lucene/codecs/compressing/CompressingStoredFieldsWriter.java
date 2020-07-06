@@ -284,7 +284,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     
     // save docBase and numBufferedDocs
     fieldsStream.writeVInt(docBase);
-    // TODO slicedBit这个标识怎么用     这里相当于已经存入了长度信息
+    // 这里相当于已经存入了长度信息  TODO slicedBit这个标识怎么用???
     fieldsStream.writeVInt((numBufferedDocs) << 1 | slicedBit);
 
     // save numStoredFields
@@ -585,6 +585,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     if (docBase != numDocs) {
       throw new RuntimeException("Wrote " + docBase + " docs, finish called with numDocs=" + numDocs);
     }
+    // 这里会生成元数据文件 并且删除掉2个临时文件
     indexWriter.finish(numDocs, fieldsStream.getFilePointer());
     fieldsStream.writeVLong(numChunks);
     fieldsStream.writeVLong(numDirtyChunks);
