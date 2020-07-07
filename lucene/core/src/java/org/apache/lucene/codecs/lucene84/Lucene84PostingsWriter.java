@@ -56,8 +56,17 @@ import org.apache.lucene.util.IOUtils;
  */
 public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
 
+  /**
+   * 这个输出流 用于存储doc
+   */
   IndexOutput docOut;
+  /**
+   * 负责存储 prox 信息
+   */
   IndexOutput posOut;
+  /**
+   * 存储 offset/payload 信息
+   */
   IndexOutput payOut;
 
   final static IntBlockTermState emptyState = new IntBlockTermState();
@@ -73,6 +82,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
   private int docBufferUpto;
 
   final long[] posDeltaBuffer;
+
   final long[] payloadLengthBuffer;
   final long[] offsetStartDeltaBuffer;
   final long[] offsetLengthBuffer;
@@ -101,8 +111,10 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
   private final CompetitiveImpactAccumulator competitiveFreqNormAccumulator = new CompetitiveImpactAccumulator();
 
   /** Creates a postings writer */
+  // 通过一个描述段信息的对象初始化
   public Lucene84PostingsWriter(SegmentWriteState state) throws IOException {
 
+    // 生成存储doc 的文件名
     String docFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.DOC_EXTENSION);
     docOut = state.directory.createOutput(docFileName, state.context);
     IndexOutput posOut = null;
@@ -112,6 +124,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
       CodecUtil.writeIndexHeader(docOut, DOC_CODEC, VERSION_CURRENT, 
                                    state.segmentInfo.getId(), state.segmentSuffix);
       ByteOrder byteOrder = ByteOrder.nativeOrder();
+      // 大端法/小端法
       if (byteOrder == ByteOrder.BIG_ENDIAN) {
         docOut.writeByte((byte) 'B');
       } else if (byteOrder == ByteOrder.LITTLE_ENDIAN) {
@@ -119,16 +132,21 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
       } else {
         throw new Error();
       }
+      // 便于差值存储
       final ForUtil forUtil = new ForUtil();
       forDeltaUtil = new ForDeltaUtil(forUtil);
       pforUtil = new PForUtil(forUtil);
+      // 只要有任意一个 field 设置了 prox
       if (state.fieldInfos.hasProx()) {
+        // 初始大小为128
         posDeltaBuffer = new long[BLOCK_SIZE];
+        // 创建存储 pos 的文件
         String posFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.POS_EXTENSION);
         posOut = state.directory.createOutput(posFileName, state.context);
         CodecUtil.writeIndexHeader(posOut, POS_CODEC, VERSION_CURRENT,
                                      state.segmentInfo.getId(), state.segmentSuffix);
 
+        // 如果field 携带了payload信息
         if (state.fieldInfos.hasPayloads()) {
           payloadBytes = new byte[128];
           payloadLengthBuffer = new long[BLOCK_SIZE];
@@ -137,6 +155,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
           payloadLengthBuffer = null;
         }
 
+        // 如果携带了 offset 信息
         if (state.fieldInfos.hasOffsets()) {
           offsetStartDeltaBuffer = new long[BLOCK_SIZE];
           offsetLengthBuffer = new long[BLOCK_SIZE];
@@ -145,6 +164,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
           offsetLengthBuffer = null;
         }
 
+        // 只要存在 offset 或者 payload 任意一项 就创建对应的索引文件
         if (state.fieldInfos.hasPayloads() || state.fieldInfos.hasOffsets()) {
           String payFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.PAY_EXTENSION);
           payOut = state.directory.createOutput(payFileName, state.context);
@@ -171,6 +191,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     freqBuffer = new long[BLOCK_SIZE];
 
     // TODO: should we try skipping every 2/4 blocks...?
+    // 基于跳表结构 将相关数据存储到3个输出流中
     skipWriter = new Lucene84SkipWriter(MAX_SKIP_LEVELS,
                                         BLOCK_SIZE, 
                                         state.segmentInfo.maxDoc(),
@@ -184,12 +205,22 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     return new IntBlockTermState();
   }
 
+  /**
+   * 使用一个索引文件进行初始化
+   * @param termsOut
+   * @param state
+   * @throws IOException
+   */
   @Override
   public void init(IndexOutput termsOut, SegmentWriteState state) throws IOException {
     CodecUtil.writeIndexHeader(termsOut, TERMS_CODEC, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
     termsOut.writeVInt(BLOCK_SIZE);
   }
 
+  /**
+   * 代表此时开始处理某个 field   将内部相关属性都更改成与这个field 挂钩的
+   * @param fieldInfo
+   */
   @Override
   public void setField(FieldInfo fieldInfo) {
     super.setField(fieldInfo);

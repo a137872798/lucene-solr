@@ -33,13 +33,15 @@ import org.apache.lucene.util.MathUtil;
  * Subclasses must implement the abstract method {@link #readSkipData(int, IndexInput)}
  * which defines the actual format of the skip data.
  * @lucene.experimental
+ * 对应 MultiLevelSkipListWriter
  */
 
 public abstract class MultiLevelSkipListReader implements Closeable {
   /** the maximum number of skip levels possible for this index */
-  protected int maxNumberOfSkipLevels; 
+  protected int maxNumberOfSkipLevels;
   
   /** number of levels in this skip list */
+  // 代表该跳跃表 有多少level
   protected int numberOfSkipLevels;
   
   // Expert: defines the number of top skip levels to buffer in memory.
@@ -54,6 +56,7 @@ public abstract class MultiLevelSkipListReader implements Closeable {
   private int docCount;
 
   /** skipStream for each level. */
+  // 在 writer中 每层会对应一个 output 对象
   private IndexInput[] skipStream;
 
   /** The start pointer of each skip level. */
@@ -82,7 +85,13 @@ public abstract class MultiLevelSkipListReader implements Closeable {
 
   private final int skipMultiplier;
 
-  /** Creates a {@code MultiLevelSkipListReader}. */
+  /**
+   * Creates a {@code MultiLevelSkipListReader}.
+   * @param skipStream
+   * @param maxSkipLevels  一共有多少层
+   * @param skipInterval  数据层到 level[0] 层 需要 / 多少
+   * @param skipMultiplier  每往上一层需要 / 多少
+   */
   protected MultiLevelSkipListReader(IndexInput skipStream, int maxSkipLevels, int skipInterval, int skipMultiplier) {
     this.skipStream = new IndexInput[maxSkipLevels];
     this.skipPointer = new long[maxSkipLevels];

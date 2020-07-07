@@ -67,6 +67,10 @@ public abstract class BaseTermsEnum extends TermsEnum {
     }
   }
 
+  /**
+   * 每当迭代到某个 term 时 都可以调用该方法 返回一个source对象   当解析这个term后会生成一系列的attr 这个source就是用于访问attr的
+   * @return
+   */
   public AttributeSource attributes() {
     if (atts == null) {
       atts = new AttributeSource();

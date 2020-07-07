@@ -415,11 +415,19 @@ public final class Lucene84PostingsFormat extends PostingsFormat {
     return getName();
   }
 
+  /**
+   * 根据 段信息生成一个存储多个 field相关信息的对象
+   * @param state
+   * @return
+   * @throws IOException
+   */
   @Override
   public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
+    // 该对象内部包含3个输出流 并基于跳跃表存储数据
     PostingsWriterBase postingsWriter = new Lucene84PostingsWriter(state);
     boolean success = false;
     try {
+      // 使用一个 blockTree 进行包装
       FieldsConsumer ret = new BlockTreeTermsWriter(state, 
                                                     postingsWriter,
                                                     minTermBlockSize, 

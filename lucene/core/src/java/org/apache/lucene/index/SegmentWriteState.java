@@ -60,6 +60,7 @@ public class SegmentWriteState {
    * enrolled in here if it was deleted/updated at one point, and it's mapped to
    * the docIDUpto, meaning any docID &lt; docIDUpto containing this term should
    * be deleted/updated.
+   * 描述了数据的变化
    */
   public final BufferedUpdates segUpdates;
 
@@ -107,6 +108,7 @@ public class SegmentWriteState {
   }
   
   /** Create a shallow copy of {@link SegmentWriteState} with a new segment suffix. */
+  // 提供该方法只是为了快捷修改 segmentSuffix
   public SegmentWriteState(SegmentWriteState state, String segmentSuffix) {
     infoStream = state.infoStream;
     directory = state.directory;

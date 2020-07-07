@@ -39,6 +39,7 @@ import static org.apache.lucene.codecs.lucene80.Lucene80NormsFormat.VERSION_STAR
 
 /**
  * Reader for {@link Lucene80NormsFormat}
+ * 该对象负责读取 按特定格式存储的 标准因子信息
  */
 final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   // metadata maps (just file pointers and minimal stuff)

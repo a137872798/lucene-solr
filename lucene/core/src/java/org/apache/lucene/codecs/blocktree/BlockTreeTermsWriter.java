@@ -193,6 +193,7 @@ import org.apache.lucene.util.fst.Util;
  *
  * @see BlockTreeTermsReader
  * @lucene.experimental
+ * 该对象负责 将fields信息持久化到索引文件中  同时利用了 FST
  */
 public final class BlockTreeTermsWriter extends FieldsConsumer {
 
@@ -217,6 +218,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
   final int minItemsInBlock;
   final int maxItemsInBlock;
 
+  /**
+   * 该对象负责写入 有关 position相关的信息
+   */
   final PostingsWriterBase postingsWriter;
   final FieldInfos fieldInfos;
 
@@ -254,7 +258,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
    *  minItemsPerBlock and maxItemsPerBlock, though in some
    *  cases the blocks may be smaller than the min. */
   public BlockTreeTermsWriter(SegmentWriteState state,
-                              PostingsWriterBase postingsWriter,
+                              PostingsWriterBase postingsWriter,   // 该对象会使用基于跳跃表的结构存储数据
                               int minItemsInBlock,
                               int maxItemsInBlock)
     throws IOException
@@ -269,11 +273,13 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     this.fieldInfos = state.fieldInfos;
     this.postingsWriter = postingsWriter;
 
+    // 生成存储 term的索引文件  后缀名为 tim
     final String termsName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, BlockTreeTermsReader.TERMS_EXTENSION);
     termsOut = state.directory.createOutput(termsName, state.context);
     boolean success = false;
     IndexOutput indexOut = null;
     try {
+      // 写入文件头
       CodecUtil.writeIndexHeader(termsOut, BlockTreeTermsReader.TERMS_CODEC_NAME, BlockTreeTermsReader.VERSION_CURRENT,
                                  state.segmentInfo.getId(), state.segmentSuffix);
 
@@ -283,6 +289,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                                  state.segmentInfo.getId(), state.segmentSuffix);
       //segment = state.segmentInfo.name;
 
+      // 这里只是写入 索引格式等信息
       postingsWriter.init(termsOut, state);                          // have consumer write its format/header
       
       this.indexOut = indexOut;
@@ -318,16 +325,24 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     }
   }
 
+  /**
+   * 将一组 field 信息 以及标准因子信息写入到 索引文件中
+   * @param fields
+   * @param norms
+   * @throws IOException
+   */
   @Override
   public void write(Fields fields, NormsProducer norms) throws IOException {
     //if (DEBUG) System.out.println("\nBTTW.write seg=" + segment);
 
     String lastField = null;
     for(String field : fields) {
+      // 确保 field是 递增的
       assert lastField == null || lastField.compareTo(field) < 0;
       lastField = field;
 
       //if (DEBUG) System.out.println("\nBTTW.write seg=" + segment + " field=" + field);
+      // 找到某个field下关联的所有  term
       Terms terms = fields.terms(field);
       if (terms == null) {
         continue;
@@ -542,6 +557,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
   }
 
+  /**
+   * 该对象专门负责写入 terms
+   */
   class TermsWriter {
     private final FieldInfo fieldInfo;
     private long numTerms;
@@ -914,6 +932,10 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
       return new PendingBlock(prefix, startFP, hasTerms, isFloor, floorLeadLabel, subIndices);
     }
 
+    /**
+     * 通过某个 field的信息来初始化 term写入对象
+     * @param fieldInfo
+     */
     TermsWriter(FieldInfo fieldInfo) {
       this.fieldInfo = fieldInfo;
       assert fieldInfo.getIndexOptions() != IndexOptions.NONE;

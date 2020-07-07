@@ -25,7 +25,6 @@ import org.apache.lucene.index.TermState;
  * terms dict.
  *
  * @lucene.internal
- * 块状的词的状态
  */
 public class BlockTermState extends OrdTermState {
   /** how many docs have this term */

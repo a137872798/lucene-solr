@@ -156,7 +156,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * this.sortedTermIDs to the results
      */
     public int[] sortPostings() {
-        // 这里使用基数排序  为 termId 排序
+        // 这里使用基数排序
         sortedTermIDs = bytesHash.sort();
         return sortedTermIDs;
     }

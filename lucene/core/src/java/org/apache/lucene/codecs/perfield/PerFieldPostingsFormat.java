@@ -137,15 +137,28 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       throw new IllegalStateException("cannot embed PerFieldPostingsFormat inside itself (field \"" + fieldName + "\" returned PerFieldPostingsFormat)");
     }
   }
-  
+
+  /**
+   * 该对象负责将 多个field 的数据写入到索引文件
+   */
   private class FieldsWriter extends FieldsConsumer {
     final SegmentWriteState writeState;
+
+    /**
+     * 该对象统一管理多个 consumer
+     */
     final List<Closeable> toClose = new ArrayList<Closeable>();
 
     public FieldsWriter(SegmentWriteState writeState) {
       this.writeState = writeState;
     }
 
+    /**
+     * 在FreqProxTermsWriter中会调用该方法
+     * @param fields
+     * @param norms
+     * @throws IOException
+     */
     @Override
     public void write(Fields fields, NormsProducer norms) throws IOException {
       Map<PostingsFormat, FieldsGroup> formatToGroups = buildFieldsGroupMapping(fields);
@@ -158,6 +171,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           final FieldsGroup group = ent.getValue();
 
           // Exposes only the fields from this group:
+          // 这里只暴露属于该group的 field
           Fields maskedFields = new FilterFields(fields) {
             @Override
             public Iterator<String> iterator() {
@@ -167,6 +181,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
           FieldsConsumer consumer = format.fieldsConsumer(group.state);
           toClose.add(consumer);
+          // 将相关数据写入到 索引文件
           consumer.write(maskedFields, norms);
         }
         success = true;
@@ -205,22 +220,32 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       }
     }
 
+    /**
+     * 以field 为单位构建映射关系
+     * @param indexedFieldNames
+     * @return
+     */
     private Map<PostingsFormat, FieldsGroup> buildFieldsGroupMapping(Iterable<String> indexedFieldNames) {
       // Maps a PostingsFormat instance to the suffix it should use
+      // 使用相同索引格式存储field信息的 会被转存到同一个 fieldsGroup 中
       Map<PostingsFormat,FieldsGroup.Builder> formatToGroupBuilders = new HashMap<>();
 
       // Holds last suffix of each PostingFormat name
+      // 当formatName发生碰撞时  增大后缀值
       Map<String,Integer> suffixes = new HashMap<>();
 
       // Assign field -> PostingsFormat
       for(String field : indexedFieldNames) {
+        // 先获取该field的 描述信息
         FieldInfo fieldInfo = writeState.fieldInfos.fieldInfo(field);
         // TODO: This should check current format from the field attribute?
+        // 这里返回的是 Lucene84PostingsFormat
         final PostingsFormat format = getPostingsFormatForField(field);
 
         if (format == null) {
           throw new IllegalStateException("invalid null PostingsFormat for field=\"" + field + "\"");
         }
+        // name 是 LUCENE84
         String formatName = format.getName();
 
         FieldsGroup.Builder groupBuilder = formatToGroupBuilders.get(format);
@@ -234,11 +259,14 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           } else {
             suffix = suffix + 1;
           }
+          // 用新的后缀覆盖原来的值
           suffixes.put(formatName, suffix);
 
+          // 这个方法 在   writeState.segmentSuffix  长度不为0的时候抛出异常 不知道啥意思
           String segmentSuffix = getFullSegmentSuffix(field,
                                                       writeState.segmentSuffix,
                                                       getSuffix(formatName, Integer.toString(suffix)));
+          // 这里创建一个 builder对象  该对象内部存储了 suffix state  以及一个fieldName列表
           groupBuilder = new FieldsGroup.Builder(suffix, new SegmentWriteState(writeState, segmentSuffix));
           formatToGroupBuilders.put(format, groupBuilder);
         } else {
@@ -248,8 +276,10 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           }
         }
 
+        // 将field 转存到 builder 中
         groupBuilder.addField(field);
 
+        // 在map中追加2个属性
         fieldInfo.putAttribute(PER_FIELD_FORMAT_KEY, formatName);
         fieldInfo.putAttribute(PER_FIELD_SUFFIX_KEY, Integer.toString(groupBuilder.suffix));
       }
@@ -259,6 +289,10 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       return formatToGroups;
     }
 
+    /**
+     * 以field为单位存储数据的对象 由 FieldsWriter 进行统一管理
+     * @throws IOException
+     */
     @Override
     public void close() throws IOException {
       IOUtils.close(toClose);

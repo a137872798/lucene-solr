@@ -99,6 +99,9 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
         return new FieldsWriter(state);
     }
 
+    /**
+     * 每个负责存储 docValue 的索引写入对象 会携带一个后缀
+     */
     static class ConsumerAndSuffix implements Closeable {
         DocValuesConsumer consumer;
         int suffix;
@@ -115,6 +118,9 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
     private class FieldsWriter extends DocValuesConsumer {
 
         private final Map<DocValuesFormat, ConsumerAndSuffix> formats = new HashMap<>();
+        /**
+         * 存储了每个 formatName 与 后缀的映射关系
+         */
         private final Map<String, Integer> suffixes = new HashMap<>();
 
         private final SegmentWriteState segmentWriteState;
@@ -189,20 +195,24 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
          * @param ignoreCurrentFormat - ignore the existing format attributes.
          * @return DocValuesConsumer for the field.
          * @throws IOException if there is a low-level IO error
+         * docValue 以field 为单位进行存储
          */
         private DocValuesConsumer getInstance(FieldInfo field, boolean ignoreCurrentFormat) throws IOException {
             DocValuesFormat format = null;
             if (field.getDocValuesGen() != -1) {
                 String formatName = null;
                 if (ignoreCurrentFormat == false) {
+                    // 如果自定义了存储格式
                     formatName = field.getAttribute(PER_FIELD_FORMAT_KEY);
                 }
                 // this means the field never existed in that segment, yet is applied updates
+                // 通过 SPI 机制进行加载
                 if (formatName != null) {
                     format = DocValuesFormat.forName(formatName);
                 }
             }
             if (format == null) {
+                // 生成 Lucene80 那个格式的索引文件
                 format = getDocValuesFormatForField(field.name);
             }
             if (format == null) {
@@ -210,9 +220,11 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             }
             final String formatName = format.getName();
 
+            // 这里为啥要回填这个属性
             field.putAttribute(PER_FIELD_FORMAT_KEY, formatName);
             Integer suffix = null;
 
+            // 以 format为单位存储了特殊的后缀
             ConsumerAndSuffix consumer = formats.get(format);
             if (consumer == null) {
                 // First time we are seeing this format; create a new instance
@@ -241,6 +253,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
                 }
                 suffixes.put(formatName, suffix);
 
+                // 将段名与 后缀数字拼接
                 final String segmentSuffix = getFullSegmentSuffix(segmentWriteState.segmentSuffix,
                         getSuffix(formatName, Integer.toString(suffix)));
                 consumer = new ConsumerAndSuffix();
@@ -253,6 +266,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
                 suffix = consumer.suffix;
             }
 
+            // 回填后缀
             field.putAttribute(PER_FIELD_SUFFIX_KEY, Integer.toString(suffix));
             // TODO: we should only provide the "slice" of FIS
             // that this DVF actually sees ...

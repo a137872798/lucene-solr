@@ -360,17 +360,35 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
   }
 
+  /**
+   * 该对象采用 LZ4 压缩算法写入数据
+   */
   class CompressedBinaryBlockWriter implements Closeable {
     final FastCompressionHashTable ht = new LZ4.FastCompressionHashTable();    
     int uncompressedBlockLength = 0;
     int maxUncompressedBlockLength = 0;
+    /**
+     * 记录当前 block 已经写入了多少doc
+     */
     int numDocsInCurrentBlock = 0;
+    /**
+     * 对应本次尚未刷盘的 doc 所关联的 docValue长度
+     */
     final int[] docLengths = new int[Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK]; 
     byte[] block = BytesRef.EMPTY_BYTES;
+    /**
+     * 记录总计触发了多少次 flushData
+     */
     int totalChunks = 0;
+    /**
+     * 记录此时 data文件的最大偏移量
+     */
     long maxPointer = 0;
-    final long blockAddressesStart; 
+    final long blockAddressesStart;
 
+    /**
+     * 这个临时文件存储的是 有关每次 data文件写入的 长度 (flush后长度 - flush前长度)
+     */
     private final IndexOutput tempBinaryOffsets;
     
     
@@ -388,17 +406,28 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       }
     }
 
+    /**
+     * 写入 docId 与 docValue
+     * @param doc
+     * @param v
+     * @throws IOException
+     */
     void addDoc(int doc, BytesRef v) throws IOException {
       docLengths[numDocsInCurrentBlock] = v.length;
       block = ArrayUtil.grow(block, uncompressedBlockLength + v.length);
       System.arraycopy(v.bytes, v.offset, block, uncompressedBlockLength, v.length);
       uncompressedBlockLength += v.length;
       numDocsInCurrentBlock++;
+      // 当满足一个刷盘大小时 才进行刷盘 (类似批处理的思路)
       if (numDocsInCurrentBlock == Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK) {
         flushData();
       }      
     }
 
+    /**
+     * 每当写入多少 doc的关联数据时  将之前的数据刷盘
+     * @throws IOException
+     */
     private void flushData() throws IOException {
       if (numDocsInCurrentBlock > 0) {
         // Write offset to this block to temporary offsets file
@@ -413,22 +442,27 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
             break;
           }
         }
+        // 的代表所有的长度都是一致的 那么只需要写入一次长度即可  加上一个特殊标识 标明 allLengthsSame
         if (allLengthsSame) {
             // Only write one value shifted. Steal a bit to indicate all other lengths are the same
+            // 最低位为 1 代表所有长度一致
             int onlyOneLength = (docLengths[0] <<1) | 1;
             data.writeVInt(onlyOneLength);
         } else {
           for (int i = 0; i < Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK; i++) {
             if (i == 0) {
               // Write first value shifted and steal a bit to indicate other lengths are to follow
+              // 最低位为0 代表长度不一致
               int multipleLengths = (docLengths[0] <<1);
               data.writeVInt(multipleLengths);              
             } else {
+              // 之后挨个写入长度
               data.writeVInt(docLengths[i]);
             }
           }
         }
         maxUncompressedBlockLength = Math.max(maxUncompressedBlockLength, uncompressedBlockLength);
+        // 将数据压缩后写入到 data 中
         LZ4.compress(block, 0, uncompressedBlockLength, data, ht);
         numDocsInCurrentBlock = 0;
         // Ensure initialized with zeroes because full array is always written
@@ -438,32 +472,44 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         tempBinaryOffsets.writeVLong(maxPointer - thisBlockStartPointer);
       }
     }
-    
+
+    /**
+     * 代表有关 docValue的数据已经全部刷盘完毕
+     * @throws IOException
+     */
     void writeMetaData() throws IOException {
       if (totalChunks == 0) {
         return;
       }
       
       long startDMW = data.getFilePointer();
+      // 这里是记录 每次flush的详情的
+
+      // 记录data 文件的结尾偏移量
       meta.writeLong(startDMW);
-      
+      // 总计在 data文件中刷盘了多少次
       meta.writeVInt(totalChunks);
+      // 格式信息
       meta.writeVInt(Lucene80DocValuesFormat.BINARY_BLOCK_SHIFT);
+      // 记录未压缩前的长度
       meta.writeVInt(maxUncompressedBlockLength);
       meta.writeVInt(DIRECT_MONOTONIC_BLOCK_SHIFT);
       
     
       CodecUtil.writeFooter(tempBinaryOffsets);
       IOUtils.close(tempBinaryOffsets);             
-      //write the compressed block offsets info to the meta file by reading from temp file
+      // write the compressed block offsets info to the meta file by reading from temp file
+      // 读取临时文件的数据 并写入到 meta中
       try (ChecksumIndexInput filePointersIn = state.directory.openChecksumInput(tempBinaryOffsets.getName(), IOContext.READONCE)) {
         CodecUtil.checkHeader(filePointersIn, Lucene80DocValuesFormat.META_CODEC + "FilePointers", Lucene80DocValuesFormat.VERSION_CURRENT,
           Lucene80DocValuesFormat.VERSION_CURRENT);
         Throwable priorE = null;
         try {
+          // 内部数据通过 期望/min 进行压缩处理 减小实际写入的内存
           final DirectMonotonicWriter filePointers = DirectMonotonicWriter.getInstance(meta, data, totalChunks, DIRECT_MONOTONIC_BLOCK_SHIFT);
           long fp = blockAddressesStart;
           for (int i = 0; i < totalChunks; ++i) {
+            // 将每次 flush 时 data的起始偏移量写入到索引文件
             filePointers.add(fp);
             fp += filePointersIn.readVLong();
           }
@@ -477,7 +523,8 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
           CodecUtil.checkFooter(filePointersIn, priorE);
         }
       }
-      // Write the length of the DMW block in the data 
+      // Write the length of the DMW block in the data
+      // 记录 当将数据写入到 DMW 后 偏移量变化了多少
       meta.writeLong(data.getFilePointer() - startDMW);
     }
 
@@ -490,35 +537,50 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
     
   }
-  
 
+  /**
+   * 存储某个 field 下的docValue
+   * @param field field information
+   * @param valuesProducer Binary values to write.
+   * @throws IOException
+   */
   @Override
   public void addBinaryField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
+    // 标明 此时存储的 docValue是属于哪个 field的
     meta.writeInt(field.number);
+    // 代表 docValue 的值类型是 二进制类型
     meta.writeByte(Lucene80DocValuesFormat.BINARY);
 
+    // 这里构建了一个 LZ4 写入对象
     try (CompressedBinaryBlockWriter blockWriter = new CompressedBinaryBlockWriter()){
+      // 通过指定 field 找到关联的 docValues  (该对象具备迭代内部docValue的能力)
       BinaryDocValues values = valuesProducer.getBinary(field);
+      // 获取并写入当前数据文件的起始偏移量
       long start = data.getFilePointer();
       meta.writeLong(start); // dataOffset
       int numDocsWithField = 0;
       int minLength = Integer.MAX_VALUE;
       int maxLength = 0;
+      // 这里写入doc数据时 当超过一定长度时 会触发被动flush
       for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
         numDocsWithField++;
-        BytesRef v = values.binaryValue();      
+        BytesRef v = values.binaryValue();
+        // 将 docId 以及绑定的docValue 写入到writer中
         blockWriter.addDoc(doc, v);      
         int length = v.length;      
         minLength = Math.min(length, minLength);
         maxLength = Math.max(length, maxLength);
       }
+      // 主动触发 flush
       blockWriter.flushData();
 
       assert numDocsWithField <= maxDoc;
+      // 写入本次 刷盘的长度
       meta.writeLong(data.getFilePointer() - start); // dataLength
 
+      // 这个套路跟 norm 一样
       if (numDocsWithField == 0) {
-        meta.writeLong(-2); // docsWithFieldOffset
+        meta.writeLong(-2); // docsWithFieldOffset      这个标识用于区分 本次是 doc数量达到上限还是 doc数量为0
         meta.writeLong(0L); // docsWithFieldLength
         meta.writeShort((short) -1); // jumpTableEntryCount
         meta.writeByte((byte) -1);   // denseRankPower
@@ -529,18 +591,20 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         meta.writeByte((byte) -1);   // denseRankPower
       } else {
         long offset = data.getFilePointer();
-        meta.writeLong(offset); // docsWithFieldOffset
-        values = valuesProducer.getBinary(field);
-        final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
-        meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength
-        meta.writeShort(jumpTableEntryCount);
-        meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
+        meta.writeLong(offset); // docsWithFieldOffset     写入数据文件此时的起始偏移量
+        values = valuesProducer.getBinary(field);   // 上面将 values 写入到 data文件中  这里按照特殊格式又写入了一次
+        final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);  // 这里将数据做特殊处理后写入到 data中
+        meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength    写入完毕后记录长度
+        meta.writeShort(jumpTableEntryCount);  // 记录标识
+        meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);  // 记录写入的类型
       }
 
+      // 分别记录 该field 下有多少docValue  最大值的长度 最小值的长度
       meta.writeInt(numDocsWithField);
       meta.writeInt(minLength);
       meta.writeInt(maxLength);    
-      
+
+      // 这里还会在 meta 中追加一些信息
       blockWriter.writeMetaData();
       
     }

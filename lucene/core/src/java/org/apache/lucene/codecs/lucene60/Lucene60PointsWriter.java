@@ -42,6 +42,7 @@ import org.apache.lucene.util.bkd.BKDReader;
 import org.apache.lucene.util.bkd.BKDWriter;
 
 /** Writes dimensional values */
+// 该对象负责写入多维度数据
 public class Lucene60PointsWriter extends PointsWriter implements Closeable {
 
   /** Output used to write the BKD tree data file */
@@ -224,6 +225,10 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
     finish();
   }
 
+  /**
+   * 将内部数据持久化
+   * @throws IOException
+   */
   @Override
   public void finish() throws IOException {
     if (finished) {
@@ -249,6 +254,7 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
         if (fieldInfo == null) {
           throw new IllegalStateException("wrote field=\"" + ent.getKey() + "\" but that field doesn't exist in FieldInfos");
         }
+        // 这里只是写入了 fieldNum  与 对应的value 呀
         indexOut.writeVInt(fieldInfo.number);
         indexOut.writeVLong(ent.getValue());
       }

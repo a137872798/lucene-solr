@@ -86,11 +86,13 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
    * Sets the current field for writing, and returns the
    * fixed length of long[] metadata (which is fixed per
    * field), called when the writing switches to another field. */
+  // 代表此时开始处理某个 field
   @Override
   public void setField(FieldInfo fieldInfo) {
     this.fieldInfo = fieldInfo;
     indexOptions = fieldInfo.getIndexOptions();
 
+    // 将相关标识修改成针对当前field的
     writeFreqs = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
     writePositions = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
     writeOffsets = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;        

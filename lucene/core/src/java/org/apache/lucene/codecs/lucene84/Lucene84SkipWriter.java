@@ -46,9 +46,10 @@ import org.apache.lucene.store.IndexOutput;
  * 2. its related file points(position, payload), 
  * 3. related numbers or uptos(position, payload).
  * 4. start offset.
- *
+ * 该对象基于跳跃表存储数据
  */
 final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
+  // 每个层级对应一个 last数据
   private int[] lastSkipDoc;
   private long[] lastSkipDocPointer;
   private long[] lastSkipPosPointer;
@@ -65,17 +66,36 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
   private long curPayPointer;
   private int curPosBufferUpto;
   private int curPayloadByteUpto;
+  /**
+   * 每个层级对应一个 CompetitiveImpactAccumulator
+   * CompetitiveImpactAccumulator 负责保存 Impact (该对象内部包含2个属性  freq 和 norm)
+   */
   private CompetitiveImpactAccumulator[] curCompetitiveFreqNorms;
   private boolean fieldHasPositions;
   private boolean fieldHasOffsets;
   private boolean fieldHasPayloads;
 
+  /**
+   * 该输出流 专门用于写 impact
+   */
+  private final ByteBuffersDataOutput freqNormOut = ByteBuffersDataOutput.newResettableInstance();
+
+  /**
+   *
+   * @param maxSkipLevels   代表跳跃表最大层级为多少
+   * @param blockSize
+   * @param docCount   文档数
+   * @param docOut    3种用于写入数据的输出流
+   * @param posOut
+   * @param payOut
+   */
   public Lucene84SkipWriter(int maxSkipLevels, int blockSize, int docCount, IndexOutput docOut, IndexOutput posOut, IndexOutput payOut) {
     super(blockSize, 8, maxSkipLevels, docCount);
     this.docOut = docOut;
     this.posOut = posOut;
     this.payOut = payOut;
-    
+
+    // 创建与层级相关的 数组
     lastSkipDoc = new int[maxSkipLevels];
     lastSkipDocPointer = new long[maxSkipLevels];
     if (posOut != null) {
@@ -91,6 +111,12 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
     }
   }
 
+  /**
+   * 标明当前存储的字段 是否需要存储 position/offset/payload 信息
+   * @param fieldHasPositions
+   * @param fieldHasOffsets
+   * @param fieldHasPayloads
+   */
   public void setField(boolean fieldHasPositions, boolean fieldHasOffsets, boolean fieldHasPayloads) {
     this.fieldHasPositions = fieldHasPositions;
     this.fieldHasOffsets = fieldHasOffsets;
@@ -102,10 +128,15 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
   // this is the vast majority of terms (worst case: ID field or similar).  so in resetSkip() we save 
   // away the previous pointers, and lazy-init only if we need to buffer skip data for the term.
   private boolean initialized;
+
+  // 分别记录3个输出流对应文件的 filePointer
   long lastDocFP;
   long lastPosFP;
   long lastPayFP;
 
+  /**
+   * 重置跳跃表结构
+   */
   @Override
   public void resetSkip() {
     lastDocFP = docOut.getFilePointer();
@@ -122,10 +153,15 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
     }
     initialized = false;
   }
-  
+
+  /**
+   * 初始化跳跃表
+   */
   private void initSkip() {
     if (!initialized) {
+      // 回收之前 buffer中写入的数据
       super.resetSkip();
+      // 重置相关数组
       Arrays.fill(lastSkipDoc, 0);
       Arrays.fill(lastSkipDocPointer, lastDocFP);
       if (fieldHasPositions) {
@@ -147,31 +183,44 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
   }
 
   /**
-   * Sets the values for the current skip data. 
+   * Sets the values for the current skip data.
+   * 将这些数据 写入到跳跃表结构
    */
   public void bufferSkip(int doc, CompetitiveImpactAccumulator competitiveFreqNorms,
       int numDocs, long posFP, long payFP, int posBufferUpto, int payloadByteUpto) throws IOException {
     initSkip();
+    // 更新当前的最新信息
     this.curDoc = doc;
     this.curDocPointer = docOut.getFilePointer();
     this.curPosPointer = posFP;
     this.curPayPointer = payFP;
     this.curPosBufferUpto = posBufferUpto;
     this.curPayloadByteUpto = payloadByteUpto;
+    // 将 freq norm 累加到第一层
     this.curCompetitiveFreqNorms[0].addAll(competitiveFreqNorms);
+    // 这个方法会将数据 写入到多层  转发到 writeSkipData
     bufferSkip(numDocs);
   }
 
-  private final ByteBuffersDataOutput freqNormOut = ByteBuffersDataOutput.newResettableInstance();
 
+  /**
+   * 父类这个跳跃表结构很奇怪 长度 层级 一开始就确定了   每当写入一个新数据时 在调用子类的writeSkipData 后 会在当前level对应的output中写入 下一层的output长度
+   * @param level      the level skip data shall be writing for  代表此时要写入的 output在第几个level
+   * @param skipBuffer the skip buffer to write to
+   * @throws IOException
+   */
   @Override
   protected void writeSkipData(int level, DataOutput skipBuffer) throws IOException {
 
+    // 计算与上一次写入该层数据的差值
     int delta = curDoc - lastSkipDoc[level];
 
+    // 这里写入的是差值
     skipBuffer.writeVInt(delta);
+    // 更新该level 上次写入的doc数量
     lastSkipDoc[level] = curDoc;
 
+    // 这里也是写入增量数据
     skipBuffer.writeVLong(curDocPointer - lastSkipDocPointer[level]);
     lastSkipDocPointer[level] = curDocPointer;
 
@@ -191,24 +240,38 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
       }
     }
 
+    // 以上都是只存储差值
+
+    // 找到当前level的impact累加器
     CompetitiveImpactAccumulator competitiveFreqNorms = curCompetitiveFreqNorms[level];
     assert competitiveFreqNorms.getCompetitiveFreqNormPairs().size() > 0;
     if (level + 1 < numberOfSkipLevels) {
+      // impact 是跨级累加的  为啥啊 你大爷
       curCompetitiveFreqNorms[level + 1].addAll(competitiveFreqNorms);
     }
+    // 有关impact的增量数据 单独写入到freqNormOut
     writeImpacts(competitiveFreqNorms, freqNormOut);
+
+    // 将 freqNormOut的 长度 以及数据写入到 skipBuffer 中
     skipBuffer.writeVInt(Math.toIntExact(freqNormOut.size()));
     freqNormOut.copyTo(skipBuffer);
     freqNormOut.reset();
     competitiveFreqNorms.clear();
   }
 
+  /**
+   *
+   * @param acc
+   * @param out
+   * @throws IOException
+   */
   static void writeImpacts(CompetitiveImpactAccumulator acc, DataOutput out) throws IOException {
     Collection<Impact> impacts = acc.getCompetitiveFreqNormPairs();
     Impact previous = new Impact(0, 0);
     for (Impact impact : impacts) {
       assert impact.freq > previous.freq;
       assert Long.compareUnsigned(impact.norm, previous.norm) > 0;
+      // 这里也只是存储增量数据
       int freqDelta = impact.freq - previous.freq - 1;
       long normDelta = impact.norm - previous.norm - 1;
       if (normDelta == 0) {

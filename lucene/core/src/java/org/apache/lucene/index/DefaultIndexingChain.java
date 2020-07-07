@@ -208,6 +208,7 @@ final class DefaultIndexingChain extends DocConsumer {
         }
 
         t0 = System.nanoTime();
+        // 写入point 数据
         writePoints(state, sortMap);
         if (docState.infoStream.isEnabled("IW")) {
             docState.infoStream.message("IW", ((System.nanoTime() - t0) / 1000000) + " msec to write points");
@@ -215,6 +216,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
         // it's possible all docs hit non-aborting exceptions...
         t0 = System.nanoTime();
+        // 这里对存储 field 信息的索引文件进行持久化
         storedFieldsConsumer.finish(maxDoc);
         storedFieldsConsumer.flush(state, sortMap);
         if (docState.infoStream.isEnabled("IW")) {
@@ -222,6 +224,7 @@ final class DefaultIndexingChain extends DocConsumer {
         }
 
         t0 = System.nanoTime();
+        // 将 hash桶的数据 转存到 hashMap中
         Map<String, TermsHashPerField> fieldsToFlush = new HashMap<>();
         for (int i = 0; i < fieldHash.length; i++) {
             PerField perField = fieldHash[i];
@@ -239,8 +242,10 @@ final class DefaultIndexingChain extends DocConsumer {
             NormsProducer normsMergeInstance = null;
             if (norms != null) {
                 // Use the merge instance in order to reuse the same IndexInput for all terms
+                // 这里返回一个副本对象 并且标记 merging 为true
                 normsMergeInstance = norms.getMergeInstance();
             }
+            // 在这里将 有关term的数据写入到索引文件中  TODO 这里的逻辑比较复杂 还涉及到了 FST 先放着
             termsHash.flush(fieldsToFlush, state, sortMap, normsMergeInstance);
         }
         if (docState.infoStream.isEnabled("IW")) {
@@ -252,6 +257,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // FreqProxTermsWriter does this with
         // FieldInfo.storePayload.
         t0 = System.nanoTime();
+        // 这里只是简单的将 fileInfo的各个信息写入到索引文件
         docWriter.codec.fieldInfosFormat().write(state.directory, state.segmentInfo, "", state.fieldInfos, IOContext.DEFAULT);
         if (docState.infoStream.isEnabled("IW")) {
             docState.infoStream.message("IW", ((System.nanoTime() - t0) / 1000000) + " msec to write fieldInfos");
@@ -266,6 +272,7 @@ final class DefaultIndexingChain extends DocConsumer {
     private void writePoints(SegmentWriteState state, Sorter.DocMap sortMap) throws IOException {
         PointsWriter pointsWriter = null;
         boolean success = false;
+        // 套路一样 先找到所有的perField对象 然后通过format对象将数据写入到索引文件中
         try {
             for (int i = 0; i < fieldHash.length; i++) {
                 PerField perField = fieldHash[i];

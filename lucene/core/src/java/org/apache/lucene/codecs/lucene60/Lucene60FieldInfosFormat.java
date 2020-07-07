@@ -266,18 +266,32 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
     }
   }
 
+  /**
+   * 负责将 fieldInfo 的信息写入到文件中    对应的文件拓展名为 fnm
+   * @param directory
+   * @param segmentInfo
+   * @param segmentSuffix
+   * @param infos
+   * @param context
+   * @throws IOException
+   */
   @Override
   public void write(Directory directory, SegmentInfo segmentInfo, String segmentSuffix, FieldInfos infos, IOContext context) throws IOException {
     final String fileName = IndexFileNames.segmentFileName(segmentInfo.name, segmentSuffix, EXTENSION);
+    // 创建文件输出流
     try (IndexOutput output = directory.createOutput(fileName, context)) {
+      // 写入固定文件头
       CodecUtil.writeIndexHeader(output, Lucene60FieldInfosFormat.CODEC_NAME, Lucene60FieldInfosFormat.FORMAT_CURRENT, segmentInfo.getId(), segmentSuffix);
+      // 先写入 fieldInfos的总长度
       output.writeVInt(infos.size());
       for (FieldInfo fi : infos) {
         fi.checkConsistency();
 
+        // 挨个写入 field的name和num
         output.writeString(fi.name);
         output.writeVInt(fi.number);
 
+        // 写入属性标识
         byte bits = 0x0;
         if (fi.hasVectors()) bits |= STORE_TERMVECTOR;
         if (fi.omitsNorms()) bits |= OMIT_NORMS;
@@ -285,12 +299,17 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
         if (fi.isSoftDeletesField()) bits |= SOFT_DELETES_FIELD;
         output.writeByte(bits);
 
+        // 写入 IndexOptional 标识
         output.writeByte(indexOptionsByte(fi.getIndexOptions()));
 
         // pack the DV type and hasNorms in one byte
+        // 写入 docValue的类型
         output.writeByte(docValuesByte(fi.getDocValuesType()));
+        // 写入 docValue的 年代
         output.writeLong(fi.getDocValuesGen());
+        // 将 attr 以字符串形式写入
         output.writeMapOfStrings(fi.attributes());
+        // 写入维度信息
         output.writeVInt(fi.getPointDimensionCount());
         if (fi.getPointDimensionCount() != 0) {
           output.writeVInt(fi.getPointIndexDimensionCount());

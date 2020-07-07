@@ -42,7 +42,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * deletes/updates are write-once, so we shift to more memory efficient data
  * structure to hold them.  We don't hold docIDs because these are applied on
  * flush.
- * 该对象 根 FieldUpdatesBuffer 一样是描述 域的更新信息的  不同点是 该对象无法再追加新的信息
+ * 该对象 跟FieldUpdatesBuffer 一样是描述 域的更新信息的  不同点是 该对象无法再追加新的信息
  */
 final class FrozenBufferedUpdates {
 
@@ -530,12 +530,25 @@ final class FrozenBufferedUpdates {
    * It accepts a field, value tuple and returns a {@link DocIdSetIterator} if the field has an entry
    * for the given value. It has an optimized way of iterating the term dictionary if the terms are
    * passed in sorted order and makes sure terms and postings are reused as much as possible.
+   * 该对象负责遍历 内部的term信息
    */
   static final class TermDocsIterator {
+    /**
+     * 通过该对象可以获取所有 term
+     */
     private final TermsProvider provider;
+    /**
+     * 当前 termsEnum 属于哪个field
+     */
     private String field;
     private TermsEnum termsEnum;
+    /**
+     * 这个 position 实际上描述的是 某个term在哪些doc中存在
+     */
     private PostingsEnum postingsEnum;
+    /**
+     * provider 提供的term 是否已经按照大小排序
+     */
     private final boolean sortedTerms;
     private BytesRef readerTerm;
     private BytesRef lastTerm; // only set with asserts
@@ -559,6 +572,7 @@ final class FrozenBufferedUpdates {
     }
 
     private void setField(String field) throws IOException {
+      // 切换内部的 termEnum
       if (this.field == null || this.field.equals(field) == false) {
         this.field = field;
 
@@ -575,6 +589,13 @@ final class FrozenBufferedUpdates {
       }
     }
 
+    /**
+     * 通过 field 和 term 信息 找到包含该term的所有doc信息
+     * @param field
+     * @param term
+     * @return
+     * @throws IOException
+     */
     DocIdSetIterator nextTerm(String field, BytesRef term) throws IOException {
       setField(field);
       if (termsEnum != null) {
@@ -604,6 +625,7 @@ final class FrozenBufferedUpdates {
                 throw new AssertionError("unknown status");
             }
           }
+          // 精确匹配文本内容后 返回包含该term的 docId 迭代器
         } else if (termsEnum.seekExact(term)) {
           return getDocs();
         }

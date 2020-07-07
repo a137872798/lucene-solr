@@ -69,7 +69,7 @@ class BufferedUpdates implements Accountable {
     final AtomicInteger numFieldUpdates = new AtomicInteger();
 
     /**
-     * 指定term进行删除 同时还携带了该term的docId
+     * 代表要删除哪个 term  并且 value 对应 允许删除到哪个doc  因为某个term是出现在多个doc中的 这个value是一个docId的上限值
      */
     final Map<Term, Integer> deleteTerms = new HashMap<>(); // TODO cut this over to FieldUpdatesBuffer
 
