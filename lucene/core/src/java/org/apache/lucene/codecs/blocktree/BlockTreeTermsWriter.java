@@ -349,6 +349,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
       }
 
       TermsEnum termsEnum = terms.iterator();
+      // 当创建该对象时   PostingsWriterBase中的数据都会被修改成该 field相关的
       TermsWriter termsWriter = new TermsWriter(fieldInfos.fieldInfo(field));
       while (true) {
         BytesRef term = termsEnum.next();
@@ -359,6 +360,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         }
 
         //if (DEBUG) System.out.println("write field=" + fieldInfo.name + " term=" + brToString(term));
+        // 挨个将 term信息写入到 索引文件中
         termsWriter.write(term, termsEnum, norms);
       }
 
@@ -563,6 +565,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
   class TermsWriter {
     private final FieldInfo fieldInfo;
     private long numTerms;
+    /**
+     * 这个位图对象是存放 该term所在的所有doc的
+     */
     final FixedBitSet docsSeen;
     long sumTotalTermFreq;
     long sumDocFreq;
@@ -944,6 +949,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     }
     
     /** Writes one term's worth of postings. */
+    // 将某个term的数据写入到索引文件中
     public void write(BytesRef text, TermsEnum termsEnum, NormsProducer norms) throws IOException {
       /*
       if (DEBUG) {

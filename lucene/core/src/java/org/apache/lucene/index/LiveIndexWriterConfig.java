@@ -40,7 +40,7 @@ import org.apache.lucene.util.Version;
 public class LiveIndexWriterConfig {
 
   /**
-   * 该对象一般需要一个分析器初始化  分析器的作用就是从数据流中解析出token
+   * 该对象负责解析文本并找到 term
    */
   private final Analyzer analyzer;
 
@@ -64,7 +64,6 @@ public class LiveIndexWriterConfig {
 
   /** {@link IndexCommit} that {@link IndexWriter} is
    *  opened on. */
-  // 记录该索引的提交点
   protected volatile IndexCommit commit;
 
   /** {@link OpenMode} that {@link IndexWriter} is opened
@@ -133,6 +132,7 @@ public class LiveIndexWriterConfig {
   protected volatile boolean checkPendingFlushOnUpdate = true;
 
   /** soft deletes field */
+  // 标记了某个字段需要软删除
   protected String softDeletesField = null;
 
 

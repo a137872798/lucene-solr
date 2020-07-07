@@ -117,6 +117,15 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
     }
   }
 
+  /**
+   * 将某个 term的信息写入到索引文件中
+   * @param term
+   * @param termsEnum
+   * @param docsSeen
+   * @param norms
+   * @return
+   * @throws IOException
+   */
   @Override
   public final BlockTermState writeTerm(BytesRef term, TermsEnum termsEnum, FixedBitSet docsSeen, NormsProducer norms) throws IOException {
     NumericDocValues normValues;

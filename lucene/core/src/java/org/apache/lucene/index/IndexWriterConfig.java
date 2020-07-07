@@ -53,6 +53,7 @@ import org.apache.lucene.util.SetOnce;
  *
  * @see IndexWriter#getConfig()
  * @since 3.1
+ * 该对象负责装配 IndexWriter 对象  IW 对象是整个文本解析 以及存储到索引文件的开始
  */
 public final class IndexWriterConfig extends LiveIndexWriterConfig {
 
@@ -135,6 +136,7 @@ public final class IndexWriterConfig extends LiveIndexWriterConfig {
 
     // indicates whether this config instance is already attached to a writer.
     // not final so that it can be cloned properly.
+    // 代表该配置设置到了哪个 IndexWriter上 只允许设置一次
     private SetOnce<IndexWriter> writer = new SetOnce<>();
 
     /**

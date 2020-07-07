@@ -23,6 +23,7 @@ import java.util.Collection;
 /** 
  * This class makes a best-effort check that a provided {@link Lock}
  * is valid before any destructive filesystem operation.
+ * 该对象确保在对 目录操作前持有锁
  */
 public final class LockValidatingDirectoryWrapper extends FilterDirectory {
   private final Lock writeLock;

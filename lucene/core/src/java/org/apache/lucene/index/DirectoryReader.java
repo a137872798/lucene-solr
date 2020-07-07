@@ -314,7 +314,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
    * exists, or if an index in the process of committing 
    * @param  directory the directory to check for an index
    * @return <code>true</code> if an index exists; <code>false</code> otherwise
-   * 判断目标目录下索引是否存在
+   * 判断目标目录下是否存在段文件
    */
   public static boolean indexExists(Directory directory) throws IOException {
     // LUCENE-2812, LUCENE-2727, LUCENE-4738: this logic will
@@ -332,7 +332,6 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
     // resolve the situation manually:
     String[] files = directory.listAll();
 
-    // 只要存在 segments_ + 年代  的文件 就是存在索引文件
     String prefix = IndexFileNames.SEGMENTS + "_";
     for(String file : files) {
       if (file.startsWith(prefix)) {

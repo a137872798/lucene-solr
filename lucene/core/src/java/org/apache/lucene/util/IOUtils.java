@@ -489,7 +489,6 @@ public final class IOUtils {
    *  else, true.
    *
    *  @throws IOException if {@code path} does not exist.
-   *  检测当前目录是否是 一个 FS 目录 (FileSystem)
    *
    *  @lucene.internal */
   public static boolean spins(Directory dir) throws IOException {

@@ -59,7 +59,7 @@ final class DocumentsWriterPerThread {
      * The IndexingChain must define the {@link #getChain(DocumentsWriterPerThread)} method
      * which returns the DocConsumer that the DocumentsWriter calls to process the
      * documents.
-     * 生成一个处理文档的链式结构 每个环节都会抽取某些属性 便于生成对应的索引文件
+     * 该对象定义了整个处理流程 从解析token流 到将相关attr存储到索引文件
      */
     abstract static class IndexingChain {
         abstract DocConsumer getChain(DocumentsWriterPerThread documentsWriterPerThread) throws IOException;
@@ -178,7 +178,7 @@ final class DocumentsWriterPerThread {
                 infoStream.message("DWPT", "now abort");
             }
             try {
-                // 终止处理器
+                // 终止处理器  实际上会关闭内部所有的索引文件
                 consumer.abort();
             } finally {
                 // 清理由本线程收集的 更新动作
@@ -205,7 +205,7 @@ final class DocumentsWriterPerThread {
      */
     final DocState docState;
     /**
-     * 该对象处理传入的文档
+     * 该对象处理传入的文档  就是chain 对象
      */
     private final DocConsumer consumer;
     final Counter bytesUsed;
@@ -237,9 +237,7 @@ final class DocumentsWriterPerThread {
      */
     private final FieldInfos.Builder fieldInfos;
     private final InfoStream infoStream;
-    /**
-     * 实际上按照写入的顺序生成了文档号
-     */
+
     private int numDocsInRAM;
     final DocumentsWriterDeleteQueue deleteQueue;
     private final DeleteSlice deleteSlice;

@@ -31,7 +31,7 @@ import org.apache.lucene.util.BytesRef;
  *
  * @since   lucene 1.4
  * @see Sort
- * 会影响排序结果的某个 域
+ * 存储用于描述 如何为doc按照term进行排序的信息
  */
 public class SortField {
 

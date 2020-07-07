@@ -78,6 +78,7 @@ import org.apache.lucene.util.Version;
  *
  * @see SegmentInfos
  * @lucene.experimental
+ * 该索引文件存储的是 有关段信息的
  */
 public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
 
@@ -85,8 +86,18 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
   public Lucene70SegmentInfoFormat() {
   }
 
+  /**
+   * 指定某个目录 以及段名称和段id 读取数据
+   * @param dir
+   * @param segment
+   * @param segmentID expected identifier for the segment
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public SegmentInfo read(Directory dir, String segment, byte[] segmentID, IOContext context) throws IOException {
+    // 读取si文件
     final String fileName = IndexFileNames.segmentFileName(segment, "", Lucene70SegmentInfoFormat.SI_EXTENSION);
     try (ChecksumIndexInput input = dir.openChecksumInput(fileName, context)) {
       Throwable priorE = null;
@@ -97,6 +108,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
                                                 Lucene70SegmentInfoFormat.VERSION_CURRENT,
                                                 segmentID, "");
         final Version version = Version.fromBits(input.readInt(), input.readInt(), input.readInt());
+        // 获取描述最小版本的信息
         byte hasMinVersion = input.readByte();
         final Version minVersion;
         switch (hasMinVersion) {
@@ -110,19 +122,26 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
             throw new CorruptIndexException("Illegal boolean value " + hasMinVersion, input);
         }
 
+        // 获取该段下的 文档总数
         final int docCount = input.readInt();
         if (docCount < 0) {
           throw new CorruptIndexException("invalid docCount: " + docCount, input);
         }
+        // 是否使用 复合索引文件存储数据
         final boolean isCompoundFile = input.readByte() == SegmentInfo.YES;
 
+        // 获取诊断信息
         final Map<String,String> diagnostics = input.readMapOfStrings();
+        // 该段所产生的一系列索引文件名
         final Set<String> files = input.readSetOfStrings();
+        // 该段携带的 attr
         final Map<String,String> attributes = input.readMapOfStrings();
 
+        // 代表该segment 下有多少个描述 如何对数据进行排序的 信息
         int numSortFields = input.readVInt();
         Sort indexSort;
         if (numSortFields > 0) {
+          // 初始化对应数量的 sortField
           SortField[] sortFields = new SortField[numSortFields];
           for(int i=0;i<numSortFields;i++) {
             String fieldName = input.readString();

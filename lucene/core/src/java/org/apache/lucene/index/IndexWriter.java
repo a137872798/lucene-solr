@@ -212,8 +212,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * (files that were created since the last commit, but are no longer
  * referenced by the "front" of the index). For this, IndexFileDeleter
  * keeps track of the last non commit checkpoint.
- * 该对象就是负责写入索引的核心类
- * 实现了 二阶段提交接口
+ * 该对象包含了 解析文本 存储索引文件  合并索引文件 等等功能
  */
 public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     MergePolicy.MergeContext {
@@ -223,16 +222,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   // We defensively subtract 128 to be well below the lowest
   // ArrayUtil.MAX_ARRAY_LENGTH on "typical" JVMs.  We don't just use
   // ArrayUtil.MAX_ARRAY_LENGTH here because this can vary across JVMs:
-  // 这里最多只允许创建 这么多doc
+  // 一次最多只允许插入这么多 doc
   public static final int MAX_DOCS = Integer.MAX_VALUE - 128;
 
   /** Maximum value of the token position in an indexed field. */
-  // position 代表当前指向哪个 doc
   public static final int MAX_POSITION = Integer.MAX_VALUE - 128;
 
   // Use package-private instance var to enforce the limit so testing
   // can use less electricity:
-  // 实际使用的doc 数量
+  // 该属性可以通过api 进行修改  默认情况就是 MAX_DOCS
   private static int actualMaxDocs = MAX_DOCS;
 
   /** Used only for testing. */
@@ -272,13 +270,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * <code>IllegalArgumentException</code>  is thrown
    * and a message is printed to infoStream, if set (see {@link
    * IndexWriterConfig#setInfoStream(InfoStream)}).
-   * 代表某个词的最大长度     超过的话 会通过 InfoStream打印日志
    */
   public final static int MAX_TERM_LENGTH = DocumentsWriterPerThread.MAX_TERM_LENGTH_UTF8;
 
   /**
    * Maximum length string for a stored field.
-   * 最多存储多少个排序的字段
    */
   public final static int MAX_STORED_STRING_LENGTH = ArrayUtil.MAX_ARRAY_LENGTH / UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR;
     
@@ -444,7 +440,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private int mergeMaxNumSegments;
 
   /**
-   * 这里还有个锁 与上面的 docValueLock 不一样
+   * 进程锁 使得同一时间只有一个进程在操作目录 避免索引文件被并发修改
    */
   private Lock writeLock;
 
@@ -872,26 +868,35 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    *           exist and <code>conf.getOpenMode()</code> is
    *           <code>OpenMode.APPEND</code> or if there is any other low-level
    *           IO error
+   *           索引写入对象 通过一个 存放索引文件的目录 以及一个config类来初始化 config类内部有很多默认属性
+   *           以及包含一个 analyzer (负责解析文本 并生成tokenStream)
    */
   public IndexWriter(Directory d, IndexWriterConfig conf) throws IOException {
     enableTestPoints = isEnableTestPoints();
-    conf.setIndexWriter(this); // prevent reuse by other instances
+    conf.setIndexWriter(this); // prevent reuse by other instances   这里主要是为了避免 config被其他独享共享
     config = conf;
     infoStream = config.getInfoStream();
+    // 代表config中指明了软删除的字段
     softDeletesEnabled = config.getSoftDeletesField() != null;
     // obtain the write.lock. If the user configured a timeout,
     // we wrap with a sleeper and this might take some time.
+    // 通过尝试抢占文件的  fileLock 确保一次只有一个进程往该目录写入索引文件
+    // 在抢占锁失败时 会直接抛出异常
     writeLock = d.obtainLock(WRITE_LOCK_NAME);
     
     boolean success = false;
     try {
       directoryOrig = d;
+      // 这里为 目录加了一层包装器  这样在每次操作这个目录时
+      // 如果 都会先校验当前锁是否还有效 (因为操作系统级别的文件锁是不可控的 java程序不能确保锁始终有效)
       directory = new LockValidatingDirectoryWrapper(d, writeLock);
+      // 默认实现是 ConcurrentMergeScheduler
       mergeScheduler = config.getMergeScheduler();
+      // 这里根据环境 设置 merge的动态配置
       mergeScheduler.initialize(infoStream, directoryOrig);
       OpenMode mode = config.getOpenMode();
-      final boolean indexExists;
-      final boolean create;
+      final boolean indexExists;  // 代表当前目录下是否已经存在段文件
+      final boolean create;   // 代表是否需要创建段文件
       if (mode == OpenMode.CREATE) {
         indexExists = DirectoryReader.indexExists(directory);
         create = true;
@@ -910,6 +915,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       String[] files = directory.listAll();
 
       // Set up our initial SegmentInfos:
+      // 默认情况下 该值为null  可以在config中手动设置
       IndexCommit commit = config.getIndexCommit();
 
       // Set up our initial SegmentInfos:
@@ -922,6 +928,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
       if (create) {
 
+        // 如果是创建模式 无法使用indexCommit
         if (config.getIndexCommit() != null) {
           // We cannot both open from a commit point and create:
           if (mode == OpenMode.CREATE) {
@@ -935,8 +942,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // against an index that's currently open for
         // searching.  In this case we write the next
         // segments_N file with no segments:
+        // 开始创建段信息对象了  这里指定了索引的版本号  主要用于判断兼容性
         final SegmentInfos sis = new SegmentInfos(config.getIndexCreatedVersionMajor());
+        // 如果之前的段文件已经存在
         if (indexExists) {
+          // 读取段文件信息并生成段文件对象
           final SegmentInfos previous = SegmentInfos.readLatestCommit(directory);
           sis.updateGenerationVersionAndCounter(previous);
         }

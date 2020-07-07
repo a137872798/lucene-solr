@@ -196,7 +196,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * The Lucene version major that was used to create the index.
      */
-    // 创建该索引的大版本
+    // 标注创建这个段的程序版本 用于检测兼容性
     private final int indexCreatedVersionMajor;
 
     /**
@@ -336,6 +336,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * @param segmentFileName -- segment file to load
      * @throws CorruptIndexException if the index is corrupt
      * @throws IOException           if there is a low-level IO error
+     * 根据 段文件名 解析文件 抽取段信息
      */
     public static final SegmentInfos readCommit(Directory directory, String segmentFileName) throws IOException {
 
@@ -354,7 +355,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * Read the commit from the provided {@link ChecksumIndexInput}.
      */
-    // 基于指定目录生成的输入流  读取所有片段信息
+    // segment_gen 文件下包含多个segment的信息   每个segment 都会有一个si索引文件 内部包含了该段的相关信息
     public static final SegmentInfos readCommit(Directory directory, ChecksumIndexInput input, long generation) throws IOException {
 
         // NOTE: as long as we want to throw indexformattooold (vs corruptindexexception), we need
@@ -396,7 +397,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
         infos.version = input.readLong();
         //System.out.println("READ sis version=" + infos.version);
-        // 大于7.0版本还要读取一个 counter
+        //  读取一个计数值
         if (format > VERSION_70) {
             infos.counter = input.readVLong();
         } else {
@@ -408,6 +409,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             throw new CorruptIndexException("invalid segment count: " + numSegments, input);
         }
 
+        // 如果段的数量 超过0
         if (numSegments > 0) {
             infos.minSegmentLuceneVersion = Version.fromBits(input.readVInt(), input.readVInt(), input.readVInt());
         } else {
@@ -418,11 +420,12 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
         long totalDocs = 0;
         // 根据上面获取的 segment数量 开始挨个读取segment的数据 用于组成SegmentInfos
         for (int seg = 0; seg < numSegments; seg++) {
-            // 第一个字符对应 片段名 第二个 对应id
+            // 第一个字符对应 segmentName 第二个对应id
             String segName = input.readString();
+            // 读取每个段的 id
             byte[] segmentID = new byte[StringHelper.ID_LENGTH];
             input.readBytes(segmentID, 0, segmentID.length);
-            // 根据描述该片段的信息生成对应的编解码对象  (通过反射创建)
+            // 读取编解码对象
             Codec codec = readCodec(input);
             // 获取该编解码器的格式对象 并按照该格式读取数据 并解析成 segmentInfo
             SegmentInfo info = codec.segmentInfoFormat().read(directory, segName, segmentID, IOContext.READ);
@@ -522,10 +525,17 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * Find the latest commit ({@code segments_N file}) and
      * load all {@link SegmentCommitInfo}s.
+     * 从目标目录 找到最近一个生成的 段文件
      */
     public static final SegmentInfos readLatestCommit(Directory directory) throws IOException {
-        // 该对象可以找到当前目录下最新的 年代 并根据年代找到 segment的元数据文件 然后通过元数据文件生成  SegmentInfos
         return new FindSegmentsFile<SegmentInfos>(directory) {
+
+            /**
+             * 通过传入的 段文件名  读取内部信息并生成段对象
+             * @param segmentFileName
+             * @return
+             * @throws IOException
+             */
             @Override
             protected SegmentInfos doBody(String segmentFileName) throws IOException {
                 return readCommit(directory, segmentFileName);
@@ -750,12 +760,10 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * actually open it, read its contents, or check modified
      * time, etc., it could have been deleted due to a writer
      * commit finishing.
+     * 该对象是一个骨架类 定义了从某个目录查找段文件的模板
      */
     public abstract static class FindSegmentsFile<T> {
 
-        /**
-         * 该文件所在的目标目录
-         */
         final Directory directory;
 
         /**
@@ -808,7 +816,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
                 String files2[] = directory.listAll();
                 Arrays.sort(files);
                 Arrays.sort(files2);
-                // 代表出现了并发问题 需要重新读取目录
+                // 代表出现了并发问题 需要重新读取目录  实际上一般在执行该方法前 已经在directory层面对目录做了进程控制了
                 if (!Arrays.equals(files, files2)) {
                     // listAll() is weakly consistent, this means we hit "concurrent modification exception"
                     continue;
@@ -820,10 +828,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
                     message("directory listing gen=" + gen);
                 }
 
+                // 段文件的 gen 非法 抛出异常
                 if (gen == -1) {
                     throw new IndexNotFoundException("no segments* file found in " + directory + ": files: " + Arrays.toString(files));
                 } else if (gen > lastGen) {
-                    // 找到该年代对应的文件名  这种好像是个元数据文件
+                    // 生成最新的段文件名
                     String segmentFileName = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS, "", gen);
 
                     try {

@@ -93,11 +93,12 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   // ones run, up until maxMergeCount merges at which point
   // we forcefully pause incoming threads (that presumably
   // are the ones causing so much merging).
-  // merge 并行度  这个代表默认情况不做限制吗
+  // 最大工作线程数    默认情况下是 自动检测  比如会根据当前硬盘类型   机械硬盘的话 提升线程数 并不能很好的提升性能
   private int maxThreadCount = AUTO_DETECT_MERGES_AND_THREADS;
 
   // Max number of merges we accept before forcefully
   // throttling the incoming threads
+  // 该值跟maxThreadCount一样是 检测环境后生成的   并且  maxMergeCount = maxThreadCount + 5
   private int maxMergeCount = AUTO_DETECT_MERGES_AND_THREADS;
 
   /** How many {@link MergeThread}s have kicked off (this is use
@@ -171,9 +172,11 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
    *
    * @param spins true to set defaults best for traditional rotatational storage (spinning disks), 
    *        else false (e.g. for solid-state disks)
+   *              根据是否是机械硬盘 设置默认的并发度
    */
   public synchronized void setDefaultMaxMergesAndThreads(boolean spins) {
     if (spins) {
+      // 机械硬盘的情况下 线程数并不能提升IO性能 所以还是一个线程
       maxThreadCount = 1;
       maxMergeCount = 6;
     } else {
@@ -189,6 +192,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       } catch (Throwable ignored) {
       }
 
+      // 对应 cpu核数的一半
       maxThreadCount = Math.max(1, Math.min(4, coreCount/2));
       maxMergeCount = maxThreadCount+5;
     }
@@ -410,8 +414,14 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     }
   }
 
+  /**
+   * 初始化动态配置
+   * @param directory
+   * @throws IOException
+   */
   private synchronized void initDynamicDefaults(Directory directory) throws IOException {
     if (maxThreadCount == AUTO_DETECT_MERGES_AND_THREADS) {
+      // 检测该硬盘是否是机械硬盘
       boolean spins = IOUtils.spins(directory);
 
       // Let tests override this to help reproducing a failure on a machine that has a different
@@ -496,11 +506,16 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     return count;
   }
 
+  /**
+   * 对该对象进行初始化   标记预备merge的目录 以及 一个打印日志的对象
+   * @param infoStream
+   * @param directory
+   * @throws IOException
+   */
   @Override
   void initialize(InfoStream infoStream, Directory directory) throws IOException {
     super.initialize(infoStream, directory);
     initDynamicDefaults(directory);
-
   }
 
   @Override

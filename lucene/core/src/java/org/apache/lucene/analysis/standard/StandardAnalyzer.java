@@ -32,7 +32,7 @@ import org.apache.lucene.analysis.WordlistLoader;
  * {@link StopFilter}, using a configurable list of stop words.
  *
  * @since 3.1
- * 代表一个标准的token 加工器  会找到内部的停词 以及统一成小写
+ * 标准分词器对象  会找到内部的停词 以及统一成小写
  */
 public final class StandardAnalyzer extends StopwordAnalyzerBase {
   
