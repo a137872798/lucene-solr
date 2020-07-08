@@ -98,7 +98,7 @@ import org.apache.lucene.util.InfoStream;
  * When this happens, we immediately mark the document as
  * deleted so that the document is always atomically ("all
  * or none") added to the index.
- * 这个对象负责将文档写入文件中
+ * 该对象是整个 文档体系对外的入口
  */
 
 final class DocumentsWriter implements Closeable, Accountable {
@@ -124,6 +124,9 @@ final class DocumentsWriter implements Closeable, Accountable {
    */
   private final LiveIndexWriterConfig config;
 
+  /**
+   * 记录当前内存中有多少文档数
+   */
   private final AtomicInteger numDocsInRAM = new AtomicInteger(0);
 
   // TODO: cut over to BytesRefHash in BufferedDeletes
@@ -153,15 +156,15 @@ final class DocumentsWriter implements Closeable, Accountable {
 
   /**
    *
-   * @param flushNotifications  初始化过程中就可以 指定监听器对象
-   * @param indexCreatedVersionMajor   代表索引的主版本 用于判断文件是否兼容吧  现在应该是8  (lucene 8.4)
-   * @param pendingNumDocs   当前有多少待写入的 doc
+   * @param flushNotifications  该对象负责监听 写入文档时 发生的各种情况 比如写入失败等  并作出对应的处理
+   * @param indexCreatedVersionMajor   代表索引的主版本 用于判断文件是否兼容吧
+   * @param pendingNumDocs
    * @param enableTestPoints
    * @param segmentNameSupplier   该对象创建 segment的名字
    * @param config
    * @param directoryOrig   这里指定了原始目录
-   * @param directory     此次文档将会写入的目录
-   * @param globalFieldNumberMap   该对象内部包含了各种容器 用于存储 各种信息
+   * @param directory       该目录在原有的基础上增加了 额外的功能
+   * @param globalFieldNumberMap   维护了全局范围内 fieldNum - fieldName 的映射关系  以及某个field的各个标识
    */
   DocumentsWriter(FlushNotifications flushNotifications, int indexCreatedVersionMajor, AtomicLong pendingNumDocs, boolean enableTestPoints,
                   Supplier<String> segmentNameSupplier, LiveIndexWriterConfig config, Directory directoryOrig, Directory directory,
@@ -447,10 +450,18 @@ final class DocumentsWriter implements Closeable, Accountable {
     IOUtils.close(flushControl, perThreadPool);
   }
 
+  /**
+   * 检查当前是否准备要更新
+   * @return
+   * @throws IOException
+   */
   private boolean preUpdate() throws IOException {
     ensureOpen();
     boolean hasEvents = false;
 
+    // 应该是这样 刷盘和 继续通过docWriter往内存中写入数据 本身是可以同时进行的 但是有一个上限 一旦刷盘的数据量很大 这时会选择阻塞docWriter线程
+    // 此时docWriter已经被标记成不可用
+    // 或者此时存在等待刷盘的线程  且在改动索引前是否要检测是否有待刷盘的线程
     if (flushControl.anyStalledThreads() || (flushControl.numQueuedFlushes() > 0 && config.checkPendingFlushOnUpdate)) {
       // Help out flushing any queued DWPTs so we can un-stall:
       do {
@@ -458,6 +469,7 @@ final class DocumentsWriter implements Closeable, Accountable {
         DocumentsWriterPerThread flushingDWPT;
         while ((flushingDWPT = flushControl.nextPendingFlush()) != null) {
           // Don't push the delete here since the update could fail!
+          // 将写入线程的数据刷盘
           hasEvents |= doFlush(flushingDWPT);
         }
         
@@ -481,6 +493,13 @@ final class DocumentsWriter implements Closeable, Accountable {
     return hasEvents;
   }
 
+  /**
+   * 更新doc
+   * @param docs   本次要插入的新doc
+   * @param delNode  将满足条件的doc删除
+   * @return
+   * @throws IOException
+   */
   long updateDocuments(final Iterable<? extends Iterable<? extends IndexableField>> docs,
                        final DocumentsWriterDeleteQueue.Node<?> delNode) throws IOException {
     boolean hasEvents = preUpdate();
@@ -522,6 +541,12 @@ final class DocumentsWriter implements Closeable, Accountable {
     return seqNo;
   }
 
+  /**
+   * 将写入线程的数据刷盘
+   * @param flushingDWPT
+   * @return
+   * @throws IOException
+   */
   private boolean doFlush(DocumentsWriterPerThread flushingDWPT) throws IOException {
     boolean hasEvents = false;
     while (flushingDWPT != null) {
@@ -551,22 +576,31 @@ final class DocumentsWriter implements Closeable, Accountable {
         try {
           assert assertTicketQueueModification(flushingDWPT.deleteQueue);
           // Each flush is assigned a ticket in the order they acquire the ticketQueue lock
+          // 线程不能直接刷盘 而要先申请门票
           ticket = ticketQueue.addFlushTicket(flushingDWPT);
+          // 获取当前待刷盘的 doc 数量
           final int flushingDocsInRam = flushingDWPT.getNumDocsInRAM();
           boolean dwptSuccess = false;
           try {
             // flush concurrently without locking
+            // TODO 这里先不细看 核心逻辑就是触发了 consumer.flush() 将内存中暂存的解析数据 持久化到索引文件中
             final FlushedSegment newSegment = flushingDWPT.flush(flushNotifications);
+            // 回填本次刷盘的结果信息
             ticketQueue.addSegment(ticket, newSegment);
             dwptSuccess = true;
           } finally {
+            // 减少当前内存中的文档数
             subtractFlushedNumDocs(flushingDocsInRam);
+            // 代表存在某些要删除的文件
             if (flushingDWPT.pendingFilesToDelete().isEmpty() == false) {
               Set<String> files = flushingDWPT.pendingFilesToDelete();
+              // 通过indexWriter 处理未使用的文件   (这里使用了 事件模型 EventQueue)
               flushNotifications.deleteUnusedFiles(files);
               hasEvents = true;
             }
+            // 如果在处理过程中出现异常了
             if (dwptSuccess == false) {
+              // 这里 indexWriter会清除残缺文件
               flushNotifications.flushFailed(flushingDWPT.getSegmentInfo());
               hasEvents = true;
             }
@@ -574,6 +608,7 @@ final class DocumentsWriter implements Closeable, Accountable {
           // flush was successful once we reached this point - new seg. has been assigned to the ticket!
           success = true;
         } finally {
+          // 当处理失败时 以异常方式通知 ticket队列
           if (!success && ticket != null) {
             // In the case of a failure make sure we are making progress and
             // apply all the deletes since the segment flush failed since the flush
@@ -584,12 +619,14 @@ final class DocumentsWriter implements Closeable, Accountable {
         /*
          * Now we are done and try to flush the ticket queue if the head of the
          * queue has already finished the flush.
+         * 此时正在处理的ticket数量 超过线程数
          */
         if (ticketQueue.getTicketCount() >= perThreadPool.size()) {
           // This means there is a backlog: the one
           // thread in innerPurge can't keep up with all
           // other threads flushing segments.  In this case
           // we forcefully stall the producers.
+          // 代表此时发生了积压  强制执行待刷盘的ticket
           flushNotifications.onTicketBacklog();
           break;
         }
@@ -682,7 +719,11 @@ final class DocumentsWriter implements Closeable, Accountable {
      */
     void onTicketBacklog();
   }
-  
+
+  /**
+   * 减少内存中记录的doc 数量
+   * @param numFlushed
+   */
   void subtractFlushedNumDocs(int numFlushed) {
     int oldValue = numDocsInRAM.get();
     while (numDocsInRAM.compareAndSet(oldValue, oldValue - numFlushed) == false) {

@@ -101,7 +101,6 @@ public abstract class IndexDeletionPolicy {
    *  
    * @param commits List of {@link IndexCommit},
    *  sorted by age (the 0th one is the oldest commit).
-   *                该方法 决定了当提交了新的文档时 如何处理旧的索引
    */
   public abstract void onCommit(List<? extends IndexCommit> commits) throws IOException;
 }

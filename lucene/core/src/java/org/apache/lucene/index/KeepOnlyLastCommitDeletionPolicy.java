@@ -35,7 +35,7 @@ public final class KeepOnlyLastCommitDeletionPolicy extends IndexDeletionPolicy 
 
   /**
    * Deletes all commits except the most recent one.
-   * @param commits  代表一组提交点
+   * @param commits  该对象使用一组提交点进行初始化 删除的候选文件就是这些提交点
    */
   @Override
   public void onInit(List<? extends IndexCommit> commits) {
@@ -45,7 +45,6 @@ public final class KeepOnlyLastCommitDeletionPolicy extends IndexDeletionPolicy 
 
   /**
    * Deletes all commits except the most recent one.
-   * 每当一组提交点对象提交时  删除除了最后一个外的其他 commit对象
    */
   @Override
   public void onCommit(List<? extends IndexCommit> commits) {

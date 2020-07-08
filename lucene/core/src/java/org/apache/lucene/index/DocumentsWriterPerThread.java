@@ -238,6 +238,9 @@ final class DocumentsWriterPerThread {
     private final FieldInfos.Builder fieldInfos;
     private final InfoStream infoStream;
 
+    /**
+     * 此时内存中有多少 doc
+     */
     private int numDocsInRAM;
     final DocumentsWriterDeleteQueue deleteQueue;
     private final DeleteSlice deleteSlice;
@@ -505,6 +508,7 @@ final class DocumentsWriterPerThread {
     /**
      * Flush all pending docs to a new segment
      * 将所有待刷盘的 对象进行刷盘
+     * @param flushNotifications   IndexWriter 会监听刷盘状态
      */
     FlushedSegment flush(DocumentsWriter.FlushNotifications flushNotifications) throws IOException {
         assert flushPending.get() == Boolean.TRUE;
@@ -640,6 +644,9 @@ final class DocumentsWriterPerThread {
         }
     }
 
+    /**
+     * 记录待删除的文件
+     */
     private final Set<String> filesToDelete = new HashSet<>();
 
     Set<String> pendingFilesToDelete() {
@@ -755,6 +762,7 @@ final class DocumentsWriterPerThread {
 
     /**
      * Get current segment info we are writing.
+     * 一个 segment_N 对应多个段 每个段对应一个 segmentInfo 对应一个perThread
      */
     SegmentInfo getSegmentInfo() {
         return segmentInfo;

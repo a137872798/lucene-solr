@@ -35,13 +35,20 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * Once flushing catches up and the number of flushing DWPT is equal or lower
  * than the number of active {@link DocumentsWriterPerThread}s threads are released and can
  * continue indexing.
- *
+ * 这是 一个 stall 的控制器  应该是暂停的意思
  */
 final class DocumentsWriterStallControl {
   
   private volatile boolean stalled;
+  /**
+   * 当前有多少线程在等待
+   */
   private int numWaiting; // only with assert
+
   private boolean wasStalled; // only with assert
+  /**
+   * 记录当前正在等待的线程
+   */
   private final Map<Thread, Boolean> waiting = new IdentityHashMap<>(); // only with assert
 
   /**
@@ -51,6 +58,7 @@ final class DocumentsWriterStallControl {
    * {@link DocumentsWriterPerThread}. Otherwise it will reset the
    * {@link DocumentsWriterStallControl} to healthy and release all threads
    * waiting on {@link #waitIfStalled()}
+   * 每当刷盘时 该标识就可能会被修改成true
    */
   synchronized void updateStalled(boolean stalled) {
     if (this.stalled != stalled) {
@@ -58,13 +66,14 @@ final class DocumentsWriterStallControl {
       if (stalled) {
         wasStalled = true;
       }
+      // 每当状态发生变更时 唤醒所有线程
       notifyAll();
     }
   }
   
   /**
-   * Blocks if documents writing is currently in a stalled state. 
-   * 
+   * Blocks if documents writing is currently in a stalled state.
+   * 尝试将doc写入的线程 发现此时处于暂用状态时  选择阻塞
    */
   void waitIfStalled() {
     if (stalled) {
@@ -84,11 +93,18 @@ final class DocumentsWriterStallControl {
       }
     }
   }
-  
+
+  /**
+   * 返回当前是否属于暂停状态
+   * @return
+   */
   boolean anyStalledThreads() {
     return stalled;
   }
-  
+
+  /**
+   * 增加等待线程数量
+   */
   private void incWaiters() {
     numWaiting++;
     assert waiting.put(Thread.currentThread(), Boolean.TRUE) == null;
@@ -108,7 +124,12 @@ final class DocumentsWriterStallControl {
   boolean isHealthy() { // for tests
     return !stalled; // volatile read!
   }
-  
+
+  /**
+   * 某个线程当前是否处在阻塞状态
+   * @param t
+   * @return
+   */
   synchronized boolean isThreadQueued(Thread t) { // for tests
     return waiting.containsKey(t);
   }

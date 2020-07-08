@@ -49,7 +49,6 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
   private final long hardMaxBytesPerDWPT;
 
-
   private long activeBytes = 0;
   private volatile long flushBytes = 0;
   private volatile int numPending = 0;
@@ -116,7 +115,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   }
 
   /**
-   * 这个值时  maxRam的2倍  当size为-1时 代表不做限制
+   * 这个值是 maxRam的2倍  当size为-1时 代表不做限制
    * @return
    */
   private long stallLimitBytes() {
@@ -275,7 +274,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   private long stallStartNS;
 
   /**
-   * 更新摊位的状态
+   * 检测是否需要修改 stall(暂用) 状态
    * @return
    */
   private boolean updateStallState() {
@@ -289,6 +288,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      * reach the limit without any ongoing flushes. we need to ensure
      * that we don't stall/block if an ongoing or pending flush can
      * not free up enough memory to release the stall lock.
+     * 下面代表 此时对内存的消耗非常大 会暂停 docWriter线程的工作
      */
     final boolean stall = (activeBytes + flushBytes) > limit &&
       activeBytes < limit &&
@@ -411,6 +411,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
       final DocumentsWriterPerThread poll;
       // 如果当前有待刷盘的线程 直接返回
       if ((poll = flushQueue.poll()) != null) {
+        // 检测当前对内存的占用是否超过限制  超过的话 选择暂停文档写入线程
         updateStallState();
         return poll;
       }

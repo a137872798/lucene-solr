@@ -106,7 +106,16 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
   /** Sole constructor. */
   public Lucene60FieldInfosFormat() {
   }
-  
+
+  /**
+   * 在初始化 IndexWriter时 如果复用之前的segment_N 文件   会通过记录的索引文件名恢复之前写入的数据
+   * @param directory  索引文件所在的目录
+   * @param segmentInfo    代表读取的 fieldInfos 属于哪个segment
+   * @param segmentSuffix   索引文件后缀名    实际上是存储在segment元数据文件中的 fieldInfosGen
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public FieldInfos read(Directory directory, SegmentInfo segmentInfo, String segmentSuffix, IOContext context) throws IOException {
     final String fileName = IndexFileNames.segmentFileName(segmentInfo.name, segmentSuffix, EXTENSION);
@@ -121,26 +130,32 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
                                    segmentInfo.getId(), segmentSuffix);
         
         final int size = input.readVInt(); //read in the size
+        // 该段下总计有多少field 信息
         infos = new FieldInfo[size];
         
         // previous field's attribute map, we share when possible:
         Map<String,String> lastAttributes = Collections.emptyMap();
         
         for (int i = 0; i < size; i++) {
+          // 读取 fieldName
           String name = input.readString();
+          // 读取 num
           final int fieldNumber = input.readVInt();
           if (fieldNumber < 0) {
             throw new CorruptIndexException("invalid field number for field: " + name + ", fieldNumber=" + fieldNumber, input);
           }
+          // 读取描述该 field 的各种标识
           byte bits = input.readByte();
           boolean storeTermVector = (bits & STORE_TERMVECTOR) != 0;
           boolean omitNorms = (bits & OMIT_NORMS) != 0;
           boolean storePayloads = (bits & STORE_PAYLOADS) != 0;
           boolean isSoftDeletesField = (bits & SOFT_DELETES_FIELD) != 0;
 
+          // 生成 有关索引存储的信息  (该field下的哪些数据需要被存储)
           final IndexOptions indexOptions = getIndexOptions(input, input.readByte());
           
           // DV Types are packed in one byte
+          // 读取该 field 下term的数据类型
           final DocValuesType docValuesType = getDocValuesType(input, input.readByte());
           final long dvGen = input.readLong();
           Map<String,String> attributes = input.readMapOfStrings();
@@ -149,6 +164,7 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
             attributes = lastAttributes;
           }
           lastAttributes = attributes;
+          // 获取 维度数据
           int pointDataDimensionCount = input.readVInt();
           int pointNumBytes;
           int pointIndexDimensionCount = pointDataDimensionCount;
@@ -162,6 +178,7 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
           }
 
           try {
+            // 将抽取出来的信息 填充到 fieldInfo 中
             infos[i] = new FieldInfo(name, fieldNumber, storeTermVector, omitNorms, storePayloads, 
                                      indexOptions, docValuesType, dvGen, attributes,
                                      pointDataDimensionCount, pointIndexDimensionCount, pointNumBytes, isSoftDeletesField);

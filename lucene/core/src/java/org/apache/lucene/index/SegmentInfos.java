@@ -144,11 +144,13 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     /**
      * Used to name new segments.
+     * 每当生成一个新的段时  需要这个值作为名字的一部分
      */
     public long counter;
 
     /**
      * Counts how often the index has been changed.
+     * 每当调用一次 change() 就会加1
      */
     public long version;
 
@@ -160,6 +162,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     /**
      * Opaque Map&lt;String, String&gt; that user can specify during IndexWriter.commit
+     * 这个是用户自定义的数据
      */
     public Map<String, String> userData = Collections.emptyMap();
 
@@ -355,7 +358,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * Read the commit from the provided {@link ChecksumIndexInput}.
      */
-    // segment_gen 文件下包含多个segment的信息   每个segment 都会有一个si索引文件 内部包含了该段的相关信息
+    // segment_N 文件下包含多个segment的信息   每个segment 都会有一个si索引文件 内部包含了该段的相关信息
     public static final SegmentInfos readCommit(Directory directory, ChecksumIndexInput input, long generation) throws IOException {
 
         // NOTE: as long as we want to throw indexformattooold (vs corruptindexexception), we need
@@ -397,7 +400,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
         infos.version = input.readLong();
         //System.out.println("READ sis version=" + infos.version);
-        //  读取一个计数值
+        //  读取有关名字的后缀
         if (format > VERSION_70) {
             infos.counter = input.readVLong();
         } else {
@@ -431,7 +434,8 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             SegmentInfo info = codec.segmentInfoFormat().read(directory, segName, segmentID, IOContext.READ);
             info.setCodec(codec);
             totalDocs += info.maxDoc();
-            // 获取一些其他信息 用于组建  SegmentCommitInfo
+
+            // 代表已经触发了多少删除动作/以及删除了多少doc
             long delGen = input.readLong();
             int delCount = input.readInt();
             if (delCount < 0 || delCount > info.maxDoc()) {
@@ -439,6 +443,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             }
             long fieldInfosGen = input.readLong();
             long dvGen = input.readLong();
+            // 如果当前格式超过 72 代表支持软删除  会多读取一个软删除的数量
             int softDelCount = format > VERSION_72 ? input.readInt() : 0;
             if (softDelCount < 0 || softDelCount > info.maxDoc()) {
                 throw new CorruptIndexException("invalid deletion count: " + softDelCount + " vs maxDoc=" + info.maxDoc(), input);
@@ -446,6 +451,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             if (softDelCount + delCount > info.maxDoc()) {
                 throw new CorruptIndexException("invalid deletion count: " + softDelCount + delCount + " vs maxDoc=" + info.maxDoc(), input);
             }
+            // 超过74版本 才写入 sci 信息
             final byte[] sciId;
             if (format > VERSION_74) {
                 byte marker = input.readByte();
@@ -465,8 +471,10 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             }
             // 将读取出来的信息拼凑成 SegmentCommitInfo
             SegmentCommitInfo siPerCommit = new SegmentCommitInfo(info, delCount, softDelCount, delGen, fieldInfosGen, dvGen, sciId);
-            // 也就是文件中的信息已经足以还原所有segment的相关信息了
+
+            // 这里代表 fieldInfo的信息存在于哪些索引文件
             siPerCommit.setFieldInfosFiles(input.readSetOfStrings());
+
             final Map<Integer, Set<String>> dvUpdateFiles;
             final int numDVFields = input.readInt();
             if (numDVFields == 0) {
@@ -478,7 +486,9 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
                 }
                 dvUpdateFiles = Collections.unmodifiableMap(map);
             }
+            // 设置存储了docValue 更新情况的相关文件
             siPerCommit.setDocValuesUpdatesFiles(dvUpdateFiles);
+            // 将段信息 追加到 infos中
             infos.add(siPerCommit);
 
             Version segmentVersion = info.getVersion();
@@ -496,6 +506,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             }
         }
 
+        // 当填充完 infos 后 读取用户设置的信息
         infos.userData = input.readMapOfStrings();
 
         // 计算校验和
@@ -599,7 +610,6 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * Write ourselves to the provided {@link IndexOutput}
      */
-    // 将当前片段信息按特定格式写入到 输出流中  这个跟读取是相对的 就不细看了
     public void write(IndexOutput out) throws IOException {
         CodecUtil.writeIndexHeader(out, "segments", VERSION_CURRENT,
                 StringHelper.randomId(), Long.toString(generation, Character.MAX_RADIX));
@@ -886,6 +896,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     /**
      * Set the generation to be used for the next commit
+     * 标记本次文件提交时 对应的 N
      */
     public void setNextWriteGeneration(long generation) {
         if (generation < this.generation) {
@@ -944,7 +955,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * The returned collection is recomputed on each
      * invocation.
      *
-     * @param includeSegmentsFile 是否包含 segment的元数据
+     * @param includeSegmentsFile  返回所有关联文件   是否包含段文件
      */
     public Collection<String> files(boolean includeSegmentsFile) throws IOException {
         HashSet<String> files = new HashSet<>();
@@ -955,7 +966,6 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             }
         }
         final int size = size();
-        // 读取每个 segmenet的详细信息并保存到 fileds中
         for (int i = 0; i < size; i++) {
             final SegmentCommitInfo info = info(i);
             files.addAll(info.files());
@@ -1143,7 +1153,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     }
 
     /**
-     * 创建  segmentCommitInfo的副本
+     * 创建  segmentCommitInfo的副本    主要是用于回滚的
      * @return
      */
     List<SegmentCommitInfo> createBackupSegmentInfos() {

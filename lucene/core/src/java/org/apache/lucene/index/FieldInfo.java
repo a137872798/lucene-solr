@@ -71,7 +71,7 @@ public final class FieldInfo {
    * Sole constructor.
    *
    * @lucene.experimental
-   * 代表一个 field 对象
+   * 代表一个 field 对象   这里只是简单的赋值操作
    */
   public FieldInfo(String name, int number, boolean storeTermVector, boolean omitNorms, boolean storePayloads,
                    IndexOptions indexOptions, DocValuesType docValues, long dvGen, Map<String,String> attributes,

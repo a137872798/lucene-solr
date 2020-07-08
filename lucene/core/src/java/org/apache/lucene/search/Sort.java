@@ -96,7 +96,7 @@ import java.util.Arrays;
  * <p>Created: Feb 12, 2004 10:53:57 AM
  *
  * @since   lucene 1.4
- * 该排序结果是多个 SortField 共同作用的结果
+ * 描述查询出来的doc结果 按照什么规则进行排序
  */
 public class Sort {
 
@@ -105,16 +105,15 @@ public class Sort {
    * the same results as calling
    * {@link IndexSearcher#search(Query,int) IndexSearcher#search()}without a sort criteria,
    * only with slightly more overhead.
-   * 默认情况下 sort 按照得分来排序
+   * 默认情况下 按照得分来排序  这个分数就是计算文档与查询条件的相关度
    */
   public static final Sort RELEVANCE = new Sort();
 
   /** Represents sorting by index order. */
-  // 根据索引下标来排序
+  // 根据 docId 排序
   public static final Sort INDEXORDER = new Sort(SortField.FIELD_DOC);
 
   // internal representation of the sort criteria
-  // 这里存储了一些排序规则 那么 排序的结果应该是 这些 fields的共同结果
   SortField[] fields;
 
   /**

@@ -44,6 +44,7 @@ import org.apache.lucene.util.FixedBitSet;
  *   <li>SegmentHeader --&gt; {@link CodecUtil#writeIndexHeader IndexHeader}</li>
  *   <li>Bits --&gt; &lt;{@link DataOutput#writeLong Int64}&gt; <sup>LongCount</sup></li>
  * </ul>
+ * 用于描述 哪些文件还存在 哪些文件已经被删除了
  */
 public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
   
@@ -119,7 +120,9 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
 
   @Override
   public void files(SegmentCommitInfo info, Collection<String> files) throws IOException {
+    // 代表这个段对象 至少触发过一次 删除操作
     if (info.hasDeletions()) {
+      // 追加一个描述 alive状态的文件
       files.add(IndexFileNames.fileNameFromGeneration(info.info.name, EXTENSION, info.getDelGen()));
     }
   }

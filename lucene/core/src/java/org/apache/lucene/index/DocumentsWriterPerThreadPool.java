@@ -49,7 +49,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
 final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerThread>, Closeable {
 
   /**
-   * 内部维护了一组线程
+   * 池内有多少工作线程
    */
   private final Set<DocumentsWriterPerThread> dwpts = Collections.newSetFromMap(new IdentityHashMap<>());
   /**

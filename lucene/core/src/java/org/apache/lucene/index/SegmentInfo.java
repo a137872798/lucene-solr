@@ -62,7 +62,7 @@ public final class SegmentInfo {
   public final String name;
 
   /**
-   * 当前段记录的最大文档号
+   * 当前段记录的最大文档号   并且该值是递增的 所以号码多少就代表有多少doc
    */
   private int maxDoc;         // number of docs in seg
 
@@ -95,7 +95,7 @@ public final class SegmentInfo {
   private Map<String,String> attributes;
 
   /**
-   * 代表本段所使用的排序规则  Sort内部有多个 SortField 用于确认排序规则
+   * 描述这个段内的doc是按照什么规则排序的
    */
   private final Sort indexSort;
 
@@ -128,6 +128,8 @@ public final class SegmentInfo {
    * Construct a new complete SegmentInfo instance from input.
    * <p>Note: this is public only to allow access from
    * the codecs package.</p>
+   * 这里只是一些简单的属性赋值
+   * @param maxDoc 代表该segment下最多允许存放的doc数量
    */
   public SegmentInfo(Directory dir, Version version, Version minVersion, String name, int maxDoc,
                      boolean isCompoundFile, Codec codec, Map<String,String> diagnostics,
@@ -296,7 +298,7 @@ public final class SegmentInfo {
   private Set<String> setFiles;
 
   /** Sets the files written for this segment. */
-  // 设置本次操作段对象 所写入的全部文件
+  // 该segment将数据写入到了哪些文件
   public void setFiles(Collection<String> files) {
     setFiles = new HashSet<>();
     addFiles(files);
@@ -335,7 +337,7 @@ public final class SegmentInfo {
   /** 
    * strips any segment name from the file, naming it with this segment
    * this is because "segment names" can change, e.g. by addIndexes(Dir)
-   * 截取掉 segments 并替换成实际的 片段名
+   * 替换段名
    */
   String namedForThisSegment(String file) {
     return name + IndexFileNames.stripSegmentName(file);

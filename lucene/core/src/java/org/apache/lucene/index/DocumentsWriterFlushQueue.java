@@ -37,6 +37,7 @@ final class DocumentsWriterFlushQueue {
   private final Queue<FlushTicket> queue = new LinkedList<>();
   // we track tickets separately since count must be present even before the ticket is
   // constructed ie. queue.size would not reflect it.
+  // 当前有多少正在处理的 ticket
   private final AtomicInteger ticketCount = new AtomicInteger();
   private final ReentrantLock purgeLock = new ReentrantLock();
 
@@ -78,7 +79,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 通过 传入 thread 的方式来增加 flushTicket   以这种方式创建的 flushTicket （hasSegment == true）
+   * 为某个等待刷盘的线程申请门票
    * @param dwpt
    * @return
    * @throws IOException
@@ -90,12 +91,14 @@ final class DocumentsWriterFlushQueue {
     boolean success = false;
     try {
       // prepare flush freezes the global deletes - do in synced block!
+      // prepareFlush 内部存储了一系列的数据
       final FlushTicket ticket = new FlushTicket(dwpt.prepareFlush(), true);
       queue.add(ticket);
       success = true;
       return ticket;
     } finally {
       if (!success) {
+        // 失败时才释放ticket
         decTickets();
       }
     }
@@ -200,7 +203,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 每个 flushTicket 代表一个刷盘动作
+   * 每个 flushTicket 代表一个刷盘动作   是一个简单的bean对象
    */
   static final class FlushTicket {
     /**
@@ -212,6 +215,9 @@ final class DocumentsWriterFlushQueue {
      * 描述一个刷盘完成的段的信息
      */
     private FlushedSegment segment;
+    /**
+     * 标记本次刷盘的结果
+     */
     private boolean failed = false;
     private boolean published = false;
 

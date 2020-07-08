@@ -37,7 +37,7 @@ import org.apache.lucene.util.BytesRef;
  * separate {@link StoredField} instance.
  * 
  * @see BinaryDocValues
- * 二进制字段
+ * 代表该 field 关联的docValue 为二进制类型
  * */
 public class BinaryDocValuesField extends Field {
   

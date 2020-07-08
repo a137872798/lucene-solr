@@ -113,7 +113,7 @@ public class SortField {
   boolean reverse = false;  // defaults to natural order
 
   // Used for CUSTOM sort
-  // 该对象用于提供排序函数
+  // 该对象用于提供排序函数  (对域内的term)
   private FieldComparatorSource comparatorSource;
 
   // Used for 'sortMissingFirst/Last'
@@ -125,7 +125,7 @@ public class SortField {
    * @param field  Name of field to sort by.  Can be <code>null</code> if
    *               <code>type</code> is SCORE or DOC.
    * @param type   Type of values in the terms.
-   *               使用排序字段 以及对应的类型进行初始化
+   *               代表某个域下的数据 会按照什么规则进行排序
    */
   public SortField(String field, Type type) {
     initFieldType(field, type);

@@ -43,13 +43,11 @@ import org.apache.lucene.util.InfoStream;
  * @see DocumentsWriterFlushControl
  * @see DocumentsWriterPerThread
  * @see IndexWriterConfig#setFlushPolicy(FlushPolicy)
- * 代表刷盘策略
- * 是这样的  在DocumentWriter 中每次针对doc的操作都会涉及到一个刷盘的问题   至于如何规定这个刷盘动作 则是由 FlushPolicy 决定的
  */
 abstract class FlushPolicy {
 
   /**
-   * 该config 对象中可以挂载 policy 
+   * 一些必要的信息会从 conf中获取
    */
   protected LiveIndexWriterConfig indexWriterConfig;
   protected InfoStream infoStream;
@@ -94,6 +92,7 @@ abstract class FlushPolicy {
 
   /**
    * Called by DocumentsWriter to initialize the FlushPolicy
+   * 通过配置项对该对象初始化
    */
   protected synchronized void init(LiveIndexWriterConfig indexWriterConfig) {
     this.indexWriterConfig = indexWriterConfig;

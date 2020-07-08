@@ -292,7 +292,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private final Directory directory;           // wrapped with additional checks
 
   /**
-   * 代表一个 change() 的计数器
+   * 记录发生了多少次变化
    */
   private final AtomicLong changeCount = new AtomicLong(); // increments every time a change is completed
   /**
@@ -301,7 +301,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private volatile long lastCommitChangeCount; // last changeCount that was committed
 
   /**
-   * 当提交失败时 需要回滚哪些 segment
+   * 该数据是原始数据  当提交失败时 会选择通过这些数据来回滚
    */
   private List<SegmentCommitInfo> rollbackSegments;      // list of segmentInfo we will fallback to if the commit fails
 
@@ -320,7 +320,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
   private final SegmentInfos segmentInfos;
   /**
-   * 关键字信息
+   * 在全局范围内存储 fieldNum与fieldName 等映射关系的容器
    */
   final FieldNumbers globalFieldNumberMap;
 
@@ -343,7 +343,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private final ReentrantLock writeDocValuesLock = new ReentrantLock();
 
   /**
-   * 存储事件的队列
+   * 存储事件的队列   该对象会收集 docWriter 的 perThread生成的各种事件  为什么在这种场景要使用 MPSC 的模型  是因为大多数事件类型都是 IO 吗 所以即使使用多线程也无法提升性能
    */
   static final class EventQueue implements Closeable {
     private volatile boolean closed;
@@ -509,11 +509,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      */
     @Override
     public void deleteUnusedFiles(Collection<String> files) {
+      // w 就是 IndexWriter
       eventQueue.add(w -> w.deleteNewFiles(files));
     }
 
     /**
-     * 同上 添加一个使用 writer处理任务的event 到事件队列中
+     * 代表在针对某个段信息 进行刷盘时出现了异常
      * @param info
      */
     @Override
@@ -555,6 +556,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       );
     }
 
+    /**
+     * 当 ticket数量超过了pool容量时  代表产生了堆积
+     */
     @Override
     public void onTicketBacklog() {
       eventQueue.add(w -> w.publishFlushedSegments(true));
@@ -946,17 +950,21 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         final SegmentInfos sis = new SegmentInfos(config.getIndexCreatedVersionMajor());
         // 如果之前的段文件已经存在
         if (indexExists) {
-          // 读取段文件信息并生成段文件对象
+          // 读取段文件信息并生成 infos对象 （该对象内部包含多个 segment的信息）
           final SegmentInfos previous = SegmentInfos.readLatestCommit(directory);
+          // 沿用上一个 infos的 gen  counter 等信息 TODO 这是啥 ???
           sis.updateGenerationVersionAndCounter(previous);
         }
         segmentInfos = sis;
+        // 生成用于回滚的段信息
         rollbackSegments = segmentInfos.createBackupSegmentInfos();
 
         // Record that we have a change (zero out all
         // segments) pending:
+        // 标记 infos发生了变化
         changed();
 
+        // TODO 这个分支先跳过 该分支需要在config中设置 IndexCommit
       } else if (reader != null) {
         // Init from an existing already opened NRT or non-NRT reader:
       
@@ -995,6 +1003,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         rollbackSegments = lastCommit.createBackupSegmentInfos();
+        // 代表不创建新的 infos
       } else {
         // Init from either the latest commit point, or an explicit prior commit point:
 
@@ -1005,6 +1014,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
         // Do not use SegmentInfos.read(Directory) since the spooky
         // retrying it does is not necessary here (we hold the write lock):
+        // 读取上一个 segment_N 的数据
         segmentInfos = SegmentInfos.readCommit(directoryOrig, lastSegmentsFile);
 
         if (commit != null) {
@@ -1026,11 +1036,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
           }
         }
 
+        // 拷贝回滚的数据副本
         rollbackSegments = segmentInfos.createBackupSegmentInfos();
       }
 
-
-
+      // 上面已经完成了 segmentInfos 的数据读取
       commitUserData = new HashMap<>(segmentInfos.getUserData()).entrySet();
 
       pendingNumDocs.set(segmentInfos.totalMaxDoc());
@@ -1039,10 +1049,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       // NOTE: this is correct even for an NRT reader because we'll pull FieldInfos even for the un-committed segments:
       globalFieldNumberMap = getFieldNumberMap();
 
+      // 如果在conf中设置了排序对象 那么所有段下都必须设置排序对象 并且排序对象必须一致
       validateIndexSort();
 
+      // 通过配置项来初始化 刷盘策略   默认的刷盘策略类为 FlushByRamOrCountsPolicy
       config.getFlushPolicy().init(config);
+      // 这个对象是用于记录 哪些数据发生了变化
       bufferedUpdatesStream = new BufferedUpdatesStream(infoStream);
+      // 该对象负责解析 doc 并将结果写入到各个索引文件中
       docWriter = new DocumentsWriter(flushNotifications, segmentInfos.getIndexCreatedVersionMajor(), pendingNumDocs,
           enableTestPoints, this::newSegmentName,
           config, directoryOrig, directory, globalFieldNumberMap);
@@ -1055,6 +1069,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       // KeepOnlyLastCommitDeleter:
 
       // Sync'd is silly here, but IFD asserts we sync'd on the IW instance:
+      // 创建删除索引文件的对象
       synchronized(this) {
         deleter = new IndexFileDeleter(files, directoryOrig, directory,
                                        config.getIndexDeletionPolicy(),
@@ -1065,6 +1080,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         assert create || filesExist(segmentInfos);
       }
 
+      // 代表段文件已经被删除了
       if (deleter.startingCommitDeleted) {
         // Deletion policy deleted the "head" commit point.
         // We have to mark ourself as changed so that if we
@@ -1099,6 +1115,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
   /** Confirms that the incoming index sort (if any) matches the existing index sort (if any).  */
   private void validateIndexSort() {
+    // 如果在conf中指定了排序对象  必须要求所有段都使用该排序对象
     Sort indexSort = config.getIndexSort();
     if (indexSort != null) {
       for(SegmentCommitInfo info : segmentInfos) {
@@ -1124,11 +1141,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
   // reads latest field infos for the commit
   // this is used on IW init and addIndexes(Dir) to create/update the global field map.
-  // TODO: fix tests abusing this method!
+  // 读取某个 segment 下所有的field 信息
   static FieldInfos readFieldInfos(SegmentCommitInfo si) throws IOException {
     Codec codec = si.info.getCodec();
     FieldInfosFormat reader = codec.fieldInfosFormat();
-    
+
+    // 段文件中会存储 fieldInfs 的 gen 这样才可以定位到索引文件
     if (si.hasFieldUpdates()) {
       // there are updates, we read latest (always outside of CFS)
       final String segmentSuffix = Long.toString(si.getFieldInfosGen(), Character.MAX_RADIX);
@@ -1140,6 +1158,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       }
     } else {
       // no cfs
+      // 没有标明gen信息   直接按照 segmentName.extend  的文件名格式读取数据
       return reader.read(si.info.dir, si.info, "", IOContext.READONCE);
     }
   }
@@ -1149,11 +1168,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * If this {@link SegmentInfos} has no global field number map the returned instance is empty
    */
   private FieldNumbers getFieldNumberMap() throws IOException {
+    // 创建一个 维护了 fieldName 与 fieldNum 的映射容器
     final FieldNumbers map = new FieldNumbers(config.softDeletesField);
 
+    // 读取某个 segment 下所有的field 信息  如果本次创建了一个新的infos 那么内部还没有任何 segmentCommitInfo信息 这里会返回一个空对象
     for(SegmentCommitInfo info : segmentInfos) {
+      // 找到每个段下的所有 field 信息
       FieldInfos fis = readFieldInfos(info);
       for(FieldInfo fi : fis) {
+        // 添加映射关系  该容器同时确保了 同名field 下的各个标识一定是一样的
         map.addOrGet(fi.name, fi.number, fi.getIndexOptions(), fi.getDocValuesType(), fi.getPointDimensionCount(), fi.getPointIndexDimensionCount(), fi.getPointNumBytes(), fi.isSoftDeletesField());
       }
     }
@@ -1366,6 +1389,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    *
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
+   * 将doc存储到writer中
    */
   public long addDocument(Iterable<? extends IndexableField> doc) throws IOException {
     return updateDocument(null, doc);
@@ -1435,10 +1459,18 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     return updateDocuments(delTerm == null ? null : DocumentsWriterDeleteQueue.newNode(delTerm), docs);
   }
 
+  /**
+   * 更新文档数据  先按照node中的数据 删除文档 之后新增 docs
+   * @param delNode
+   * @param docs
+   * @return
+   * @throws IOException
+   */
   private long updateDocuments(final DocumentsWriterDeleteQueue.Node<?> delNode, Iterable<? extends Iterable<? extends IndexableField>> docs) throws IOException {
     ensureOpen();
     boolean success = false;
     try {
+      // 针对 doc的操作 实际上都是委托给docWriter
       final long seqNo = maybeProcessEvents(docWriter.updateDocuments(docs, delNode));
       success = true;
       return seqNo;
@@ -1723,6 +1755,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * @param doc the document to be added
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
+   * 删除包含 term的文档 之后将本次的文档数据写入
    */
   public long updateDocument(Term term, Iterable<? extends IndexableField> doc) throws IOException {
     return updateDocuments(term == null ? null : DocumentsWriterDeleteQueue.newNode(term), List.of(doc));
@@ -1942,6 +1975,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     return flushDeletesCount.get();
   }
 
+  /**
+   * 每次生成唯一的 segment名字
+   * @return
+   */
   private final String newSegmentName() {
     // Cannot synchronize on IndexWriter because that causes
     // deadlock
@@ -5127,12 +5164,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * @param files the files to delete
    * @throws IOException if an {@link IOException} occurs
    * @see IndexFileDeleter#deleteNewFiles(Collection)
+   * 删除一组无用的文件
    */
   private synchronized void deleteNewFiles(Collection<String> files) throws IOException {
     deleter.deleteNewFiles(files);
   }
   /**
    * Cleans up residuals from a segment that could not be entirely flushed due to an error
+   * 某个段在刷盘时失败了   选择删除掉这些文件 (因为此时的文件很可能是残缺的)
    */
   private synchronized void flushFailed(SegmentInfo info) throws IOException {
     // TODO: this really should be a tragic
@@ -5155,10 +5194,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * delete generation is always GlobalPacket_deleteGeneration + 1
    * @param forced if <code>true</code> this call will block on the ticket queue if the lock is held by another thread.
    *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.
-   * 当某个segment 刷盘后 通过该方法 进行发布
+   * 在正常流程中触发 flush 会调用该方法
+   * 而当 ticket超过pool容量 (产生积压时) 也会触发该方法
    */
   private void publishFlushedSegments(boolean forced) throws IOException {
-    // 转发给 docWriter
+    // 执行剩余的刷盘任务
     docWriter.purgeFlushTickets(forced, ticket -> {
       DocumentsWriterPerThread.FlushedSegment newSegment = ticket.getFlushedSegment();
       FrozenBufferedUpdates bufferedUpdates = ticket.getFrozenUpdates();

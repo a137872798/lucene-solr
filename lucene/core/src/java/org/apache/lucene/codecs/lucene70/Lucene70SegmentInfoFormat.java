@@ -122,7 +122,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
             throw new CorruptIndexException("Illegal boolean value " + hasMinVersion, input);
         }
 
-        // 获取该段下的 文档总数
+        // 这里存储的是 该segment下最多允许存放多少doc
         final int docCount = input.readInt();
         if (docCount < 0) {
           throw new CorruptIndexException("invalid docCount: " + docCount, input);
@@ -132,7 +132,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
 
         // 获取诊断信息
         final Map<String,String> diagnostics = input.readMapOfStrings();
-        // 该段所产生的一系列索引文件名
+        // 这些是什么???
         final Set<String> files = input.readSetOfStrings();
         // 该段携带的 attr
         final Map<String,String> attributes = input.readMapOfStrings();
@@ -144,7 +144,9 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
           // 初始化对应数量的 sortField
           SortField[] sortFields = new SortField[numSortFields];
           for(int i=0;i<numSortFields;i++) {
+            // 描述排序的域名
             String fieldName = input.readString();
+            // 排序的类型
             int sortTypeID = input.readVInt();
             SortField.Type sortType;
             SortedSetSelector.Type sortedSetSelector = null;
@@ -165,6 +167,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
             case 4:
               sortType = SortField.Type.FLOAT;
               break;
+              // 下面2种排序 除了本身的排序类型外 还会携带 selector信息
             case 5:
               sortType = SortField.Type.STRING;
               byte selector = input.readByte();
@@ -205,6 +208,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
             default:
               throw new CorruptIndexException("invalid index sort field type ID: " + sortTypeID, input);
             }
+            // 按照正序/倒序排序
             byte b = input.readByte();
             boolean reverse;
             if (b == 0) {
@@ -215,6 +219,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
               throw new CorruptIndexException("invalid index sort reverse: " + b, input);
             }
 
+            // 如果选择器属性存在 创建不同的 sortField否则创建普通的 sortField
             if (sortedSetSelector != null) {
               sortFields[i] = new SortedSetSortField(fieldName, reverse, sortedSetSelector);
             } else if (sortedNumericSelector != null) {
@@ -223,6 +228,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
               sortFields[i] = new SortField(fieldName, sortType, reverse);
             }
 
+            // 读取默认值 并追加到 sortField中
             Object missingValue;
             b = input.readByte();
             if (b == 0) {
@@ -230,6 +236,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
             } else {
               switch(sortType) {
               case STRING:
+                // 字符串类型只能设置这2种默认值
                 if (b == 1) {
                   missingValue = SortField.STRING_LAST;
                 } else if (b == 2) {
@@ -270,6 +277,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
               sortFields[i].setMissingValue(missingValue);
             }
           }
+          // 该对象描述了 按照某个query条件查询出来的多个doc 应该按照什么顺序排序  多个 sortField 代表doc的排序需要考虑到多个field内数据的排序结果
           indexSort = new Sort(sortFields);
         } else if (numSortFields < 0) {
           throw new CorruptIndexException("invalid index sort field count: " + numSortFields, input);
@@ -288,6 +296,13 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
     }
   }
 
+  /**
+   * 将段的信息 写入到索引文件中
+   * @param dir
+   * @param si
+   * @param ioContext
+   * @throws IOException
+   */
   @Override
   public void write(Directory dir, SegmentInfo si, IOContext ioContext) throws IOException {
     final String fileName = IndexFileNames.segmentFileName(si.name, "", Lucene70SegmentInfoFormat.SI_EXTENSION);

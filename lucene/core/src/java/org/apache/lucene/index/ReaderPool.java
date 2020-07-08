@@ -66,9 +66,22 @@ final class ReaderPool implements Closeable {
   // readers.
   // in practice this should be called once the readers are likely
   // to be needed and reused ie if IndexWriter#getReader is called.
+  // 是否将reader池化处理
   private volatile boolean poolReaders;
   private final AtomicBoolean closed = new AtomicBoolean(false);
 
+  /**
+   *
+   * @param directory   读取的目标目录  已经被包装过 (比如读取前确保此时持有文件锁)
+   * @param originalDirectory    原始目录 未包装
+   * @param segmentInfos   本次涉及到所有的段信息  如果indexWriter 选择新建一个段 那么该对象内部为空
+   * @param fieldNumbers  这里存放了本目录下所有段包含的所有 fieldNum 与 fieldName的映射关系  以及每个field 的标识
+   * @param completedDelGenSupplier   用于获取已经完成del的gen信息
+   * @param infoStream
+   * @param softDeletesField  被标明使用软删除的字段
+   * @param reader  该属性可以为null
+   * @throws IOException
+   */
   ReaderPool(Directory directory, Directory originalDirectory, SegmentInfos segmentInfos,
              FieldInfos.FieldNumbers fieldNumbers, LongSupplier completedDelGenSupplier, InfoStream infoStream,
              String softDeletesField, StandardDirectoryReader reader) throws IOException {
@@ -79,6 +92,8 @@ final class ReaderPool implements Closeable {
     this.completedDelGenSupplier = completedDelGenSupplier;
     this.infoStream = infoStream;
     this.softDeletesField = softDeletesField;
+
+    // TODO 先假设 reader 为null的情况
     if (reader != null) {
       // Pre-enroll all segment readers into the reader pool; this is necessary so
       // any in-memory NRT live docs are correctly carried over, and so NRT readers
@@ -148,6 +163,7 @@ final class ReaderPool implements Closeable {
    * in the reader pool on calling {@link #release(ReadersAndUpdates, boolean)} until the segment get dropped via calls
    * to {@link #drop(SegmentCommitInfo)} or {@link #dropAll()} or {@link #close()}.
    * Reader pooling is disabled upon construction but can't be disabled again once it's enabled.
+   * 设置成 允许池化 reader
    */
   void enableReaderPooling() {
     poolReaders = true;

@@ -33,11 +33,11 @@ import org.apache.lucene.util.StringHelper;
  *  fields.
  *
  *  @lucene.experimental */
-// 代表某个片段的提交信息
+// 该对象在 IndexWriter创建时 读取索引文件的数据并还原成该对象
 public class SegmentCommitInfo {
   
   /** The {@link SegmentInfo} that we wrap. */
-  // 内嵌的一个只读段信息   一个片段可以对应多个文件  而一个doc对应一个文件
+  // 内部描述了该段的基本信息
   public final SegmentInfo info;
 
   /** Id that uniquely identifies this segment commit. */
@@ -53,12 +53,12 @@ public class SegmentCommitInfo {
   private int softDelCount;
 
   // Generation number of the live docs file (-1 if there
-  // are no deletes yet):  代表删除的文件对应的年代    什么时候发生年代的更替???
+  // are no deletes yet):  每当触发一次删除动作时 该值都会增加
   private long delGen;
 
   // Normally 1+delGen, unless an exception was hit on last
   // attempt to write:
-  // 下一个删除的年代 默认就是 delGen+1
+  // 下一次删除doc的话 删除动作属于哪个年代  默认就是 delGen+1
   private long nextWriteDelGen;
 
   // Generation number of the FieldInfos (-1 if there are no updates)
@@ -67,7 +67,7 @@ public class SegmentCommitInfo {
   
   // Normally 1+fieldInfosGen, unless an exception was hit on last attempt to
   // write
-  // 下一个fieldInfosGen
+  // 同 nextWriteDelGen
   private long nextWriteFieldInfosGen;
   
   // Generation number of the DocValues (-1 if there are no updates)
@@ -79,12 +79,13 @@ public class SegmentCommitInfo {
   private long nextWriteDocValuesGen;
 
   // Track the per-field DocValues update files
-  // 代表哪些文件对应的 docValues发生了变化  key对应的是年代
+  // 代表在哪些文件中存储了有关 docValue 变化的数据
   private final Map<Integer,Set<String>> dvUpdatesFiles = new HashMap<>();
   
   // TODO should we add .files() to FieldInfosFormat, like we have on
   // LiveDocsFormat?
   // track the fieldInfos update files
+  // 记录哪些文件存储了描述 filedInfo的信息
   private final Set<String> fieldInfosFiles = new HashSet<>();
 
   /**
@@ -102,8 +103,8 @@ public class SegmentCommitInfo {
    * @param info   描述该片段的基础信息
    *          {@link SegmentInfo} that we wrap
    * @param delCount
-   *          number of deleted documents in this segment
-   * @param softDelCount 软删除了多少数据
+   *          number of deleted documents in this segment   已经删除了多少数据
+   * @param softDelCount   通过软删除 删除了多少数据
    * @param delGen
    *          deletion generation number (used to name deletion files)
    * @param fieldInfosGen
@@ -117,7 +118,6 @@ public class SegmentCommitInfo {
     this.delCount = delCount;
     this.softDelCount = softDelCount;
     this.delGen = delGen;
-    // 如果传入的年代值为 -1 重置为1
     this.nextWriteDelGen = delGen == -1 ? 1 : delGen + 1;
     this.fieldInfosGen = fieldInfosGen;
     this.nextWriteFieldInfosGen = fieldInfosGen == -1 ? 1 : fieldInfosGen + 1;
@@ -136,6 +136,7 @@ public class SegmentCommitInfo {
   }
   
   /** Sets the DocValues updates file names, per field number. Does not deep clone the map. */
+  // 代表在哪些文件中存储了有关 docValue 变化的数据
   public void setDocValuesUpdatesFiles(Map<Integer,Set<String>> dvUpdatesFiles) {
     this.dvUpdatesFiles.clear();
     for (Map.Entry<Integer,Set<String>> kv : dvUpdatesFiles.entrySet()) {
@@ -265,17 +266,17 @@ public class SegmentCommitInfo {
     // updates) and then maybe even be able to remove LiveDocsFormat.files().
     
     // Must separately add any live docs files:
-    // TODO 只获取 live的doc???
+    // 判断是否要增加描述 alive 信息的索引文件
     info.getCodec().liveDocsFormat().files(this, files);
 
-    // 将相关文件存入容器后返回
     // must separately add any field updates files
+    // 追加描述 docValue 变化的文件
     for (Set<String> updatefiles : dvUpdatesFiles.values()) {
       files.addAll(updatefiles);
     }
     
     // must separately add fieldInfos files
-    // fieldInfosFiles 还不明白是干嘛的
+    // 追加描述 fieldInfo 信息的文件
     files.addAll(fieldInfosFiles);
     
     return files;

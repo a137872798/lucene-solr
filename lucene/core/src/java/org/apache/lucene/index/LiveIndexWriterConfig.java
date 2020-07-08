@@ -121,7 +121,6 @@ public class LiveIndexWriterConfig {
   protected boolean commitOnClose = IndexWriterConfig.DEFAULT_COMMIT_ON_CLOSE;
 
   /** The sort order to use to write merged segments. */
-  // 以什么顺序来合成 segment
   protected Sort indexSort = null;
 
   /** The field names involved in the index sort */
@@ -129,6 +128,7 @@ public class LiveIndexWriterConfig {
   protected Set<String> indexSortFields = Collections.emptySet();
 
   /** if an indexing thread should check for pending flushes on update in order to help out on a full flush*/
+  // 代表尝试改动索引前 要先检测是否有待flush的线程
   protected volatile boolean checkPendingFlushOnUpdate = true;
 
   /** soft deletes field */

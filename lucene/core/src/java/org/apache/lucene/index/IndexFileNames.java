@@ -146,7 +146,7 @@ public final class IndexFileNames {
    * 
    * @return the filename with the segment name removed, or the given filename
    *         if it does not contain a '.' and '_'.
-   *         只获取片段名
+   *         截取掉片段名 获取后面的字
    */
   public static String stripSegmentName(String filename) {
     int idx = indexOfSegmentName(filename);

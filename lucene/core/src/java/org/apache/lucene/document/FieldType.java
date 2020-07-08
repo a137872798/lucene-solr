@@ -28,7 +28,7 @@ import org.apache.lucene.index.PointValues;
 
 /**
  * Describes the properties of a field.
- * 可以理解为某个 Field的配置信息  一个域需要存储哪些数据之类的都在这里进行定义
+ * 该对象描述了某个field的属性
  */
 public class FieldType implements IndexableFieldType  {
 
@@ -60,7 +60,7 @@ public class FieldType implements IndexableFieldType  {
    */
   private boolean frozen;
   /**
-   * 标注文档的数据类型
+   * 某个文档中 在该field内 doc的数据类型为 二进制
    */
   private DocValuesType docValuesType = DocValuesType.NONE;
   private int dimensionCount;

@@ -421,7 +421,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
         }
 
         /**
-         * @param del       BufferedUpdates 容器是用于记录 变化的 term 或者field的
+         * @param del       将分片中每个node的数据填充到 buffer中
          * @param docIDUpto
          */
         void apply(BufferedUpdates del, int docIDUpto) {
@@ -507,6 +507,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
         }
     }
 
+    /**
+     * 每个节点关联一个 term数据
+     */
     private static final class TermNode extends Node<Term> {
 
         TermNode(Term term) {
