@@ -40,7 +40,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 // NOTE: instances of this class are accessed either via a private
 // instance on DocumentWriterPerThread, or via sync'd code by
 // DocumentsWriterDeleteQueue
-// 该容器用于存储一些 删除 更新的数据
+// 该容器用于存储一些 删除 更新的数据    以 directory 为单位 每个segment都有一个专门的 BufferedUpdates 对象   同时还有一个全局的 BufferedUpdates 对象
 class BufferedUpdates implements Accountable {
 
     /* Rough logic: HashMap has an array[Entry] w/ varying
@@ -63,23 +63,23 @@ class BufferedUpdates implements Accountable {
     final static int BYTES_PER_DEL_QUERY = 5 * RamUsageEstimator.NUM_BYTES_OBJECT_REF + 2 * RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + 2 * Integer.BYTES + 24;
 
 
-    // 记录内部有关删除的 term的数量
+    // 代表当前记录了多少个 要按照该term删除doc的 term数量
     final AtomicInteger numTermDeletes = new AtomicInteger();
-    // 更新的 field  数量
+    // 有多少个 field 因为更新了 docValue 导致的 删除doc 动作
     final AtomicInteger numFieldUpdates = new AtomicInteger();
 
     /**
-     * 代表要删除哪个 term  并且 value 对应 允许删除到哪个doc  因为某个term是出现在多个doc中的 这个value是一个docId的上限值
+     * value 代表删除的docId上限
      */
     final Map<Term, Integer> deleteTerms = new HashMap<>(); // TODO cut this over to FieldUpdatesBuffer
 
     /**
-     * query用于定位数据  这里的含义是指  query命中的文档被删除   value对应文档号
+     * query用于定位数据  这里的含义是指  query命中的文档被删除   value对应文档号上限
      */
     final Map<Query, Integer> deleteQueries = new HashMap<>();
 
     /**
-     * 针对某个域  对应的更新数据
+     * 维护field 下数据的变化
      */
     final Map<String, FieldUpdatesBuffer> fieldUpdates = new HashMap<>();
 
@@ -96,6 +96,9 @@ class BufferedUpdates implements Accountable {
 
     long gen;
 
+    /**
+     * 标记该容器记录的删除信息是针对哪个段的     deleteQueue 会自动创建一个叫做 global的容器
+     */
     final String segmentName;
 
     public BufferedUpdates(String segmentName) {
@@ -128,7 +131,7 @@ class BufferedUpdates implements Accountable {
     }
 
     /**
-     * 存放一组 query 与 该query命中的docId 的映射关系
+     * 代表被query命中的 doc 需要被删除
      * @param query
      * @param docIDUpto
      */
@@ -142,13 +145,13 @@ class BufferedUpdates implements Accountable {
     }
 
     /**
-     * 代表某个term被删除  同时还携带了该 term 所属的doc
+     * 记录某个 term  稍后携带该term的doc 都会被删除
      * @param term
-     * @param docIDUpto
+     * @param docIDUpto  允许删除的 docId上限  默认是 IntMaxValue  也就是不做删除限制
      */
     public void addTerm(Term term, int docIDUpto) {
         Integer current = deleteTerms.get(term);
-        // 如果本次传入的文档号比较旧 忽略本次操作
+        // 如果本次传入的文档限制小 忽略本次操作
         if (current != null && docIDUpto < current) {
             // Only record the new number if it's greater than the
             // current one.  This is important because if multiple
@@ -172,13 +175,13 @@ class BufferedUpdates implements Accountable {
     }
 
     /**
-     * 代表某个 数值型 doc 进行了更新操作  注意 以term为单位 每个 term 单独维护一组更新信息
+     * 某个 field 更新了docValue  记录这次更新信息
      * @param update   更新的数值
      * @param docIDUpto  文档的id
      */
     void addNumericUpdate(NumericDocValuesUpdate update, int docIDUpto) {
+        // 共用计数器
         FieldUpdatesBuffer buffer = fieldUpdates.computeIfAbsent(update.field, k -> new FieldUpdatesBuffer(fieldUpdatesBytesUsed, update, docIDUpto));
-        // 追加描述信息  这样 这个update对象不就添加2次了吗
         if (update.hasValue) {
             buffer.addUpdate(update.term, update.getValue(), docIDUpto);
         } else {

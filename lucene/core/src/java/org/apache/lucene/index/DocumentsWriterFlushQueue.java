@@ -42,25 +42,22 @@ final class DocumentsWriterFlushQueue {
   private final ReentrantLock purgeLock = new ReentrantLock();
 
   /**
-   * 这里添加一个维护了多个term变化的队列对象
+   * 传入一个删除队列 此时删除队列内部已经记录了各种包含删除信息的node
    * @param deleteQueue
    * @return
    * @throws IOException
    */
   synchronized boolean addDeletes(DocumentsWriterDeleteQueue deleteQueue) throws IOException {
-    // 每个刷盘对象对应一组更新
     incTickets();// first inc the ticket count - freeze opens
                  // a window for #anyChanges to fail
     boolean success = false;
     try {
-      // 冻结内部的数据
       FrozenBufferedUpdates frozenBufferedUpdates = deleteQueue.maybeFreezeGlobalBuffer();
       if (frozenBufferedUpdates != null) { // no need to publish anything if we don't have any frozen updates
         queue.add(new FlushTicket(frozenBufferedUpdates, false));
         success = true;
       }
     } finally {
-      // 代表该对象已经被处理过了 忽略 同时记得减少误加的值
       if (!success) {
         decTickets();
       }

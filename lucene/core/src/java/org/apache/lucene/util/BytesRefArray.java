@@ -30,7 +30,7 @@ import java.util.function.IntBinaryOperator;
  * 
  * @lucene.internal
  * @lucene.experimental
- * 内部存放一组有顺序的 ref
+ * 存放 一组 byteRef 并且具备将他们排序的能力
  */
 public final class BytesRefArray implements SortableBytesRefArray {
 
@@ -40,7 +40,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
    */
   private final ByteBlockPool pool;
   /**
-   * 这里记录了每个 bytes 的偏移量
+   * 这里记录了每个 bytesRef 的偏移量
    */
   private int[] offsets = new int[1];
   /**
@@ -48,13 +48,14 @@ public final class BytesRefArray implements SortableBytesRefArray {
    */
   private int lastElement = 0;
   /**
-   * 首个 bytes的起始偏移量为 0
+   * 当前 bytesRef的 起始偏移量
    */
   private int currentOffset = 0;
   private final Counter bytesUsed;
 
   /**
    * Creates a new {@link BytesRefArray} with a counter to track allocated bytes
+   * @param bytesUsed 用于记录在这里分配了多少内存
    */
   public BytesRefArray(Counter bytesUsed) {
     // 每次使用这个pool对象时  当分配内存的时候 都会间接操作 counter对象 更新数值
@@ -113,6 +114,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
    * @param spare a spare {@link BytesRef} instance
    * @param index the elements index to retrieve 
    * @return the <i>n'th</i> element of this {@link BytesRefArray}
+   * 通过指定下标 在 offsets[] 中找到偏移量 然后去pool中读取数据
    */
   public BytesRef get(BytesRefBuilder spare, int index) {
     Objects.checkIndex(index, lastElement);
@@ -126,7 +128,9 @@ public final class BytesRefArray implements SortableBytesRefArray {
   }
 
   /** Used only by sort below, to set a {@link BytesRef} with the specified slice, avoiding copying bytes in the common case when the slice
-   *  is contained in a single block in the byte block pool. */
+   *  is contained in a single block in the byte block pool.
+   * @param index 代表读取第几个 bytesRef
+   */
   private void setBytesRef(BytesRefBuilder spare, BytesRef result, int index) {
     Objects.checkIndex(index, lastElement);
     // 这个offset 对应某次写入的 bytes的起始偏移量
@@ -144,6 +148,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
 
   /**
    * Returns a {@link SortState} representing the order of elements in this array. This is a non-destructive operation.
+   * 将该对象内部的数据 按照 cmp对象进行排序
    */
   public SortState sort(final Comparator<BytesRef> comp, final IntBinaryOperator tieComparator) {
     // size() 对应当前写入的 bytes 数量

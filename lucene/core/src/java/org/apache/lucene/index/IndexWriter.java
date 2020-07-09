@@ -1554,7 +1554,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    *  <b>NOTE</b>: this method can only delete documents
    *  visible to the currently open NRT reader.  If you need
    *  to delete documents indexed after opening the NRT
-   *  reader you must use {@link #deleteDocuments(Term...)}). */
+   *  reader you must use {@link #deleteDocuments(Term...)}).
+   *
+   *  尝试删除某个docId 对应的doc
+   */
   public synchronized long tryDeleteDocument(IndexReader readerIn, int docID) throws IOException {
     // NOTE: DON'T use docID inside the closure
     return tryModifyDocument(readerIn, docID, (leafDocId, rld) -> {
@@ -1737,12 +1740,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * to be deleted
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
+   * 删除命中查询条件的doc
    */
   public long deleteDocuments(Query... queries) throws IOException {
     ensureOpen();
 
     // LUCENE-6379: Specialize MatchAllDocsQuery
     for(Query query : queries) {
+      // 只要存在一个 AllDocs 就删除所有的doc
       if (query.getClass() == MatchAllDocsQuery.class) {
         return deleteAll();
       }
@@ -5278,6 +5283,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * Processes all events and might trigger a merge if the given seqNo is negative
    * @param seqNo if the seqNo is less than 0 this method will process events otherwise it's a no-op.
    * @return the given seqId inverted if negative.
+   * 当通过 docWriter 更新完doc数据后 触发该方法
    */
   private long maybeProcessEvents(long seqNo) throws IOException {
     if (seqNo < 0) {

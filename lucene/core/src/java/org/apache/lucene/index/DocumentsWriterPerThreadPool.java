@@ -111,6 +111,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
         throw new ThreadInterruptedException(ie);
       }
     }
+    // 该工厂只是为  thread对象填充各种属性
     DocumentsWriterPerThread dwpt = dwptFactory.get();
     // 在存入到能够被其他线程访问到的容器前 先抢占这个对象
     dwpt.lock(); // lock so nobody else will get this DWPT
@@ -122,6 +123,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
   // of items (docs, deletes, DV updates) to most take advantage of concurrency while flushing
 
   /** This method is used by DocumentsWriter/FlushControl to obtain a DWPT to do an indexing operation (add/updateDocument). */
+  // 尝试抢占一个 perThread
   DocumentsWriterPerThread getAndLock() throws IOException {
     synchronized (this) {
       if (closed) {

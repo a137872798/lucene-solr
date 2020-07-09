@@ -171,6 +171,7 @@ final class DocumentsWriter implements Closeable, Accountable {
                   FieldInfos.FieldNumbers globalFieldNumberMap) {
     this.config = config;
     this.infoStream = config.getInfoStream();
+    // 该对象以 directory 为单位 一个目录只有一个
     this.deleteQueue = new DocumentsWriterDeleteQueue(infoStream);
 
     this.perThreadPool = new DocumentsWriterPerThreadPool(() -> {
@@ -474,6 +475,7 @@ final class DocumentsWriter implements Closeable, Accountable {
         }
         
         flushControl.waitIfStalled(); // block if stalled
+        // 等到所有的 待flush 任务都完成后 才尝试更新内存中的数据
       } while (flushControl.numQueuedFlushes() != 0); // still queued DWPTs try help flushing
     }
     return hasEvents;
@@ -496,14 +498,16 @@ final class DocumentsWriter implements Closeable, Accountable {
   /**
    * 更新doc
    * @param docs   本次要插入的新doc
-   * @param delNode  将满足条件的doc删除
+   * @param delNode  将满足条件的doc删除  允许为null
    * @return
    * @throws IOException
    */
   long updateDocuments(final Iterable<? extends Iterable<? extends IndexableField>> docs,
                        final DocumentsWriterDeleteQueue.Node<?> delNode) throws IOException {
+    // 在准备阶段会将所有 待flush的任务全部执行  同时返回是否触发了监听器
     boolean hasEvents = preUpdate();
 
+    // 申请一个 perThread 该对象负责解析doc 并生成便于写入索引文件的格式
     final DocumentsWriterPerThread dwpt = flushControl.obtainAndLock();
     final DocumentsWriterPerThread flushingDWPT;
     long seqNo;
@@ -512,8 +516,10 @@ final class DocumentsWriter implements Closeable, Accountable {
       // This must happen after we've pulled the DWPT because IW.close
       // waits for all DWPT to be released:
       ensureOpen();
+      // 检测当前还有多少 内存中的doc
       final int dwptNumDocs = dwpt.getNumDocsInRAM();
       try {
+        // 将本次所有文档转换成索引格式 暂存在内存中   同时返回一个 记录当前有多少node 的序列号
         seqNo = dwpt.updateDocuments(docs, delNode, flushNotifications);
       } finally {
         if (dwpt.isAborted()) {
@@ -524,6 +530,7 @@ final class DocumentsWriter implements Closeable, Accountable {
         // accumulate our separate counter:
         numDocsInRAM.addAndGet(dwpt.getNumDocsInRAM() - dwptNumDocs);
       }
+      // 如果本次更新doc的同时传入了 携带删除信息的node
       final boolean isUpdate = delNode != null && delNode.isDelete();
       flushingDWPT = flushControl.doAfterDocument(dwpt, isUpdate);
     } finally {
@@ -535,6 +542,7 @@ final class DocumentsWriter implements Closeable, Accountable {
       assert dwpt.isHeldByCurrentThread() == false : "we didn't release the dwpt even on abort";
     }
 
+    // 执行后置操作
     if (postUpdate(flushingDWPT, hasEvents)) {
       seqNo = -seqNo;
     }

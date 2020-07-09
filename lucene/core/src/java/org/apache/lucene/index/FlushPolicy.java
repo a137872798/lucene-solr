@@ -72,7 +72,7 @@ abstract class FlushPolicy {
    * Note: This method is called  synchronized on the given
    * {@link DocumentsWriterFlushControl} and it is guaranteed that the calling
    * thread holds the lock on the given {@link DocumentsWriterPerThread}
-   * 可以看到 实际上更新被拆分成2个动作   delete + insert
+   * 代表某次updateDocument 中 既插入了新的doc 也删除了部分doc 
    */
   public void onUpdate(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
     onInsert(control, perThread);

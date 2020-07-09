@@ -49,11 +49,17 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
   private final long hardMaxBytesPerDWPT;
 
+  /**
+   * 代表当前待刷盘的数据有多少byte
+   */
   private long activeBytes = 0;
   /**
-   * 记录当前待刷盘的 bytes数
+   * 已经有多少数据刷盘
    */
   private volatile long flushBytes = 0;
+  /**
+   * 当前有多少待刷盘任务
+   */
   private volatile int numPending = 0;
   private int numDocsSinceStalled = 0; // only with assert
   private final AtomicBoolean flushDeletes = new AtomicBoolean(false);
@@ -167,6 +173,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   }
 
   private synchronized void commitPerThreadBytes(DocumentsWriterPerThread perThread) {
+    // 获取继上次刷盘 增加的byte占用量
     final long delta = perThread.commitLastBytesUsed();
     /*
      * We need to differentiate here if we are pending since setFlushPending
@@ -191,15 +198,24 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     return true;
   }
 
+  /**
+   * 在某个 perThread 执行完 updateDocument 后触发
+   * @param perThread
+   * @param isUpdate  本次更新是否携带了   Node  (node代表删除某些doc 或者更新doc的信息)
+   * @return
+   */
   synchronized DocumentsWriterPerThread doAfterDocument(DocumentsWriterPerThread perThread, boolean isUpdate) {
     try {
       commitPerThreadBytes(perThread);
+      // 此时线程还未处于刷盘阶段
       if (!perThread.isFlushPending()) {
+        // 通过刷盘策略对象来决定 是否要进行刷盘
         if (isUpdate) {
           flushPolicy.onUpdate(this, perThread);
         } else {
           flushPolicy.onInsert(this, perThread);
         }
+        // 代表此时单个 DWPT使用的byte 已经超过了预计值  需要触发刷盘
         if (!perThread.isFlushPending() && perThread.bytesUsed() > hardMaxBytesPerDWPT) {
           // Safety check to prevent a single DWPT exceeding its RAM limit. This
           // is super important since we can not address more than 2048 MB per DWPT
@@ -216,7 +232,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   /**
    *
    * @param perThread
-   * @param markPending  当前线程是否正在 flush中
+   * @param markPending  是否需要标记成 待刷盘
    * @return
    */
   private DocumentsWriterPerThread checkout(DocumentsWriterPerThread perThread, boolean markPending) {
@@ -330,11 +346,13 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
    * Sets flush pending state on the given {@link DocumentsWriterPerThread}. The
    * {@link DocumentsWriterPerThread} must have indexed at least on Document and must not be
    * already pending.
+   * 将当前线程标记成 刷盘中
    */
   public synchronized void setFlushPending(DocumentsWriterPerThread perThread) {
     assert !perThread.isFlushPending();
     if (perThread.getNumDocsInRAM() > 0) {
       perThread.setFlushPending(); // write access synced
+      // 代表本次会将多少byte 写入到磁盘中
       final long bytes = perThread.getLastCommittedBytesUsed();
       flushBytes += bytes;
       activeBytes -= bytes;
@@ -484,7 +502,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   }
 
   /**
-   * 设置需要物理刷盘的标识
+   * 这个标识是 ???
    */
   public void setApplyAllDeletes() {
     flushDeletes.set(true);
@@ -492,7 +510,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   
   DocumentsWriterPerThread obtainAndLock() throws IOException {
     while (closed == false) {
+      // 这里先尝试从空闲队列中重用 perThread 如果 无法重用就创建一个新的perThread 对象
       final DocumentsWriterPerThread perThread = perThreadPool.getAndLock();
+      // 默认 情况 线程就是共用deleteQueue的
       if (perThread.deleteQueue == documentsWriter.deleteQueue) {
         // simply return the DWPT even in a flush all case since we already hold the lock and the DWPT is not stale
         // since it has the current delete queue associated with it. This means we have established a happens-before

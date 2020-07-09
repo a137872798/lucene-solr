@@ -20,7 +20,7 @@ package org.apache.lucene.util;
 import java.util.Comparator;
 
 /**
- * 该对象是一个bytesRef数组 同时有序存储内部的ref
+ * 该对象可以将内部的 byteRef 数据排序
  */
 interface SortableBytesRefArray {
   /** Append a new value */

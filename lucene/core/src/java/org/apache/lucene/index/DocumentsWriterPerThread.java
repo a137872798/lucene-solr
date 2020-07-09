@@ -224,7 +224,7 @@ final class DocumentsWriterPerThread {
      */
     private SetOnce<Boolean> flushPending = new SetOnce<>();
     /**
-     * 上次提交了多少 bytes
+     * 距离上次刷盘到现在 在内存中写入了多少数据
      */
     private volatile long lastCommittedBytesUsed;
     /**
@@ -337,7 +337,7 @@ final class DocumentsWriterPerThread {
      * Anything that will add N docs to the index should reserve first to
      * make sure it's allowed.
      */
-    // 每当写入一个 doc 时调用该方法
+    // 检测 doc数量是否超过限制
     private void reserveOneDoc() {
         // 增加 pendingNumDocs   如果超过了 max 则抛出异常
         if (pendingNumDocs.incrementAndGet() > IndexWriter.getActualMaxDocs()) {
@@ -350,7 +350,7 @@ final class DocumentsWriterPerThread {
     /**
      * @param docs               2层迭代器  外层代表多个doc  内层代表doc下的多个 field
      * @param deleteNode
-     * @param flushNotifications 通过监听器触发响应钩子
+     * @param flushNotifications 通过监听器触发响应钩子 就是IndexWriter
      * @return
      * @throws IOException
      */
@@ -374,6 +374,7 @@ final class DocumentsWriterPerThread {
                     // vs non-aborting exceptions):
                     // 每个更新的文档 都会增加 pendingNumDoc
                     reserveOneDoc();
+                    // 标记当前正在处理的 doc
                     docState.doc = doc;
                     docState.docID = numDocsInRAM;
                     try {
@@ -403,10 +404,9 @@ final class DocumentsWriterPerThread {
     }
 
     /**
-     * 处理 node
      *
-     * @param deleteNode
-     * @param docIdUpTo
+     * @param deleteNode    代表一个删除条件   稍后满足该条件的doc 都会被删除
+     * @param docIdUpTo   本次处理前 doc的数量   同时也是 本次会删除的doc 上限
      * @return
      */
     private long finishDocuments(DocumentsWriterDeleteQueue.Node<?> deleteNode, int docIdUpTo) {
@@ -422,16 +422,16 @@ final class DocumentsWriterPerThread {
         // succeeded, but apply it only to docs prior to when
         // this batch started:
         long seqNo;
-        // 如果本次携带了 需要处理的 doc更新
         if (deleteNode != null) {
-            // 这里使用该线程自己创建的 slice 对象   将 node添加到slice内部的链表结构
+            // 使用自己的分片同步 deleteQueue的 节点信息
             seqNo = deleteQueue.add(deleteNode, deleteSlice);
             assert deleteSlice.isTail(deleteNode) : "expected the delete term as the tail item";
-            // 将node的变化 记录到 pendingUpdates 上
+            // 只针对本线程的分片 存储这些node信息
             deleteSlice.apply(pendingUpdates, docIdUpTo);
             return seqNo;
         } else {
-            // 无论是否携带了 deleteNode 顺便将 分片与 deleteQueue 内部的节点做同步
+            // 代表本次更新doc 操作 不涉及到删除
+            // 同样将自己的分片与 deleteQueue的节点做同步
             seqNo = deleteQueue.updateSlice(deleteSlice);
             // 代表分片发生了更新  做同步操作
             if (seqNo < 0) {
@@ -824,6 +824,7 @@ final class DocumentsWriterPerThread {
 
     /**
      * Sets this DWPT as flush pending. This can only be set once.
+     * 标记当前处在刷盘状态
      */
     void setFlushPending() {
         flushPending.set(Boolean.TRUE);

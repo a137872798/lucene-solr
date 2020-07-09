@@ -46,7 +46,7 @@ abstract class DocValuesUpdate {
    */
   final DocValuesType type;
   /**
-   * 对应的哪个term
+   * 代表具体哪个term 更新了
    */
   final Term term;
   /**
@@ -55,9 +55,8 @@ abstract class DocValuesUpdate {
   final String field;
   // used in BufferedDeletes to apply this update only to a slice of docs. It's initialized to BufferedUpdates.MAX_INT
   // since it's safe and most often used this way we safe object creations.
-  // term对应的文档号
   final int docIDUpto;
-  // 本对象是否已经声明了更新的值
+
   final boolean hasValue;
 
   /**

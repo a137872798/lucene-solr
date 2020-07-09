@@ -63,7 +63,6 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
    */
   @Override
   public void onDelete(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
-    // 允许先将删除操作写入到内存  并且 当前用于记录更新操作的 deleteQueue 已经存放了太多的更新数据
     if ((flushOnRAM() && control.getDeleteBytesUsed() > 1024*1024*indexWriterConfig.getRAMBufferSizeMB())) {
       // 触发刷盘操作
       control.setApplyAllDeletes();
@@ -75,6 +74,7 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
 
   @Override
   public void onInsert(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
+    // 当此时内存中的doc数量超过配置上限时
     if (flushOnDocCount()
         && perThread.getNumDocsInRAM() >= indexWriterConfig
             .getMaxBufferedDocs()) {
@@ -117,7 +117,6 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
    * Returns <code>true</code> if this {@link FlushPolicy} flushes on
    * {@link IndexWriterConfig#getRAMBufferSizeMB()}, otherwise
    * <code>false</code>.
-   * 只要正确设置了 RamBufferSize 就允许先将数据修改写入到 内存
    */
   protected boolean flushOnRAM() {
     return indexWriterConfig.getRAMBufferSizeMB() != IndexWriterConfig.DISABLE_AUTO_FLUSH;

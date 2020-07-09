@@ -73,7 +73,7 @@ import org.apache.lucene.util.InfoStream;
 final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     // the current end (latest delete operation) in the delete queue:
-    // 一个简单的链表结构 每个Node上挂载一个 对象
+    // 每个节点都记录了 即将要删除的doc  (比如添加了一个 termNode 那么之后就会将携带该term的doc标记为待删除)
     private volatile Node<?> tail;
 
     private volatile boolean closed = false;
@@ -81,23 +81,23 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     /**
      * Used to record deletes against all prior (already written to disk) segments.  Whenever any segment flushes, we bundle up this set of
      * deletes and insert into the buffered updates stream before the newly flushed segment(s).
+     * 这是一个全局分片
      */
     private final DeleteSlice globalSlice;
     /**
-     * 该对象 维护了各种 term的更新/删除信息
+     * 存储全局分片的 删除/更新信息
      */
     private final BufferedUpdates globalBufferedUpdates;
 
     // only acquired to update the global deletes, pkg-private for access by tests:
-    // 多线程间的更新最终都会反应到这个对象上
     final ReentrantLock globalBufferLock = new ReentrantLock();
 
     final long generation;
 
     /**
      * Generates the sequence number that IW returns to callers changing the index, showing the effective serialization of all operations.
+     * 负责生成序列号
      */
-    // 生成序列号的
     private final AtomicLong nextSeqNo;
 
     private final InfoStream infoStream;
@@ -133,10 +133,10 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
          * apply this tail since the head is always omitted.
          */
         tail = new Node<>(null); // sentinel
+        // 每个分片会维护一个 链表  可以通过传入bufferedUpdate 对象 去接受内部的node
         globalSlice = new DeleteSlice(tail);
     }
 
-    // 只要确保链表的构建是线程安全就可以了
 
     /**
      * 将满足query 查询条件的数据标记为删除
@@ -145,15 +145,15 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      * @return
      */
     long addDelete(Query... queries) {
-        // 因为插入了新的节点 所以 tail字段发生了变化
+        // 追加节点到全局链表
         long seqNo = add(new QueryArrayNode(queries));
-        // 同步 slice 的 tail 与当前对象的 tail
+        // 尝试将变化同步到全局分片
         tryApplyGlobalSlice();
         return seqNo;
     }
 
     /**
-     * 针对 Term 查询删除信息
+     * 将携带 term的doc删除
      *
      * @param terms
      * @return
@@ -165,7 +165,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
 
     /**
-     * 记录 update对象
+     * 应该是这样  某些doc的 value发生了变化 那么之前的doc 就必须要被删除  这个体现了更新
      *
      * @param updates
      * @return
@@ -186,7 +186,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     /**
      * invariant for document update
-     * 将节点插入到 slice 末尾
+     * 将新节点加入到 deleteQueue的链表结构(能够同步到globalSlice上)   的同时 还追加到了本次传入的分片链表上
      */
     long add(Node<?> deleteNode, DeleteSlice slice) {
         long seqNo = add(deleteNode);
@@ -222,7 +222,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
 
     /**
-     * 是否有 任何东西发生了 改变
+     * 是否存入了 某个删除/更新的信息
      *
      * @return
      */
@@ -256,7 +256,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
              */
             try {
                 if (updateSliceNoSeqNo(globalSlice)) {
-                    // 对分片进行同步操作
+                    // 在全局buffer中记录发生的变化
                     globalSlice.apply(globalBufferedUpdates, BufferedUpdates.MAX_INT);
                 }
             } finally {
@@ -266,9 +266,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
 
     /**
-     * 冻结  globalBuffer
+     * 冻结全局分片收集到的 node  (也就是整个deleteQueue 收集到的节点)
      *
-     * @param callerSlice
+     * @param callerSlice  如果传入了某个分片 就顺便将他的tail节点与 deleteQueue节点同步
      * @return
      */
     FrozenBufferedUpdates freezeGlobalBuffer(DeleteSlice callerSlice) {
@@ -320,20 +320,21 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     /**
      * 冻结 globalBuffer 内记录的 更新信息   并返回一个 FrozenBuffer对象
      *
-     * @param currentTail
+     * @param currentTail  此时 deleteQueue的尾节点
      * @return
      */
     private FrozenBufferedUpdates freezeGlobalBufferInternal(final Node<?> currentTail) {
         assert globalBufferLock.isHeldByCurrentThread();
-        // 同步 globalSlice 内部的 更新信息
+        // 将未同步的节点信息存储到 bufferedUpdate中
         if (globalSlice.sliceTail != currentTail) {
             globalSlice.sliceTail = currentTail;
             globalSlice.apply(globalBufferedUpdates, BufferedUpdates.MAX_INT);
         }
 
         if (globalBufferedUpdates.any()) {
-            // 通过内部信息填充 FrozenBufferedUpdates 对象
+            // 生成一个 frozen 对象
             final FrozenBufferedUpdates packet = new FrozenBufferedUpdates(infoStream, globalBufferedUpdates, null);
+            // 因为信息已经转移到 frozen中了 所以可以清空全局容器了
             globalBufferedUpdates.clear();
             return packet;
         } else {
@@ -341,12 +342,17 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
         }
     }
 
+    /**
+     * 从某个时刻开始 以deleteQueue的尾节点作为起点 开始监控接收到的所有delete/update节点
+     * @return
+     */
     DeleteSlice newSlice() {
         return new DeleteSlice(tail);
     }
 
     /**
      * Negative result means there were new deletes since we last applied
+     * 使得某个分片的 tail节点与deleteQueue同步
      */
     synchronized long updateSlice(DeleteSlice slice) {
         ensureOpen();
@@ -383,7 +389,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
 
     /**
-     * 当发生了变更时 无法直接关闭 doc写入对象 必须等待所有变化持久化
+     * 在关闭前 必须确保所有的变化都被处理  否则此时的索引文件相当于损坏的
      */
     @Override
     public synchronized void close() {
@@ -474,6 +480,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
         return globalBufferedUpdates.numTermDeletes.get();
     }
 
+    // 清除此时已经记录的 删除/更新信息
     void clear() {
         globalBufferLock.lock();
         try {
@@ -508,7 +515,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
     }
 
     /**
-     * 每个节点关联一个 term数据
+     * 记录携带哪个term的doc将要删除
      */
     private static final class TermNode extends Node<Term> {
 
@@ -528,6 +535,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     }
 
+    /**
+     * 这里会存储一组query   标明满足这些query条件的doc 都会被删除
+     */
     private static final class QueryArrayNode extends Node<Query[]> {
         QueryArrayNode(Query[] query) {
             super(query);
@@ -541,6 +551,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
         }
     }
 
+    /**
+     * 删除的维度变成了携带任意一个term
+     */
     private static final class TermArrayNode extends Node<Term[]> {
         TermArrayNode(Term[] term) {
             super(term);
@@ -566,6 +579,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     }
 
+    /**
+     * 代表某些doc 的value类型发生了变化 那么就要删除之前的doc
+     */
     private static final class DocValuesUpdatesNode extends Node<DocValuesUpdate[]> {
 
         DocValuesUpdatesNode(DocValuesUpdate... updates) {
@@ -588,7 +604,10 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
             }
         }
 
-
+        /**
+         * 标明本次实际上是更新引起的
+         * @return
+         */
         @Override
         boolean isDelete() {
             return false;
@@ -690,8 +709,6 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      *                         moment when this queue is advanced since each these DWPTs can increment the seqId after we
      *                         advanced it.
      * @return a new queue as a successor of this queue.
-     * 返回下一个队列对象
-     * 可能就像 整个索引是由多个 doc 数据组合成的  每个doc 由分别关联了不同的 DocumentsWriterDeleteQueue 所以 这些队列本身也存在着连接关系
      */
     synchronized DocumentsWriterDeleteQueue advanceQueue(int maxNumPendingOps) {
         if (advanced) {

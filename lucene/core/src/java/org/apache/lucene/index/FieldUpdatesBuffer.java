@@ -40,8 +40,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * In other cases each update will likely have a different docUpTo.
  * Along the same lines this impl optimizes the case when all updates have a value. Lastly, if all updates share the
  * same value for a numeric field we only store the value once.
- * 描述了一系列 term的更新信息   一开始需要通过一个 Update 对象进行初始化
- * 这个对象 只允许存储  二进制流数据  或者数字   不能同时存储两种类型
+ * 专门用于记录 某个field 下docValue的变化
  */
 final class FieldUpdatesBuffer {
     private static final long SELF_SHALLOW_SIZE = RamUsageEstimator.shallowSizeOfInstance(FieldUpdatesBuffer.class);
@@ -56,10 +55,10 @@ final class FieldUpdatesBuffer {
     // we might pay a higher price in terms of memory in certain cases but will gain
     // on CPU for those. We also save on not needing to sort in order to apply the terms in order
     // since by definition we store them in order.
-    // 存储每次更新相关的 term
+    // 每次更新时  term的数据都会被添加到这里
     private final BytesRefArray termValues;
     /**
-     * 存储BytesRefArray的 偏移量序号 但是排序方式不是按这个序号 而是转换成 对应序号写入的 bytes  当bytes等大时 转而比较 docId
+     * 本次加入的所有 term的排序结果  首先要求是 Num类型 其次 这些term更新时携带的值要一致 最后根据 field ，bytes ， docsUpTo 进行排序
      */
     private BytesRefArray.SortState termSortState;
     /**
@@ -67,7 +66,7 @@ final class FieldUpdatesBuffer {
      */
     private final BytesRefArray byteValues; // this will be null if we are buffering numerics
     /**
-     * 该数组记录每次更新的 term 对应的文档号
+     * 该数组记录每次更新的 term 对应的影响到的 docId上限
      */
     private int[] docsUpTo;
     /**
@@ -75,11 +74,11 @@ final class FieldUpdatesBuffer {
      */
     private long[] numericValues; // this will be null if we are buffering binaries
     /**
-     * 记录每次更新term时 是否有携带值    hasValue == false 应该就是删除的意思  也就是该容器不仅记录了 term的更新情况 还记录了删除情况
+     * 如果hasValue 为true
      */
     private FixedBitSet hasValues;
     /**
-     * 记录每次更新term时 对应的field
+     * 每个元素对应一次更新的term  然后term作为下标对应到 关联的field
      */
     private String[] fields;
     // 初始情况下 这2个属性都是 initialValue
@@ -90,15 +89,15 @@ final class FieldUpdatesBuffer {
     private boolean finished = false;
 
     /**
-     * @param bytesUsed    关联到 BufferedUpdates 的计数器 该对象会被并发操作
+     * @param bytesUsed    与关联的 BufferedUpdate 共享计数器
      * @param initialValue 该对象描述了 将文档中某个term更改成指定值
-     * @param docUpTo      对应的文档号
+     * @param docUpTo      变化影响到的docId 上限
      * @param isNumeric    数值类型是否是 数字
      */
     private FieldUpdatesBuffer(Counter bytesUsed, DocValuesUpdate initialValue, int docUpTo, boolean isNumeric) {
         this.bytesUsed = bytesUsed;
         this.bytesUsed.addAndGet(SELF_SHALLOW_SIZE);
-        // 该对象内部由一个 ByteBlockPool  内部可以申请多个byteBuffer
+        // BytesRefArray 就可以简单的看作是  byte[]  不过每次写入的是一个bytesRef
         termValues = new BytesRefArray(bytesUsed);
         // 这里存储了 更新的数值
         termValues.append(initialValue.term.bytes);
@@ -118,8 +117,7 @@ final class FieldUpdatesBuffer {
     }
 
     /**
-     * 以这种形式构造时 就代表数值类型是 num
-     *
+     * 代表某个field  产生了一次有关 numDocValue的更新
      * @param bytesUsed
      * @param initialValue
      * @param docUpTo
@@ -142,6 +140,10 @@ final class FieldUpdatesBuffer {
         }
     }
 
+    /**
+     * 只有当针对 numDocValueUpdate 存储数据时 才应该调用该方法
+     * @return
+     */
     long getMaxNumeric() {
         assert isNumeric;
         // 这种算特殊情况  忽略 所以返回一个无效值
@@ -160,19 +162,18 @@ final class FieldUpdatesBuffer {
     }
 
     /**
-     * @param field    代表针对某个域 有一次更新的信息
-     * @param docUpTo  对应的文档号
-     * @param ord      本次更新的值 对应的序号
+     * @param field    代表本次更新的 term关联的field
+     * @param docUpTo  对应的文档号上限
+     * @param ord      代表是第几个插入的 term
      * @param hasValue 本次更新是否有携带数值   (可能某次更新不携带数值)
      */
     void add(String field, int docUpTo, int ord, boolean hasValue) {
         assert finished == false : "buffer was finished already";
-        // 每个改动的term的序号 就是 fields数组的下标 这样就能找到匹配的 field
         if (fields[0].equals(field) == false || fields.length != 1) {
             // 需要扩容
             if (fields.length <= ord) {
                 String[] array = ArrayUtil.grow(fields, ord + 1);
-                // 如果首次扩容 将 [0] 的位置置空
+                // 将所有值都填充成 field[0]
                 if (fields.length == 1) {
                     Arrays.fill(array, 1, ord, fields[0]);
                 }
@@ -183,10 +184,11 @@ final class FieldUpdatesBuffer {
             if (field != fields[0]) { // that's an easy win of not accounting if there is an outlier
                 bytesUsed.addAndGet(sizeOfString(field));
             }
+            // 在对应的位置设置field
             fields[ord] = field;
         }
 
-        // 存储本次更新的 docId
+        // 跟上面一样的套路
         if (docsUpTo[0] != docUpTo || docsUpTo.length != 1) {
             if (docsUpTo.length <= ord) {
                 int[] array = ArrayUtil.grow(docsUpTo, ord + 1);
@@ -199,8 +201,9 @@ final class FieldUpdatesBuffer {
             docsUpTo[ord] = docUpTo;
         }
 
-        // 这个标识则使用位图进行存储 尽可能节省空间
+        // 如果所有term 插入 都有值  就不需要初始化位图了
         if (hasValue == false || hasValues != null) {
+            // 代表此时才开始初始化 所以之前都是有值的 就是1
             if (hasValues == null) {
                 hasValues = new FixedBitSet(ord + 1);
                 hasValues.set(0, ord);
@@ -221,20 +224,21 @@ final class FieldUpdatesBuffer {
      *
      * @param term
      * @param value
-     * @param docUpTo
+     * @param docUpTo  影响到的doc的上限
      */
     void addUpdate(Term term, long value, int docUpTo) {
         assert isNumeric;
         final int ord = append(term);
-        // 查看一下本次更新是针对哪个域的
+        // 查看本次term 关联的field 信息
         String field = term.field;
-        // 记录相关信息
         add(field, docUpTo, ord, true);
         minNumeric = Math.min(minNumeric, value);
         maxNumeric = Math.max(maxNumeric, value);
+        // 如果每次 update 的值都一样就不需要修改 numericValues  但是一旦出现了不一样的就要扩容并填充数据
         if (numericValues[0] != value || numericValues.length != 1) {
             if (numericValues.length <= ord) {
                 long[] array = ArrayUtil.grow(numericValues, ord + 1);
+                // 代表直到现在才发生变化 所以之前的值都是一样的
                 if (numericValues.length == 1) {
                     Arrays.fill(array, 1, ord, numericValues[0]);
                 }
@@ -246,7 +250,7 @@ final class FieldUpdatesBuffer {
     }
 
     /**
-     * 实际上这个更新应该是删除的意思吧
+     * 本次的更新没有携带数据
      *
      * @param term
      * @param docUpTo
@@ -278,6 +282,7 @@ final class FieldUpdatesBuffer {
      */
     private int append(Term term) {
         termValues.append(term.bytes);
+        // 这个值是始终递增的  而那些数组 如果每次情况都一样 那么长度都是1
         return numUpdates++;
     }
 
@@ -289,13 +294,13 @@ final class FieldUpdatesBuffer {
             throw new IllegalStateException("buffer was finished already");
         }
         finished = true;
-        // 代表当前只记录了单次更新   那为什么要排序???
+        // 是数字类型 且仅包含一个值  且每次插入的 term都是属于同一个field    这种情况下 term 可能相同  也可能不相同
         final boolean sortedTerms = hasSingleValue() && hasValues == null && fields.length == 1;
         if (sortedTerms) {
             // sort by ascending by term, then sort descending by docsUpTo so that we can skip updates with lower docUpTo.
             // 结果中存储的是  BytesRefArray 的偏移量
-            termSortState = termValues.sort(Comparator.naturalOrder(),  // 前面代表 按照更新的数值进行排序
-                    // 上面的比较结果无效时 使用下面的 cmp 也就是比较   也就是比较 docId
+            termSortState = termValues.sort(Comparator.naturalOrder(),  // 按照 term.bytes 进行排序
+                    // 上面的比较结果无效时 使用下面的 cmp 也就是比较   也就是比较 docId上限的大小
                     (i1, i2) -> Integer.compare(
                             docsUpTo[getArrayIndex(docsUpTo.length, i2)],
                             docsUpTo[getArrayIndex(docsUpTo.length, i1)]));
