@@ -32,11 +32,24 @@ import org.apache.lucene.util.RefCount;
 /**
  * Manages the {@link DocValuesProducer} held by {@link SegmentReader} and
  * keeps track of their reference counting.
+ * 维护 映射关系
  */
 final class SegmentDocValues {
 
+  /**
+   * key 是 gen
+   */
   private final Map<Long,RefCount<DocValuesProducer>> genDVProducers = new HashMap<>();
 
+  /**
+   * 初始化一个新的 生产源
+   * @param si
+   * @param dir
+   * @param gen
+   * @param infos
+   * @return
+   * @throws IOException
+   */
   private RefCount<DocValuesProducer> newDocValuesProducer(SegmentCommitInfo si, Directory dir, final Long gen, FieldInfos infos) throws IOException {
     Directory dvDir = dir;
     String segmentSuffix = "";
@@ -48,6 +61,7 @@ final class SegmentDocValues {
     // set SegmentReadState to list only the fields that are relevant to that gen
     SegmentReadState srs = new SegmentReadState(dvDir, si.info, infos, IOContext.READ, segmentSuffix);
     DocValuesFormat dvFormat = si.info.getCodec().docValuesFormat();
+    // 返回一个 以field为单位 读取 docValue 的 reader对象
     return new RefCount<DocValuesProducer>(dvFormat.fieldsProducer(srs)) {
       @SuppressWarnings("synthetic-access")
       @Override

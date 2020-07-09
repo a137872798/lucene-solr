@@ -55,9 +55,11 @@ final class FrozenBufferedUpdates {
   
   // Terms, in sorted order:
   // 该对象采用 共享公共前缀的方式减少了 内存开销  并且可以在迭代器中还原之前的term
+  // 代表包含这些 term的 doc都需要被删除
   final PrefixCodedTerms deleteTerms;
 
   // Parallel array of deleted query, and the docIDUpto for each
+  // 被这些query 命中的doc 需要被删除
   final Query[] deleteQueries;
   final int[] deleteQueryLimits;
   
@@ -70,12 +72,16 @@ final class FrozenBufferedUpdates {
   private final Map<String, FieldUpdatesBuffer> fieldUpdates;
 
   /** How many total documents were deleted/updated. */
+  // 增加删除的doc总数
   public long totalDelCount;
   private final int fieldUpdatesCount;
   
   final int bytesUsed;
   final int numTermDeletes;
 
+  /**
+   * 记录当前删除的年代 (版本号)  这里的 deleteTerm deleteQuery 等只能影响到 delGen在这之前的 state
+   */
   private long delGen = -1; // assigned by BufferedUpdatesStream once pushed
 
   final SegmentCommitInfo privateSegment;  // non-null iff this frozen packet represents 
@@ -95,7 +101,6 @@ final class FrozenBufferedUpdates {
     assert privateSegment == null || updates.deleteTerms.isEmpty() : "segment private packet should only have del queries";
     // 读取内部所有更新的term
     Term termsArray[] = updates.deleteTerms.keySet().toArray(new Term[updates.deleteTerms.size()]);
-    // 用了什么  timSort 算法  反正也是进行排序
     ArrayUtil.timSort(termsArray);
     // 构建公共前缀对象
     PrefixCodedTerms.Builder builder = new PrefixCodedTerms.Builder();
@@ -158,6 +163,7 @@ final class FrozenBufferedUpdates {
 
   /**
    * Returns true if this buffered updates instance was already applied
+   * 代表该数据已经被处理过
    */
   boolean isApplied() {
     assert applyLock.isHeldByCurrentThread();
@@ -166,6 +172,7 @@ final class FrozenBufferedUpdates {
 
   /** Applies pending delete-by-term, delete-by-query and doc values updates to all segments in the index, returning
    *  the number of new deleted or updated documents. */
+  // 处理之前待删除的 doc
   long apply(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
     assert applyLock.isHeldByCurrentThread();
     if (delGen == -1) {
@@ -350,6 +357,7 @@ final class FrozenBufferedUpdates {
   }
 
   // Delete by query
+  // 代表被 query 命中的doc 都需要被删除   TODO 基于 Query的先不看吧
   private long applyQueryDeletes(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
 
     if (deleteQueries.length == 0) {
@@ -361,11 +369,13 @@ final class FrozenBufferedUpdates {
     long delCount = 0;
     for (BufferedUpdatesStream.SegmentState segState : segStates) {
 
+      // state的数据太新  跳过
       if (delGen < segState.delGen) {
         // segment is newer than this deletes packet
         continue;
       }
-      
+
+      // TODO 这个引用计数为1 是啥意思
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running
@@ -377,6 +387,7 @@ final class FrozenBufferedUpdates {
       for (int i = 0; i < deleteQueries.length; i++) {
         Query query = deleteQueries[i];
         int limit;
+        // 这个limit 是什么鬼
         if (delGen == segState.delGen) {
           assert privateSegment != null;
           limit = deleteQueryLimits[i];
@@ -425,7 +436,13 @@ final class FrozenBufferedUpdates {
     
     return delCount;
   }
-  
+
+  /**
+   * 处理 deleteTerms 的数据 记录需要删除的doc
+   * @param segStates
+   * @return
+   * @throws IOException
+   */
   private long applyTermDeletes(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
 
     if (deleteTerms.size() == 0) {
@@ -452,10 +469,13 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
+      // 包含需要删除的 term 的所有 field 组合成的迭代器
       FieldTermIterator iter = deleteTerms.iterator();
       BytesRef delTerm;
+      // reader 可以读取索引文档找到多个 field      而该迭代器对象通过传入 field 可以读取到该field下所有的term
       TermDocsIterator termDocsIterator = new TermDocsIterator(segState.reader, true);
       while ((delTerm = iter.next()) != null) {
+        // 通过倒排索引 确定该 term 存在于哪些 doc 中
         final DocIdSetIterator iterator = termDocsIterator.nextTerm(iter.field(), delTerm);
         if (iterator != null) {
           int docID;
@@ -465,6 +485,7 @@ final class FrozenBufferedUpdates {
             // because on flush we apply all Term deletes to
             // each segment.  So all Term deleting here is
             // against prior segments:
+            // 追加要删除的doc
             if (segState.rld.delete(docID)) {
               delCount++;
             }
@@ -534,7 +555,7 @@ final class FrozenBufferedUpdates {
    */
   static final class TermDocsIterator {
     /**
-     * 通过该对象可以获取所有 term
+     * 该对象通过指定 field 可以获取到该field下所有的term
      */
     private final TermsProvider provider;
     /**
@@ -597,6 +618,7 @@ final class FrozenBufferedUpdates {
      * @throws IOException
      */
     DocIdSetIterator nextTerm(String field, BytesRef term) throws IOException {
+      // 这里会将 term迭代器切换成该field下的
       setField(field);
       if (termsEnum != null) {
         if (sortedTerms) {
@@ -625,7 +647,7 @@ final class FrozenBufferedUpdates {
                 throw new AssertionError("unknown status");
             }
           }
-          // 精确匹配文本内容后 返回包含该term的 docId 迭代器
+          // 精确匹配文本内容后 返回包含该term的 docId 迭代器  (利用了倒排索引)
         } else if (termsEnum.seekExact(term)) {
           return getDocs();
         }

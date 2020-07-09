@@ -626,17 +626,21 @@ final class DocumentsWriter implements Closeable, Accountable {
           // thread in innerPurge can't keep up with all
           // other threads flushing segments.  In this case
           // we forcefully stall the producers.
-          // 代表此时发生了积压  强制执行待刷盘的ticket
+          // 代表此时发生了积压   与 canPublish 有关
           flushNotifications.onTicketBacklog();
           break;
         }
       } finally {
+        // 当某个刷盘任务完成时
         flushControl.doAfterFlush(flushingDWPT);
       }
-     
+
+      // 获取下一个任务
       flushingDWPT = flushControl.nextPendingFlush();
     }
 
+    // 上面已经执行完待执行的 flush任务了
+    // 触发监听器回调  这里才会触发  decTickets
     if (hasEvents) {
       flushNotifications.afterSegmentsFlushed();
     }

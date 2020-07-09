@@ -299,11 +299,20 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
   }
 
+  /**
+   * 该对象是一个总控对象 存储了以field 为单位的数据
+   */
   private static class FieldsReader extends FieldsProducer {
 
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(FieldsReader.class);
 
+    /**
+     * 存储 fieldName 与索引文件reader的映射关系  实际上是一个树结构
+     */
     private final Map<String,FieldsProducer> fields = new TreeMap<>();
+    /**
+     * 该段对应的所有 fieldInfo对应的索引文件名 与 reader的映射关系
+     */
     private final Map<String,FieldsProducer> formats = new HashMap<>();
     private final String segment;
     
@@ -327,6 +336,11 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       segment = other.segment;
     }
 
+    /**
+     *
+     * @param readState  该对象内部包含了本次读取的 目标segment及关联的fieldInfo  还有所在的目录等信息
+     * @throws IOException
+     */
     public FieldsReader(final SegmentReadState readState) throws IOException {
 
       // Read _X.per and init each format:
@@ -334,15 +348,19 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       try {
         // Read field name -> format name
         for (FieldInfo fi : readState.fieldInfos) {
+          // 代表该field的某些信息会存储到索引文件中
           if (fi.getIndexOptions() != IndexOptions.NONE) {
             final String fieldName = fi.name;
+            // 获取描述存储格式的信息
             final String formatName = fi.getAttribute(PER_FIELD_FORMAT_KEY);
             if (formatName != null) {
               // null formatName means the field is in fieldInfos, but has no postings!
+              // 获取索引文件后缀信息
               final String suffix = fi.getAttribute(PER_FIELD_SUFFIX_KEY);
               if (suffix == null) {
                 throw new IllegalStateException("missing attribute: " + PER_FIELD_SUFFIX_KEY + " for field: " + fieldName);
               }
+              // 这里是真正的 索引文件reader 对象
               PostingsFormat format = PostingsFormat.forName(formatName);
               String segmentSuffix = getSuffix(formatName, suffix);
               if (!formats.containsKey(segmentSuffix)) {
@@ -423,6 +441,12 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     return new FieldsWriter(state);
   }
 
+  /**
+   * 获取一个以 field为单位的读取对象
+   * @param state
+   * @return
+   * @throws IOException
+   */
   @Override
   public final FieldsProducer fieldsProducer(SegmentReadState state)
       throws IOException {

@@ -48,12 +48,14 @@ import org.apache.lucene.util.InfoStream;
 // Used by IndexWriter to hold open SegmentReaders (for
 // searching or merging), plus pending deletes and updates,
 // for a given segment
+// 该对象包含了 某个段的信息  以及读取该段下各种数据的reader
 final class ReadersAndUpdates {
   // Not final because we replace (clone) when we need to
   // change it and it's been shared:
   final SegmentCommitInfo info;
 
   // Tracks how many consumers are using this instance:
+  // 记录该对象的引用计数
   private final AtomicInteger refCount = new AtomicInteger(1);
 
   // Set once (null, and then maybe set, and never set again):
@@ -88,6 +90,12 @@ final class ReadersAndUpdates {
 
   final AtomicLong ramBytesUsed = new AtomicLong();
 
+  /**
+   *
+   * @param indexCreatedVersionMajor  本次 segmentInfo 对应的主版本号
+   * @param info 对应某个段的信息
+   * @param pendingDeletes  描述待删除的任务
+   */
   ReadersAndUpdates(int indexCreatedVersionMajor, SegmentCommitInfo info, PendingDeletes pendingDeletes) {
     this.info = info;
     this.pendingDeletes = pendingDeletes;
@@ -165,9 +173,11 @@ final class ReadersAndUpdates {
   
 
   /** Returns a {@link SegmentReader}. */
+  // 初始化内部的reader 对象
   public synchronized SegmentReader getReader(IOContext context) throws IOException {
     if (reader == null) {
       // We steal returned ref:
+      // 这个reader 整合了读取各种field 数据的逻辑
       reader = new SegmentReader(info, indexCreatedVersionMajor, context);
       pendingDeletes.onNewReader(reader, info);
     }
@@ -182,6 +192,12 @@ final class ReadersAndUpdates {
     sr.decRef();
   }
 
+  /**
+   * 代表某个 doc 需要被删除
+   * @param docID
+   * @return
+   * @throws IOException
+   */
   public synchronized boolean delete(int docID) throws IOException {
     if (reader == null && pendingDeletes.mustInitOnDelete()) {
       getReader(IOContext.READ).decRef(); // pass a reader to initialize the pending deletes

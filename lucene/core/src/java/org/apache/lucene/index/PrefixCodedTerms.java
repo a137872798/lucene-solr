@@ -38,6 +38,9 @@ import org.apache.lucene.util.StringHelper;
 public class PrefixCodedTerms implements Accountable {
   private final List<ByteBuffer> content;
   private final long size;
+  /**
+   * 描述该对象关联的 删除年代
+   */
   private long delGen;
   private int lazyHash;
 

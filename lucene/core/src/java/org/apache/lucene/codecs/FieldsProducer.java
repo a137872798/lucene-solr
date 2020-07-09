@@ -27,6 +27,7 @@ import org.apache.lucene.util.Accountable;
  *  payloads postings.  
  *
  * @lucene.experimental
+ * 该对象可以生成 field下的数据   可以是一个reader对象
  */
 
 public abstract class FieldsProducer extends Fields implements Closeable, Accountable {

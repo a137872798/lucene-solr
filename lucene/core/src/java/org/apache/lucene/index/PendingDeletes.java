@@ -30,14 +30,24 @@ import org.apache.lucene.util.IOUtils;
 
 /**
  * This class handles accounting and applying pending deletes for live segment readers
+ * 携带了 待删除的数据信息
  */
 class PendingDeletes {
+
+  /**
+   * 代表本次删除动作是 针对哪个段信息
+   */
   protected final SegmentCommitInfo info;
   // Read-only live docs, null until live docs are initialized or if all docs are alive
+  // 未删除的doc 位图对象
   private Bits liveDocs;
   // Writeable live docs, null if this instance is not ready to accept writes, in which
   // case getMutableBits needs to be called
   private FixedBitSet writeableLiveDocs;
+
+  /**
+   * 当前有多少待删除的doc
+   */
   protected int pendingDeleteCount;
   boolean liveDocsInitialized;
 
@@ -85,6 +95,7 @@ class PendingDeletes {
   /**
    * Marks a document as deleted in this segment and return true if a document got actually deleted or
    * if the document was already deleted.
+   * 追加某个要删除的 doc
    */
   boolean delete(int docID) throws IOException {
     assert info.info.maxDoc() > 0;
@@ -92,6 +103,7 @@ class PendingDeletes {
     assert mutableBits != null;
     assert docID >= 0 && docID < mutableBits.length() : "out of bounds: docid=" + docID + " liveDocsLength=" + mutableBits.length() + " seg=" + info.info.name + " maxDoc=" + info.info.maxDoc();
     final boolean didDelete = mutableBits.get(docID);
+    // 如果位图上的标识被清除代表增加了要删除的doc
     if (didDelete) {
       mutableBits.clear(docID);
       pendingDeleteCount++;
@@ -124,6 +136,7 @@ class PendingDeletes {
 
   /**
    * Called once a new reader is opened for this segment ie. when deletes or updates are applied.
+   * 当某个段下 读取各种数据的reader 被创建时 触发该方法
    */
   void onNewReader(CodecReader reader, SegmentCommitInfo info) throws IOException {
     if (liveDocsInitialized == false) {
@@ -133,9 +146,11 @@ class PendingDeletes {
         // if we use the live docs from a reader it has to be in a situation where we don't
         // have any existing live docs
         assert pendingDeleteCount == 0 : "pendingDeleteCount: " + pendingDeleteCount;
+        // 设置 live位图
         liveDocs = reader.getLiveDocs();
         assert liveDocs == null || assertCheckLiveDocs(liveDocs, info.info.maxDoc(), info.getDelCount());
       }
+      // 设置位图初始化完成的标识
       liveDocsInitialized = true;
     }
   }

@@ -441,11 +441,18 @@ public final class Lucene84PostingsFormat extends PostingsFormat {
     }
   }
 
+  /**
+   * 根据state信息 读取索引文件的数据
+   * @param state
+   * @return
+   * @throws IOException
+   */
   @Override
   public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
     PostingsReaderBase postingsReader = new Lucene84PostingsReader(state);
     boolean success = false;
     try {
+      // 将对象包装后返回
       FieldsProducer ret = new BlockTreeTermsReader(postingsReader, state);
       success = true;
       return ret;

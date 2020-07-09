@@ -47,7 +47,7 @@ import org.apache.lucene.util.InfoStream;
  * merged segment is also assigned a generation, so we can
  * track which BufferedDeletes packets to apply to any given
  * segment. */
-
+// 该对象内部存储了 多个描述数据更新的 update 对象
 final class BufferedUpdatesStream implements Accountable {
 
   // 这里存储了一组已经冻结的 更新对象  冻结的意思就是不会再为这些term 增加新的更新动作了(改动了)
@@ -56,6 +56,7 @@ final class BufferedUpdatesStream implements Accountable {
   // Starts at 1 so that SegmentInfos that have never had
   // deletes applied (whose bufferedDelGen defaults to 0)
   // will be correct:
+  // 原子递增 用于设置每个 update的 delGen
   private long nextGen = 1;
   /**
    * 代表这个段已经处理完成了
@@ -78,6 +79,7 @@ final class BufferedUpdatesStream implements Accountable {
 
   // Appends a new packet of buffered deletes to the stream,
   // setting its generation:
+  // 将某组已经冻结的更新数据填充到该对象内部
   synchronized long push(FrozenBufferedUpdates packet) {
     /*
      * The insert operation must be atomic. If we let threads increment the gen
@@ -86,6 +88,7 @@ final class BufferedUpdatesStream implements Accountable {
      * updates. If the pushed packets get our of order would loose documents
      * since deletes are applied to the wrong segments.
      */
+    // 设置该数据的 删除年代
     packet.setDelGen(nextGen++);
     assert packet.any();
     assert checkDeleteStats();
@@ -127,12 +130,17 @@ final class BufferedUpdatesStream implements Accountable {
     return bytesUsed.get();
   }
 
+  /**
+   * 记录某次删除的结果
+   */
   static class ApplyDeletesResult {
     
     // True if any actual deletes took place:
+    // 是否有至少一条记录被删除
     final boolean anyDeletes;
 
     // If non-null, contains segments that are 100% deleted
+    // 只有 段内所有的doc 都需要被丢弃时 才会被加入到这个列表中
     final List<SegmentCommitInfo> allDeleted;
 
     ApplyDeletesResult(boolean anyDeletes, List<SegmentCommitInfo> allDeleted) {
@@ -265,6 +273,7 @@ final class BufferedUpdatesStream implements Accountable {
   }
 
   /** Holds all per-segment internal state used while resolving deletions. */
+  // 描述某个段的状态 (在delete 相关的逻辑中使用)
   static final class SegmentState implements Closeable {
     final long delGen;
     final ReadersAndUpdates rld;
@@ -276,6 +285,13 @@ final class BufferedUpdatesStream implements Accountable {
     PostingsEnum postingsEnum;
     BytesRef term;
 
+    /**
+     *
+     * @param rld  该对象内部组合了 SegmentReader  segmentCommitInfo 等信息
+     * @param onClose  close 的钩子
+     * @param info
+     * @throws IOException
+     */
     SegmentState(ReadersAndUpdates rld, IOUtils.IOConsumer<ReadersAndUpdates> onClose, SegmentCommitInfo info) throws IOException {
       this.rld = rld;
       reader = rld.getReader(IOContext.READ);

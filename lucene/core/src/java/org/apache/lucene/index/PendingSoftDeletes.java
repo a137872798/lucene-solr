@@ -32,6 +32,9 @@ import org.apache.lucene.util.IOUtils;
 
 final class PendingSoftDeletes extends PendingDeletes {
 
+  /**
+   * 被标记成软删除的字段
+   */
   private final String field;
   private long dvGeneration = -2;
   private final PendingDeletes hardDeletes;

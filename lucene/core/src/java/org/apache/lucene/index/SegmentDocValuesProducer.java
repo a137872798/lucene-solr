@@ -42,35 +42,52 @@ class SegmentDocValuesProducer extends DocValuesProducer {
   private static final long BASE_RAM_BYTES_USED =
       RamUsageEstimator.shallowSizeOfInstance(SegmentDocValuesProducer.class);
 
+  /**
+   * field 名字 与 docValue 读取对象的映射关系
+   */
   final Map<String,DocValuesProducer> dvProducersByField = new HashMap<>();
+
+  /**
+   * 对应 dvGens 下每个 docValue reader 对象
+   */
   final Set<DocValuesProducer> dvProducers = Collections.newSetFromMap(new IdentityHashMap<DocValuesProducer,Boolean>());
+
+  /**
+   * 该segment 下所有field 中 docValue 不为 NONE 的field 对应的 docValueGen
+   */
   final List<Long> dvGens = new ArrayList<>();
   
   /**
    * Creates a new producer that handles updated docvalues fields
-   * @param si commit point
-   * @param dir directory
+   * 创建一个 可以读取 docValue 数据的 生产源
+   * @param si commit point    这些docValue 是关于哪个 segment的
+   * @param dir directory   索引文件所在的目录
    * @param coreInfos fieldinfos for the segment
    * @param allInfos all fieldinfos including updated ones
-   * @param segDocValues producer map
+   * @param segDocValues producer map   这就是一个map
    */
   SegmentDocValuesProducer(SegmentCommitInfo si, Directory dir, FieldInfos coreInfos, FieldInfos allInfos, SegmentDocValues segDocValues) throws IOException {
     try {
       DocValuesProducer baseProducer = null;
       for (FieldInfo fi : allInfos) {
+        // 跳过不包含 docValue 的 field
         if (fi.getDocValuesType() == DocValuesType.NONE) {
           continue;
         }
+        // 此次数据是第几代    每次修改 gen 都会变化   然后每个gen 都有一个对应的索引文件
         long docValuesGen = fi.getDocValuesGen();
         if (docValuesGen == -1) {
+          // -1 应该就代表基础值
           if (baseProducer == null) {
             // the base producer gets the original fieldinfos it wrote
+            // 添加映射关系
             baseProducer = segDocValues.getDocValuesProducer(docValuesGen, si, dir, coreInfos);
             dvGens.add(docValuesGen);
             dvProducers.add(baseProducer);
           }
           dvProducersByField.put(fi.name, baseProducer);
         } else {
+          // 代表发生过更新行为
           assert !dvGens.contains(docValuesGen);
           // otherwise, producer sees only the one fieldinfo it wrote
           final DocValuesProducer dvp = segDocValues.getDocValuesProducer(docValuesGen, si, dir, new FieldInfos(new FieldInfo[]{fi}));

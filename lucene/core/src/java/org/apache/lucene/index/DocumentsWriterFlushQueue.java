@@ -133,7 +133,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 使用该消费者处理内部所有 待flush 对象
+   * 使用该消费者处理内部所有 已经完成flush任务的对象
    * @param consumer
    * @throws IOException
    */
@@ -144,9 +144,10 @@ final class DocumentsWriterFlushQueue {
       final boolean canPublish;
       synchronized (this) {
         head = queue.peek();
-        // 检测当前能否刷盘
+        // 代表该完成的刷盘任务 是否允许通知到外面
         canPublish = head != null && head.canPublish(); // do this synced 
       }
+      // 代表满足发布条件
       if (canPublish) {
         try {
           /*
@@ -161,6 +162,7 @@ final class DocumentsWriterFlushQueue {
           synchronized (this) {
             // finally remove the published ticket from the queue
             final FlushTicket poll = queue.poll();
+            // 光是执行完 刷盘任务 还不能释放该ticket 只有等到 publish完成时 才触发减少ticket的逻辑
             decTickets();
             // we hold the purgeLock so no other thread should have polled:
             assert poll == head;
@@ -219,6 +221,9 @@ final class DocumentsWriterFlushQueue {
      * 标记本次刷盘的结果
      */
     private boolean failed = false;
+    /**
+     * 代表本次刷盘已经发布  (当刷盘任务结束时 就要进行发布任务)
+     */
     private boolean published = false;
 
     FlushTicket(FrozenBufferedUpdates frozenUpdates, boolean hasSegment) {
@@ -226,6 +231,12 @@ final class DocumentsWriterFlushQueue {
       this.hasSegment = hasSegment;
     }
 
+    /**
+     * 如果本身不需要设置 segment信息
+     * 或者已经设置了 segment （代表已经成功）
+     * 或者设置了 failed （代表已经失败）
+     * @return
+     */
     boolean canPublish() {
       return hasSegment == false || segment != null || failed;
     }

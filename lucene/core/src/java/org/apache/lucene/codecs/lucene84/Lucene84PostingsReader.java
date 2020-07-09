@@ -55,18 +55,24 @@ import org.apache.lucene.util.RamUsageEstimator;
  * with postings format.
  *
  * @lucene.experimental
+ * 该对象读取 field 下的信息
  */
 public final class Lucene84PostingsReader extends PostingsReaderBase {
 
   private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Lucene84PostingsReader.class);
 
+  // 分别用于读取 field下 position/doc/pay 信息的输入流
   private final IndexInput docIn;
   private final IndexInput posIn;
   private final IndexInput payIn;
 
   private final int version;
 
-  /** Sole constructor. */
+  /**
+   * Sole constructor.
+   * @param state  通过该对象可以获取到目标索引文件名  所属段等信息
+   * @throws IOException
+   */
   public Lucene84PostingsReader(SegmentReadState state) throws IOException {
     boolean success = false;
     IndexInput docIn = null;
@@ -77,20 +83,25 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     // but for now we at least verify proper structure of the checksum footer: which looks
     // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
     // such as file truncation.
-    
+
+    // 生成索引文件名  .doc文件
     String docName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.DOC_EXTENSION);
     try {
+      // 生成文件输入流
       docIn = state.directory.openInput(docName, state.context);
       version = CodecUtil.checkIndexHeader(docIn, DOC_CODEC, VERSION_START, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
       CodecUtil.retrieveChecksum(docIn);
 
+      // 如果携带 position 需要读取另一个索引文件信息
       if (state.fieldInfos.hasProx()) {
+        // .pos 文件
         String proxName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.POS_EXTENSION);
         posIn = state.directory.openInput(proxName, state.context);
         CodecUtil.checkIndexHeader(posIn, POS_CODEC, version, version, state.segmentInfo.getId(), state.segmentSuffix);
         CodecUtil.retrieveChecksum(posIn);
 
         if (state.fieldInfos.hasPayloads() || state.fieldInfos.hasOffsets()) {
+          // .pay 文件
           String payName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.PAY_EXTENSION);
           payIn = state.directory.openInput(payName, state.context);
           CodecUtil.checkIndexHeader(payIn, PAY_CODEC, version, version, state.segmentInfo.getId(), state.segmentSuffix);

@@ -122,6 +122,7 @@ final class ReaderPool implements Closeable {
   /**
    * Drops reader for the given {@link SegmentCommitInfo} if it's pooled
    * @return <code>true</code> if a reader is pooled
+   * 将某个段关联的reader终止  (关闭各种文件句柄)
    */
   synchronized boolean drop(SegmentCommitInfo info) throws IOException {
     final ReadersAndUpdates rld = readerMap.get(info);
@@ -383,11 +384,14 @@ final class ReaderPool implements Closeable {
       throw new AlreadyClosedException("ReaderPool is already closed");
     }
 
+    // 尝试从缓存容器中获取
     ReadersAndUpdates rld = readerMap.get(info);
     if (rld == null) {
       if (create == false) {
         return null;
       }
+
+      // 选择新建对象
       rld = new ReadersAndUpdates(segmentInfos.getIndexCreatedVersionMajor(), info, newPendingDeletes(info));
       // Steal initial reference:
       readerMap.put(info, rld);
@@ -396,6 +400,7 @@ final class ReaderPool implements Closeable {
           + " vs " + assertInfoIsLive(info);
     }
 
+    // 增加引用计数
     if (create) {
       // Return ref to caller:
       rld.incRef();
@@ -406,6 +411,11 @@ final class ReaderPool implements Closeable {
     return rld;
   }
 
+  /**
+   * 生成一个 待删除 bean
+   * @param info
+   * @return
+   */
   private PendingDeletes newPendingDeletes(SegmentCommitInfo info) {
     return softDeletesField == null ? new PendingDeletes(info) : new PendingSoftDeletes(softDeletesField, info);
   }

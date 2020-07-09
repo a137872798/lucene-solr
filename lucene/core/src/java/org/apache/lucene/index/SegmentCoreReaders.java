@@ -45,6 +45,7 @@ import org.apache.lucene.util.IOUtils;
 
 /** Holds core readers that are shared (unchanged) when
  * SegmentReader is cloned or reopened */
+// 该对象内部组合了各种输入流  可以以field为单位读取全部相关信息  相当于一个总入口
 final class SegmentCoreReaders {
 
   // Counts how many other readers share the core objects
@@ -54,7 +55,10 @@ final class SegmentCoreReaders {
   // closed, even though it shares core objects with other
   // SegmentReaders:
   private final AtomicInteger ref = new AtomicInteger(1);
-  
+
+  /**
+   * 该对象内部 按照field 分成多个reader 对象 负责读取索引文件中的数据
+   */
   final FieldsProducer fields;
   final NormsProducer normsProducer;
 
@@ -62,11 +66,15 @@ final class SegmentCoreReaders {
   final TermVectorsReader termVectorsReaderOrig;
   final PointsReader pointsReader;
   final CompoundDirectory cfsReader;
+  /**
+   * 对应该 segment的名称
+   */
   final String segment;
   /** 
    * fieldinfos for this core: means gen=-1.
    * this is the exact fieldinfos these codec components saw at write.
    * in the case of DV updates, SR may hold a newer version. */
+  // 该段下所有 field 信息
   final FieldInfos coreFieldInfos;
 
   // TODO: make a single thread local w/ a
@@ -89,14 +97,23 @@ final class SegmentCoreReaders {
 
   private final Set<IndexReader.ClosedListener> coreClosedListeners = 
       Collections.synchronizedSet(new LinkedHashSet<IndexReader.ClosedListener>());
-  
+
+  /**
+   *
+   * @param dir  指定段数据所在的目录
+   * @param si   描述某个段的提交信息
+   * @param context
+   * @throws IOException
+   */
   SegmentCoreReaders(Directory dir, SegmentCommitInfo si, IOContext context) throws IOException {
 
+    // 获取该段对应的索引文件结构
     final Codec codec = si.info.getCodec();
     final Directory cfsDir; // confusing name: if (cfs) it's the cfsdir, otherwise it's the segment's directory.
     boolean success = false;
     
     try {
+      // 代表生成了 复合模式的文件
       if (si.info.getUseCompoundFile()) {
         cfsDir = cfsReader = codec.compoundFormat().getCompoundReader(dir, si.info, context);
       } else {
@@ -106,26 +123,31 @@ final class SegmentCoreReaders {
 
       segment = si.info.name;
 
+      // 读取该段下 所有field的信息
       coreFieldInfos = codec.fieldInfosFormat().read(cfsDir, si.info, "", context);
       
       final SegmentReadState segmentReadState = new SegmentReadState(cfsDir, si.info, coreFieldInfos, context);
       final PostingsFormat format = codec.postingsFormat();
       // Ask codec for its Fields
+      // 该对象可以读取 每个field 下的position/payload 等信息
       fields = format.fieldsProducer(segmentReadState);
       assert fields != null;
       // ask codec for its Norms: 
       // TODO: since we don't write any norms file if there are no norms,
       // kinda jaky to assume the codec handles the case of no norms file at all gracefully?!
 
+      // 如果还包含标准因子 还需要生成对应的 reader 对象
       if (coreFieldInfos.hasNorms()) {
         normsProducer = codec.normsFormat().normsProducer(segmentReadState);
         assert normsProducer != null;
       } else {
         normsProducer = null;
       }
-  
+
+      // 获取存储 field 信息的索引文件输入流
       fieldsReaderOrig = si.info.getCodec().storedFieldsFormat().fieldsReader(cfsDir, si.info, coreFieldInfos, context);
 
+      // 如果包含词向量 还要再生成读取对象
       if (coreFieldInfos.hasVectors()) { // open term vector files only as needed
         termVectorsReaderOrig = si.info.getCodec().termVectorsFormat().vectorsReader(cfsDir, si.info, coreFieldInfos, context);
       } else {

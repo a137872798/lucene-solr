@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Manages reference counting for a given object. Extensions can override
  * {@link #release()} to do custom logic when reference counting hits 0.
+ * 为对象 包装一层引用计数
  */
 public class RefCount<T> {
   

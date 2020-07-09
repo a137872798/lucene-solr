@@ -62,7 +62,16 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
   private final int maxDoc;
   private int version = -1;
 
-  /** expert: instantiates a new reader */
+  /**
+   * expert: instantiates a new reader
+   * 负责读取某个field 下docValue 信息
+   * @param state
+   * @param dataCodec
+   * @param dataExtension
+   * @param metaCodec
+   * @param metaExtension
+   * @throws IOException
+   */
   Lucene80DocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
     String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
     this.maxDoc = state.segmentInfo.maxDoc();

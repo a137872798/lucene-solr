@@ -62,10 +62,20 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
   private static final int VERSION_START = 0;
   private static final int VERSION_CURRENT = VERSION_START;
 
+  /**
+   * 获取当前还有效的 doc位图
+   * @param dir
+   * @param info
+   * @param context
+   * @return
+   * @throws IOException
+   */
   @Override
   public Bits readLiveDocs(Directory dir, SegmentCommitInfo info, IOContext context) throws IOException {
     long gen = info.getDelGen();
+    // 每一个 delGen 代表一次删除动作 同时也就产生了 本次还live的doc
     String name = IndexFileNames.fileNameFromGeneration(info.info.name, EXTENSION, gen);
+    // 记录该段下最大的doc 编号
     final int length = info.info.maxDoc();
     try (ChecksumIndexInput input = dir.openChecksumInput(name, context)) {
       Throwable priorE = null;
@@ -74,6 +84,7 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
                                      info.info.getId(), Long.toString(gen, Character.MAX_RADIX));
         long data[] = new long[FixedBitSet.bits2words(length)];
         for (int i = 0; i < data.length; i++) {
+          // 看来 liv 文件是直接将还存活的doc 生成位图 然后按long 存储
           data[i] = input.readLong();
         }
         FixedBitSet fbs = new FixedBitSet(data, length);

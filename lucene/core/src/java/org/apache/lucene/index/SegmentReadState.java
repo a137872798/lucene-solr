@@ -27,14 +27,17 @@ import org.apache.lucene.store.IOContext;
  * 该对象 存储了一些读取segment 相关的参数
  */
 public class SegmentReadState {
-  /** {@link Directory} where this segment is read from. */ 
+  /** {@link Directory} where this segment is read from. */
+  // 该段信息从哪个目录读取
   public final Directory directory;
 
   /** {@link SegmentInfo} describing this segment. */
+  // 该段本身的信息
   public final SegmentInfo segmentInfo;
 
   /** {@link FieldInfos} describing all fields in this
    *  segment. */
+  // 该段下所有的field信息
   public final FieldInfos fieldInfos;
 
   /** {@link IOContext} to pass to {@link

@@ -195,7 +195,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
          * @param ignoreCurrentFormat - ignore the existing format attributes.
          * @return DocValuesConsumer for the field.
          * @throws IOException if there is a low-level IO error
-         * docValue 以field 为单位进行存储
+         *                     docValue 以field 为单位进行存储
          */
         private DocValuesConsumer getInstance(FieldInfo field, boolean ignoreCurrentFormat) throws IOException {
             DocValuesFormat format = null;
@@ -292,6 +292,9 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
         }
     }
 
+    /**
+     * 该对象是一个总控对象  内部数据 以field 为单位 存储了读取对应docValue的reader 对象
+     */
     private class FieldsReader extends DocValuesProducer {
 
         private final Map<String, DocValuesProducer> fields = new TreeMap<>();
@@ -321,6 +324,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             boolean success = false;
             try {
                 // Read field name -> format name
+                // 根据本次 包含的所有field  添加映射关系
                 for (FieldInfo fi : readState.fieldInfos) {
                     if (fi.getDocValuesType() != DocValuesType.NONE) {
                         final String fieldName = fi.name;
@@ -331,6 +335,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
                             if (suffix == null) {
                                 throw new IllegalStateException("missing attribute: " + PER_FIELD_SUFFIX_KEY + " for field: " + fieldName);
                             }
+                            // 根据索引文件格式信息找到 索引文件 并读取数据
                             DocValuesFormat format = DocValuesFormat.forName(formatName);
                             String segmentSuffix = getFullSegmentSuffix(readState.segmentSuffix, getSuffix(formatName, suffix));
                             if (!formats.containsKey(segmentSuffix)) {

@@ -50,6 +50,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   private final long hardMaxBytesPerDWPT;
 
   private long activeBytes = 0;
+  /**
+   * 记录当前待刷盘的 bytes数
+   */
   private volatile long flushBytes = 0;
   private volatile int numPending = 0;
   private int numDocsSinceStalled = 0; // only with assert
@@ -259,11 +262,13 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
   synchronized void doAfterFlush(DocumentsWriterPerThread dwpt) {
     assert flushingWriters.contains(dwpt);
     try {
+      // 因为本次刷盘任务已经完成了 所以从待处理队列中移除本元素
       flushingWriters.remove(dwpt);
       flushBytes -= dwpt.getLastCommittedBytesUsed();
       assert assertMemory();
     } finally {
       try {
+        // 检测当前是否可以解除对 写索引线程的阻塞
         updateStallState();
       } finally {
         notifyAll();
