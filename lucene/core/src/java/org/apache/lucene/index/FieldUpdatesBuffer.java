@@ -401,9 +401,12 @@ final class FieldUpdatesBuffer {
          * 因为 sortState 存储的是  BytesRefArray 的 偏移量信息 所以还是要借助该对象才能获取想要的数据
          */
         private final BytesRefArray.IndexedBytesRefIterator termValuesIterator;
+        /**
+         * 这个是只有生成了 termSortState 才会初始化的迭代器
+         */
         private final BytesRefArray.IndexedBytesRefIterator lookAheadTermIterator;
         /**
-         * 上面的是 term的迭代器      当更新的值 是二进制流的时候    初始化该对象 (对更新值的迭代器)
+         * 以插入顺序迭代 term
          */
         private final BytesRefIterator byteValuesIterator;
 
@@ -420,7 +423,6 @@ final class FieldUpdatesBuffer {
             // 通过 sortState 生成迭代器对象    如果没有设置termSortState  按照插入顺序排序
             this.termValuesIterator = termValues.iterator(termSortState);
             this.lookAheadTermIterator = termSortState != null ? termValues.iterator(termSortState) : null;
-            // 迭代该对象时 顺序与  termValuesIterator 是不一致的
             this.byteValuesIterator = isNumeric ? null : byteValues.iterator();
             updatesWithValue = hasValues == null ? new Bits.MatchAllBits(numUpdates) : hasValues;
         }
@@ -465,6 +467,7 @@ final class FieldUpdatesBuffer {
         }
 
         BytesRef nextTerm() throws IOException {
+            // 这里是丢弃 相同的term
             if (lookAheadTermIterator != null) {
                 final BytesRef lastTerm = bufferedUpdate.termValue;
                 BytesRef lookAheadTerm;

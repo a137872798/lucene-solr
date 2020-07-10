@@ -130,7 +130,7 @@ final class DocumentsWriter implements Closeable, Accountable {
   private final AtomicInteger numDocsInRAM = new AtomicInteger(0);
 
   // TODO: cut over to BytesRefHash in BufferedDeletes
-  // 这里记录了所有 term的变化信息
+  // 这里记录了所有 待删除/更新的 node信息
   volatile DocumentsWriterDeleteQueue deleteQueue;
 
   /**
@@ -460,9 +460,7 @@ final class DocumentsWriter implements Closeable, Accountable {
     ensureOpen();
     boolean hasEvents = false;
 
-    // 应该是这样 刷盘和 继续通过docWriter往内存中写入数据 本身是可以同时进行的 但是有一个上限 一旦刷盘的数据量很大 这时会选择阻塞docWriter线程
-    // 此时docWriter已经被标记成不可用
-    // 或者此时存在等待刷盘的线程  且在改动索引前是否要检测是否有待刷盘的线程
+    // 已经处于暂停状态 就代表需要执行刷盘       或者待刷盘数量达到一定值 即使没有触发暂停状态 也会执行刷盘
     if (flushControl.anyStalledThreads() || (flushControl.numQueuedFlushes() > 0 && config.checkPendingFlushOnUpdate)) {
       // Help out flushing any queued DWPTs so we can un-stall:
       do {
@@ -504,7 +502,7 @@ final class DocumentsWriter implements Closeable, Accountable {
    */
   long updateDocuments(final Iterable<? extends Iterable<? extends IndexableField>> docs,
                        final DocumentsWriterDeleteQueue.Node<?> delNode) throws IOException {
-    // 在准备阶段会将所有 待flush的任务全部执行  同时返回是否触发了监听器
+    // 首先检测是否有待刷盘的任务  如果开启了自动刷盘功能 那么检测到需要执行刷盘操作时 就会触发刷盘
     boolean hasEvents = preUpdate();
 
     // 申请一个 perThread 该对象负责解析doc 并生成便于写入索引文件的格式
@@ -679,6 +677,10 @@ final class DocumentsWriter implements Closeable, Accountable {
     return deleteQueue.getNextSequenceNumber();
   }
 
+  /**
+   * 更新内部的队列
+   * @param newQueue
+   */
   synchronized void resetDeleteQueue(DocumentsWriterDeleteQueue newQueue) {
     assert deleteQueue.isAdvanced();
     assert newQueue.isAdvanced() == false;

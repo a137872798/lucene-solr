@@ -77,9 +77,16 @@ final class FrozenBufferedUpdates {
   /** How many total documents were deleted/updated. */
   // 增加删除的doc总数
   public long totalDelCount;
+
+  /**
+   * 统计总计有多少次更新动作
+   */
   private final int fieldUpdatesCount;
   
   final int bytesUsed;
+  /**
+   * 统计总计有多少次按照term删除
+   */
   final int numTermDeletes;
 
   /**
@@ -128,7 +135,7 @@ final class FrozenBufferedUpdates {
     // that Term only once, applying the update to all fields that still need to be
     // updated.
 
-    // 冻结内部的 fieldUpdateBuffer  该对象记录了 由于某个field发生变化 导致的 doc更新
+    // 冻结内部的 fieldUpdateBuffer
     updates.fieldUpdates.values().forEach(FieldUpdatesBuffer::finish);
     this.fieldUpdates = Map.copyOf(updates.fieldUpdates);
     this.fieldUpdatesCount = updates.numFieldUpdates.get();
@@ -393,7 +400,6 @@ final class FrozenBufferedUpdates {
       for (int i = 0; i < deleteQueries.length; i++) {
         Query query = deleteQueries[i];
         int limit;
-        // 这个limit 是什么鬼
         if (delGen == segState.delGen) {
           assert privateSegment != null;
           limit = deleteQueryLimits[i];
@@ -444,7 +450,7 @@ final class FrozenBufferedUpdates {
   }
 
   /**
-   * 处理 deleteTerms 的数据 记录需要删除的doc
+   * 处理 deleteTerms 的数据 找到所有匹配的doc
    * @param segStates
    * @return
    * @throws IOException
@@ -475,7 +481,7 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
-      // 包含需要删除的 term 的所有 field 组合成的迭代器
+      // 包含所有需要删除的 term 并且可以读取到 term关联的field
       FieldTermIterator iter = deleteTerms.iterator();
       BytesRef delTerm;
       // reader 可以读取索引文档找到多个 field      而该迭代器对象通过传入 field 可以读取到该field下所有的term

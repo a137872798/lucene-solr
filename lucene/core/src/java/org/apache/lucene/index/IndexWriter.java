@@ -1772,11 +1772,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * for this operation
    *
    * @param term the term to identify the document(s) to be
-   * deleted
-   * @param doc the document to be added
+   * deleted   代表包含该term的doc在稍后都会被删除
+   * @param doc the document to be added   本次添加的doc
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
-   * 删除包含 term的文档 之后将本次的文档数据写入
    */
   public long updateDocument(Term term, Iterable<? extends IndexableField> doc) throws IOException {
     return updateDocuments(term == null ? null : DocumentsWriterDeleteQueue.newNode(term), List.of(doc));

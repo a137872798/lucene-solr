@@ -260,7 +260,7 @@ public final class BytesRefArray implements SortableBytesRefArray {
       public BytesRef next() {
         ++pos;
         if (pos < size) {
-          // 当 indices 为 null 时 使用自然顺序
+          // 当 indices 为 null 时 使用插入的顺序 否则按照sortState内的顺序
           ord = indices == null ? pos : indices[pos];
           setBytesRef(spare, result, ord);
           return result;

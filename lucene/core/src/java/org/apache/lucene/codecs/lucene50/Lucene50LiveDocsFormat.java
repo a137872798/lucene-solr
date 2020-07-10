@@ -44,7 +44,7 @@ import org.apache.lucene.util.FixedBitSet;
  *   <li>SegmentHeader --&gt; {@link CodecUtil#writeIndexHeader IndexHeader}</li>
  *   <li>Bits --&gt; &lt;{@link DataOutput#writeLong Int64}&gt; <sup>LongCount</sup></li>
  * </ul>
- * 用于描述 哪些文件还存在 哪些文件已经被删除了
+ * 对应的索引文件中记录了 哪些doc还存活 以及当前有多少待删除的doc
  */
 public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
   
@@ -102,13 +102,23 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
     throw new AssertionError();
   }
 
+  /**
+   * @param bits   记录当前还有哪些doc 存活的位图
+   * @param dir    索引文件写入的目标目录
+   * @param info
+   * @param newDelCount   记录此时有多少待删除的doc
+   * @param context
+   * @throws IOException
+   */
   @Override
   public void writeLiveDocs(Bits bits, Directory dir, SegmentCommitInfo info, int newDelCount, IOContext context) throws IOException {
     long gen = info.getNextDelGen();
+    // 索引文件是以段为单位的  记录某个段 的哪个 gen 对应的liveDoc 和 delCount
     String name = IndexFileNames.fileNameFromGeneration(info.info.name, EXTENSION, gen);
     int delCount = 0;
     try (IndexOutput output = dir.createOutput(name, context)) {
       CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT, info.info.getId(), Long.toString(gen, Character.MAX_RADIX));
+      // 位图总共有多少个long
       final int longCount = FixedBitSet.bits2words(bits.length());
       for (int i = 0; i < longCount; ++i) {
         long currentBits = 0;
@@ -119,6 +129,7 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
             delCount += 1;
           }
         }
+        // 这里直接写入 long值  对应的就是位图中某个 block  此时long中已经记录了哪些doc是存活的
         output.writeLong(currentBits);
       }
       CodecUtil.writeFooter(output);

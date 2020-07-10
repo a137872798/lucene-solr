@@ -487,7 +487,7 @@ final class DocumentsWriterPerThread {
      * Prepares this DWPT for flushing. This method will freeze and return the
      * {@link DocumentsWriterDeleteQueue}s global buffer and apply all pending
      * deletes to this DWPT.
-     * 通过之前保存的  更新数据 生成一个最终的更新对象  这样可以避免小而多的更新操作
+     * 读取这段时间内 该segment 下所有的
      */
     FrozenBufferedUpdates prepareFlush() {
         assert numDocsInRAM > 0;

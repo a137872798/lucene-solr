@@ -30,7 +30,7 @@ import org.apache.lucene.util.IOUtils;
 
 /**
  * This class handles accounting and applying pending deletes for live segment readers
- * 携带了 待删除的数据信息
+ * 存储待删除的数据信息   在合适的时机 通过FrozenBufferedUpdates 内部存储的 deleteTerm deleteQuery docValueUpdate 找到关联的doc 并填充到在这个对象中
  */
 class PendingDeletes {
 
@@ -39,16 +39,21 @@ class PendingDeletes {
    */
   protected final SegmentCommitInfo info;
   // Read-only live docs, null until live docs are initialized or if all docs are alive
-  // 未删除的doc 位图对象
+  // 用于描述此时还存活的doc
   private Bits liveDocs;
   // Writeable live docs, null if this instance is not ready to accept writes, in which
   // case getMutableBits needs to be called
+  // 每次在标记哪些doc不可用前 都先操作这个位图
   private FixedBitSet writeableLiveDocs;
 
   /**
    * 当前有多少待删除的doc
    */
   protected int pendingDeleteCount;
+
+  /**
+   * liveDocs 是否被初始化
+   */
   boolean liveDocsInitialized;
 
   PendingDeletes(SegmentReader reader, SegmentCommitInfo info) {
@@ -83,6 +88,7 @@ class PendingDeletes {
       if (liveDocs != null) {
         writeableLiveDocs = FixedBitSet.copyOf(liveDocs);
       } else {
+        // 在liveDocs 还没有初始化的时候 认为所有位都已经被占用
         writeableLiveDocs = new FixedBitSet(info.info.maxDoc());
         writeableLiveDocs.set(0, info.info.maxDoc());
       }
@@ -99,6 +105,7 @@ class PendingDeletes {
    */
   boolean delete(int docID) throws IOException {
     assert info.info.maxDoc() > 0;
+    // 每次要修改的都是 writableBitSet
     FixedBitSet mutableBits = getMutableBits();
     assert mutableBits != null;
     assert docID >= 0 && docID < mutableBits.length() : "out of bounds: docid=" + docID + " liveDocsLength=" + mutableBits.length() + " seg=" + info.info.name + " maxDoc=" + info.info.maxDoc();
@@ -185,8 +192,10 @@ class PendingDeletes {
 
   /**
    * Writes the live docs to disk and returns <code>true</code> if any new docs were written.
+   * 将标记此时还有哪些 doc存活的信息写入到索引文件
    */
   boolean writeLiveDocs(Directory dir) throws IOException {
+    // 此时没有待删除的doc 就不需要写入数据了
     if (pendingDeleteCount == 0) {
       return false;
     }
@@ -213,9 +222,11 @@ class PendingDeletes {
       if (!success) {
         // Advance only the nextWriteDelGen so that a 2nd
         // attempt to write will write to a new file
+        // 更新了 gen后 写入的索引文件也会改变
         info.advanceNextWriteDelGen();
 
         // Delete any partially created file(s):
+        // 删除刚才写入失败的文件
         for (String fileName : trackingDir.getCreatedFiles()) {
           IOUtils.deleteFilesIgnoringExceptions(dir, fileName);
         }
@@ -226,6 +237,7 @@ class PendingDeletes {
     // then info's delGen remains pointing to the previous
     // (successfully written) del docs:
     info.advanceDelGen();
+    // 更新 commitInfo的删除数量
     info.setDelCount(info.getDelCount() + pendingDeleteCount);
     dropChanges();
     return true;
@@ -233,6 +245,7 @@ class PendingDeletes {
 
   /**
    * Returns <code>true</code> iff the segment represented by this {@link PendingDeletes} is fully deleted
+   * fully delete 就代表此时所有的doc 都已经被删除了
    */
   boolean isFullyDeleted(IOSupplier<CodecReader> readerIOSupplier) throws IOException {
     return getDelCount() == info.info.maxDoc();

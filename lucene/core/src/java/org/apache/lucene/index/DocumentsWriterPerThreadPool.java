@@ -86,6 +86,9 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
     takenWriterPermits++;
   }
 
+  /**
+   * 与上面对应
+   */
   synchronized void unlockNewWriters() {
     assert takenWriterPermits > 0;
     takenWriterPermits--;
@@ -187,7 +190,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
   /**
    * Removes the given DWPT from the pool unless it's already been removed before.
    * @return <code>true</code> iff the given DWPT has been removed. Otherwise <code>false</code>
-   * 释放目标对象
+   * perThread对象从pool中移除
    */
   synchronized boolean checkout(DocumentsWriterPerThread perThread) {
    assert perThread.isHeldByCurrentThread();
