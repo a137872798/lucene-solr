@@ -94,6 +94,9 @@ final class FrozenBufferedUpdates {
    */
   private long delGen = -1; // assigned by BufferedUpdatesStream once pushed
 
+  /**
+   * 代表这次更新 是关于这个段
+   */
   final SegmentCommitInfo privateSegment;  // non-null iff this frozen packet represents 
                                    // a segment private deletes. in that case is should
                                    // only have Queries and doc values updates
@@ -184,8 +187,9 @@ final class FrozenBufferedUpdates {
   }
 
   /** Applies pending delete-by-term, delete-by-query and doc values updates to all segments in the index, returning
-   *  the number of new deleted or updated documents. */
-  // 处理之前待删除的 doc
+   *  the number of new deleted or updated documents.
+   * @param segStates 每个段对应一个该对象 内部包含了可以读取该段所有索引数据的reader对象
+   */
   long apply(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
     assert applyLock.isHeldByCurrentThread();
     if (delGen == -1) {

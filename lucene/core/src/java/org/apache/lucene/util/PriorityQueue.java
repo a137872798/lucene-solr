@@ -34,6 +34,7 @@ import java.util.function.Supplier;
  * <b>NOTE</b>: Iteration order is not specified.
  *
  * @lucene.internal
+ * 看来是个最小堆
  */
 public abstract class PriorityQueue<T> implements Iterable<T> {
   private int size = 0;

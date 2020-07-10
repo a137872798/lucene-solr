@@ -131,7 +131,10 @@ public final class SegmentReader extends CodecReader {
 
   /** Create new SegmentReader sharing core from a previous
    *  SegmentReader and using the provided liveDocs, and recording
-   *  whether those liveDocs were carried in ram (isNRT=true). */
+   *  whether those liveDocs were carried in ram (isNRT=true).
+   *
+   *  创建一个新的 reader对象 内部大量属性使用传入的 sr
+   */
   SegmentReader(SegmentCommitInfo si, SegmentReader sr, Bits liveDocs, Bits hardLiveDocs, int numDocs, boolean isNRT) throws IOException {
     if (numDocs > si.info.maxDoc()) {
       throw new IllegalArgumentException("numDocs=" + numDocs + " but maxDoc=" + si.info.maxDoc());
@@ -142,6 +145,7 @@ public final class SegmentReader extends CodecReader {
     this.si = si.clone();
     this.originalSi = si;
     this.metaData = sr.getMetaData();
+    // 这里没有使用 sr的位图对象 而是使用外部传入的
     this.liveDocs = liveDocs;
     this.hardLiveDocs = hardLiveDocs;
     assert assertLiveDocs(isNRT, hardLiveDocs, liveDocs);
@@ -153,6 +157,7 @@ public final class SegmentReader extends CodecReader {
 
     boolean success = false;
     try {
+      // 如果fieldInfo 没有变化 使用之前读取到的   否则重新从索引文件中读取
       fieldInfos = initFieldInfos();
       docValuesProducer = initDocValuesProducer();
       success = true;

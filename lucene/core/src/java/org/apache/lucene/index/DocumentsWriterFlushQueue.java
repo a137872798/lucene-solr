@@ -88,7 +88,7 @@ final class DocumentsWriterFlushQueue {
     boolean success = false;
     try {
       // prepare flush freezes the global deletes - do in synced block!
-      // prepareFlush 内部存储了一系列的数据
+      // FlushTicket  还携带了 本次刷盘同时会删除/更新的doc   主要体现在 FrozenBufferedUpdates 这个类中
       final FlushTicket ticket = new FlushTicket(dwpt.prepareFlush(), true);
       queue.add(ticket);
       success = true;
@@ -206,7 +206,7 @@ final class DocumentsWriterFlushQueue {
    */
   static final class FlushTicket {
     /**
-     * 该对象内部 存储了 多次term的更新信息  现在要将这些变化持久化
+     * 本次刷盘涉及到的 删除/更新 doc
      */
     private final FrozenBufferedUpdates frozenUpdates;
     private final boolean hasSegment;

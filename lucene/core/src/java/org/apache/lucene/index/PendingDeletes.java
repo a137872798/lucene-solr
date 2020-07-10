@@ -30,16 +30,17 @@ import org.apache.lucene.util.IOUtils;
 
 /**
  * This class handles accounting and applying pending deletes for live segment readers
- * 存储待删除的数据信息   在合适的时机 通过FrozenBufferedUpdates 内部存储的 deleteTerm deleteQuery docValueUpdate 找到关联的doc 并填充到在这个对象中
+ * 记录某个段总计删除了多少doc
  */
 class PendingDeletes {
 
+
   /**
-   * 代表本次删除动作是 针对哪个段信息
+   * 记录的是针对哪个段的信息
    */
   protected final SegmentCommitInfo info;
   // Read-only live docs, null until live docs are initialized or if all docs are alive
-  // 用于描述此时还存活的doc
+  // 描述此时还存在的 docId 位图   该对象未被初始化时默认所有doc都存活
   private Bits liveDocs;
   // Writeable live docs, null if this instance is not ready to accept writes, in which
   // case getMutableBits needs to be called
@@ -88,7 +89,7 @@ class PendingDeletes {
       if (liveDocs != null) {
         writeableLiveDocs = FixedBitSet.copyOf(liveDocs);
       } else {
-        // 在liveDocs 还没有初始化的时候 认为所有位都已经被占用
+        // 在liveDocs 还没有初始化的时候 认为所有位都已经被占用 (当前所有doc都还存活)
         writeableLiveDocs = new FixedBitSet(info.info.maxDoc());
         writeableLiveDocs.set(0, info.info.maxDoc());
       }
@@ -195,7 +196,7 @@ class PendingDeletes {
    * 将标记此时还有哪些 doc存活的信息写入到索引文件
    */
   boolean writeLiveDocs(Directory dir) throws IOException {
-    // 此时没有待删除的doc 就不需要写入数据了
+    // 只有此时存在未删除的doc时 才允许写入索引文件 否则没有意义
     if (pendingDeleteCount == 0) {
       return false;
     }

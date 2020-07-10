@@ -30,6 +30,7 @@ import org.apache.lucene.util.packed.PagedMutable;
  * {@link BinaryDocValuesField}.
  * 
  * @lucene.experimental
+ * 这里描述的是 更新了某些二进制值类型的doc对象
  */
 final class BinaryDocValuesFieldUpdates extends DocValuesFieldUpdates {
   

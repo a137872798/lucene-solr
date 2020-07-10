@@ -487,7 +487,7 @@ final class DocumentsWriterPerThread {
      * Prepares this DWPT for flushing. This method will freeze and return the
      * {@link DocumentsWriterDeleteQueue}s global buffer and apply all pending
      * deletes to this DWPT.
-     * 读取这段时间内 该segment 下所有的
+     * 读取这段时间内 该segment 下所有的删除/更新信息
      */
     FrozenBufferedUpdates prepareFlush() {
         assert numDocsInRAM > 0;
@@ -587,6 +587,7 @@ final class DocumentsWriterPerThread {
                 infoStream.message("DWPT", "flushed codec=" + codec);
             }
 
+            // 对应本 preThread 记录的所有需要删除/更新的doc
             final BufferedUpdates segmentDeletes;
             // 此时没有待更新的数据 清空队列
             if (pendingUpdates.deleteQueries.isEmpty() && pendingUpdates.numFieldUpdates.get() == 0) {

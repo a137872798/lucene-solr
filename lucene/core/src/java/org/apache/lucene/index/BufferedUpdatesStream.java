@@ -47,10 +47,12 @@ import org.apache.lucene.util.InfoStream;
  * merged segment is also assigned a generation, so we can
  * track which BufferedDeletes packets to apply to any given
  * segment. */
-// 该对象内部存储了 多个描述数据更新的 update 对象
+// 该对象内部填充了多个删除/更新doc的信息
 final class BufferedUpdatesStream implements Accountable {
 
-  // 这里存储了一组已经冻结的 更新对象  冻结的意思就是不会再为这些term 增加新的更新动作了(改动了)
+  /**
+   * 待执行的改动任务
+   */
   private final Set<FrozenBufferedUpdates> updates = new HashSet<>();
 
   // Starts at 1 so that SegmentInfos that have never had
@@ -59,7 +61,7 @@ final class BufferedUpdatesStream implements Accountable {
   // 原子递增 用于设置每个 update的 delGen
   private long nextGen = 1;
   /**
-   * 代表这个段已经处理完成了
+   * 存储了已经处理了 多少delGen信息 的对象
    */
   private final FinishedSegments finishedSegments;
   /**
@@ -78,8 +80,7 @@ final class BufferedUpdatesStream implements Accountable {
   }
 
   // Appends a new packet of buffered deletes to the stream,
-  // setting its generation:
-  // 将某组已经冻结的更新数据填充到该对象内部
+  // setting its generation:   追加一个删除/更新 doc的对象
   synchronized long push(FrozenBufferedUpdates packet) {
     /*
      * The insert operation must be atomic. If we let threads increment the gen
@@ -104,6 +105,10 @@ final class BufferedUpdatesStream implements Accountable {
     return packet.delGen();
   }
 
+  /**
+   * 获取当前待处理的  更新/删除 doc 任务
+   * @return
+   */
   synchronized int getPendingUpdatesCount() {
     return updates.size();
   }
@@ -152,6 +157,7 @@ final class BufferedUpdatesStream implements Accountable {
   /** Waits for all in-flight packets, which are already being resolved concurrently
    *  by indexing threads, to finish.  Returns true if there were any 
    *  new deletes or updates.  This is called for refresh, commit. */
+  // 阻塞并等待所有的 更新任务都完成
   void waitApplyAll(IndexWriter writer) throws IOException {
     assert Thread.holdsLock(writer) == false;
     Set<FrozenBufferedUpdates> waitFor;
@@ -174,13 +180,14 @@ final class BufferedUpdatesStream implements Accountable {
   /** Called by indexing threads once they are fully done resolving all deletes for the provided
    *  delGen.  We track the completed delGens and record the maximum delGen for which all prior
    *  delGens, inclusive, are completed, so that it's safe for doc values updates to apply and write. */
-
+  // 代表某个更新任务已经执行完成
   synchronized void finished(FrozenBufferedUpdates packet) {
     // TODO: would be a bit more memory efficient to track this per-segment, so when each segment writes it writes all packets finished for
     // it, rather than only recording here, across all segments.  But, more complex code, and more CPU, and maybe not so much impact in
     // practice?
     assert packet.applied.getCount() == 1: "packet=" + packet;
 
+    // 因为已经处理完毕 此时允许其他线程持有该对象了
     packet.applied.countDown();
 
     updates.remove(packet);
@@ -199,7 +206,9 @@ final class BufferedUpdatesStream implements Accountable {
 
   /** Waits only for those in-flight packets that apply to these merge segments.  This is
    *  called when a merge needs to finish and must ensure all deletes to the merging
-   *  segments are resolved. */
+   *  segments are resolved.
+   * @param mergeInfos
+   */
   void waitApplyForMerge(List<SegmentCommitInfo> mergeInfos, IndexWriter writer) throws IOException {
     long maxDelGen = Long.MIN_VALUE;
     for (SegmentCommitInfo info : mergeInfos) {
@@ -208,6 +217,7 @@ final class BufferedUpdatesStream implements Accountable {
 
     Set<FrozenBufferedUpdates> waitFor = new HashSet<>();
     synchronized (this) {
+      // 这里将 delGen 小于 maxDelGen 的都加入到容器中 并执行更新操作
       for (FrozenBufferedUpdates packet : updates) {
         if (packet.delGen() <= maxDelGen) {
           // We must wait for this packet before finishing the merge because its
@@ -224,6 +234,12 @@ final class BufferedUpdatesStream implements Accountable {
     waitApply(waitFor, writer);
   }
 
+  /**
+   * 使用该 writer 处理所有待执行的 删除/更新节点
+   * @param waitFor
+   * @param writer
+   * @throws IOException
+   */
   private void waitApply(Set<FrozenBufferedUpdates> waitFor, IndexWriter writer) throws IOException {
 
     long startNS = System.nanoTime();
@@ -243,10 +259,12 @@ final class BufferedUpdatesStream implements Accountable {
 
     ArrayList<FrozenBufferedUpdates> pendingPackets = new ArrayList<>();
     long totalDelCount = 0;
+    // 遍历每个 更新对象
     for (FrozenBufferedUpdates packet : waitFor) {
       // Frozen packets are now resolved, concurrently, by the indexing threads that
       // create them, by adding a DocumentsWriter.ResolveUpdatesEvent to the events queue,
       // but if we get here and the packet is not yet resolved, we resolve it now ourselves:
+      // 代表抢占锁失败 稍后执行
       if (writer.tryApply(packet) == false) {
         // if somebody else is currently applying it - move on to the next one and force apply below
         pendingPackets.add(packet);
@@ -255,6 +273,7 @@ final class BufferedUpdatesStream implements Accountable {
     }
     for (FrozenBufferedUpdates packet : pendingPackets) {
       // now block on all the packets that were concurrently applied to ensure they are due before we continue.
+      // 到了这里还是要强制执行
       writer.forceApply(packet);
     }
 
@@ -273,11 +292,13 @@ final class BufferedUpdatesStream implements Accountable {
   }
 
   /** Holds all per-segment internal state used while resolving deletions. */
-  // 描述某个段的状态 (在delete 相关的逻辑中使用)
   static final class SegmentState implements Closeable {
     final long delGen;
     final ReadersAndUpdates rld;
     final SegmentReader reader;
+    /**
+     * 该对象在初始化时  segmentInfo下记录的已删除数量
+     */
     final int startDelCount;
     private final IOUtils.IOConsumer<ReadersAndUpdates> onClose;
 
@@ -287,7 +308,7 @@ final class BufferedUpdatesStream implements Accountable {
 
     /**
      *
-     * @param rld  该对象内部组合了 SegmentReader  segmentCommitInfo 等信息
+     * @param rld  该对象内部包含了 读取某个段相关所有索引文件的reader   以及以field为单位 多个 docValueUpdate 对象
      * @param onClose  close 的钩子
      * @param info
      * @throws IOException
@@ -330,12 +351,12 @@ final class BufferedUpdatesStream implements Accountable {
   private static class FinishedSegments {
 
     /** Largest del gen, inclusive, for which all prior packets have finished applying. */
-    // 记录最后一个 delGen
+    // 记录最后一个 执行的update对象所在的delGen
     private long completedDelGen;
 
     /** This lets us track the "holes" in the current frontier of applying del
      *  gens; once the holes are filled in we can advance completedDelGen. */
-    // 存储了多个 gen
+    // 存储gen为多少的update任务完成了
     private final Set<Long> finishedDelGens = new HashSet<>();
 
     private final InfoStream infoStream;
@@ -349,14 +370,27 @@ final class BufferedUpdatesStream implements Accountable {
       completedDelGen = 0;
     }
 
+    /**
+     * 代表该 gen 对应的任务还在执行中
+     * @param delGen
+     * @return
+     */
     synchronized boolean stillRunning(long delGen) {
       return delGen > completedDelGen && finishedDelGens.contains(delGen) == false;
     }
 
+    /**
+     * 返回最近完成的一个 任务
+     * @return
+     */
     synchronized long getCompletedDelGen() {
       return completedDelGen;
     }
 
+    /**
+     * 代表某个更新任务已经执行完成了
+     * @param delGen
+     */
     synchronized void finishedSegment(long delGen) {
       finishedDelGens.add(delGen);
       while (true) {

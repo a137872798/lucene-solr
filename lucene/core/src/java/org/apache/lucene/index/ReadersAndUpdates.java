@@ -48,7 +48,7 @@ import org.apache.lucene.util.InfoStream;
 // Used by IndexWriter to hold open SegmentReaders (for
 // searching or merging), plus pending deletes and updates,
 // for a given segment
-// 该对象包含了 某个段的信息  以及读取该段下各种数据的reader
+// 统一管理   reader对象  以及 docValueUpdate 对象
 final class ReadersAndUpdates {
   // Not final because we replace (clone) when we need to
   // change it and it's been shared:
@@ -59,10 +59,12 @@ final class ReadersAndUpdates {
   private final AtomicInteger refCount = new AtomicInteger(1);
 
   // Set once (null, and then maybe set, and never set again):
+  // 内部整合了各种reader 对象
   private SegmentReader reader;
 
   // How many further deletions we've done against
   // liveDocs vs when we loaded it or last wrote it:
+  // 记录该段有关删除doc的信息
   private final PendingDeletes pendingDeletes;
 
   // the major version this index was created with
@@ -74,10 +76,12 @@ final class ReadersAndUpdates {
   // updates with mergingNumericUpdates.
   // That way, when the segment is done merging, IndexWriter can apply the
   // updates on the merged segment too.
+  // 代表此时正在merge中
   private boolean isMerging = false;
 
   // Holds resolved (to docIDs) doc values updates that have not yet been
   // written to the index
+  // 记录了某个域下更新了哪些docValue的容器
   private final Map<String,List<DocValuesFieldUpdates>> pendingDVUpdates = new HashMap<>();
 
   // Holds resolved (to docIDs) doc values updates that were resolved while
@@ -127,6 +131,10 @@ final class ReadersAndUpdates {
     return rc;
   }
 
+  /**
+   * 总计删除了多少doc  包含待删除的
+   * @return
+   */
   public synchronized int getDelCount() {
     return pendingDeletes.getDelCount();
   }
@@ -142,7 +150,9 @@ final class ReadersAndUpdates {
 
   /** Adds a new resolved (meaning it maps docIDs to new values) doc values packet.  We buffer these in RAM and write to disk when too much
    *  RAM is used or when a merge needs to kick off, or a commit/refresh. */
+  // 存储一个 记录了哪些doc会更新的 update 对象
   public synchronized void addDVUpdate(DocValuesFieldUpdates update) throws IOException {
+    // 更新已经完成就不需要添加到该对象中了
     if (update.getFinished() == false) {
       throw new IllegalArgumentException("call finish first");
     }
@@ -153,6 +163,7 @@ final class ReadersAndUpdates {
 
     fieldUpdates.add(update);
 
+    // TODO merge 相关的先忽略
     if (isMerging) {
       fieldUpdates = mergingDVUpdates.get(update.field);
       if (fieldUpdates == null) {
@@ -173,12 +184,13 @@ final class ReadersAndUpdates {
   
 
   /** Returns a {@link SegmentReader}. */
-  // 初始化内部的reader 对象
+  // 获取内部真正用于读取索引文件的对象
   public synchronized SegmentReader getReader(IOContext context) throws IOException {
     if (reader == null) {
       // We steal returned ref:
       // 这个reader 整合了读取各种field 数据的逻辑
       reader = new SegmentReader(info, indexCreatedVersionMajor, context);
+      // 数据读取完后 立即将当前还存活的 doc位图回填到 pendingDelete 对象中
       pendingDeletes.onNewReader(reader, info);
     }
 
@@ -189,11 +201,12 @@ final class ReadersAndUpdates {
 
   public synchronized void release(SegmentReader sr) throws IOException {
     assert info == sr.getOriginalSegmentInfo();
+    // 对应 getReader 中的 incRef 同时引用计数归0时 释放句柄
     sr.decRef();
   }
 
   /**
-   * 代表某个 doc 需要被删除
+   * 将删除信息同步到  pendingDelete中
    * @param docID
    * @return
    * @throws IOException
@@ -205,7 +218,7 @@ final class ReadersAndUpdates {
     return pendingDeletes.delete(docID);
   }
 
-  // NOTE: removes callers ref
+  // NOTE: removes callers ref    释放引用计数
   public synchronized void dropReaders() throws IOException {
     // TODO: can we somehow use IOUtils here...?  problem is
     // we are calling .decRef not .close)...
@@ -223,6 +236,7 @@ final class ReadersAndUpdates {
   /**
    * Returns a ref to a clone. NOTE: you should decRef() the reader when you're
    * done (ie do not call close()).
+   * TODO 这里有体现只读吗???
    */
   public synchronized SegmentReader getReadOnlyClone(IOContext context) throws IOException {
     if (reader == null) {
@@ -235,6 +249,7 @@ final class ReadersAndUpdates {
       return new SegmentReader(info, reader, liveDocs, pendingDeletes.getHardLiveDocs(), pendingDeletes.numDocs(), true);
     } else {
       // liveDocs == null and reader != null. That can only be if there are no deletes
+      // 这里就是正常的创建reader
       assert reader.getLiveDocs() == null;
       reader.incRef();
       return reader;
@@ -517,6 +532,15 @@ final class ReadersAndUpdates {
     return trackingDir.getCreatedFiles();
   }
 
+  /**
+   *
+   * @param dir   本次写入的目标目录
+   * @param fieldNumbers    fieldNum 映射容器
+   * @param maxDelGen   此时已经完成的update对象 对应的delGen
+   * @param infoStream
+   * @return
+   * @throws IOException
+   */
   public synchronized boolean writeFieldUpdates(Directory dir, FieldInfos.FieldNumbers fieldNumbers, long maxDelGen, InfoStream infoStream) throws IOException {
     long startTimeNS = System.nanoTime();
     final Map<Integer,Set<String>> newDVFiles = new HashMap<>();

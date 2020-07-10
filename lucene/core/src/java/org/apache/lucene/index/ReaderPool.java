@@ -44,14 +44,31 @@ import org.apache.lucene.util.InfoStream;
  *  reuses instances of the SegmentReaders in all these
  *  places if it is in "near real-time mode" (getReader()
  *  has been called on this instance). */
+// 该对象是一个reader池   因为reader对象的创建需要获取句柄 相对比较耗时   并且lucene 经常读取索引文件中的数据 所以就需要这个池对象
 final class ReaderPool implements Closeable {
 
+  /**
+   * 索引文件以段为单位存储 每个段下维护了多个doc->field->term 等信息
+   */
   private final Map<SegmentCommitInfo,ReadersAndUpdates> readerMap = new HashMap<>();
+
+  /**
+   * 读取的目录 以及 包装对象
+   */
   private final Directory directory;
   private final Directory originalDirectory;
+  /**
+   * 该对象维护了全局范围的  fieldName 与 fieldNum的映射关系
+   */
   private final FieldInfos.FieldNumbers fieldNumbers;
+  /**
+   * 获取此时已经完成的 update 的年代信息
+   */
   private final LongSupplier completedDelGenSupplier;
   private final InfoStream infoStream;
+  /**
+   * 本次 IndexWriter 涉及到的所有段信息
+   */
   private final SegmentInfos segmentInfos;
   private final String softDeletesField;
   // This is a "write once" variable (like the organic dye
@@ -122,7 +139,7 @@ final class ReaderPool implements Closeable {
   /**
    * Drops reader for the given {@link SegmentCommitInfo} if it's pooled
    * @return <code>true</code> if a reader is pooled
-   * 将某个段关联的reader终止  (关闭各种文件句柄)
+   * 代表不再需要读取某个 segment的信息了  不再维护对应的reader 对象
    */
   synchronized boolean drop(SegmentCommitInfo info) throws IOException {
     final ReadersAndUpdates rld = readerMap.get(info);
@@ -147,7 +164,8 @@ final class ReaderPool implements Closeable {
   }
 
   /**
-   * Returns <code>true</code> iff any of the buffered readers and updates has at least one pending delete
+   * Returns <code>true</code> if any of the buffered readers and updates has at least one pending delete
+   * 是否发生过任何删除动作  (可以是已经删除的数量 或者是pendingDelete的数量)
    */
   synchronized boolean anyDeletions() {
     for(ReadersAndUpdates rld : readerMap.values()) {
@@ -178,6 +196,7 @@ final class ReaderPool implements Closeable {
    * Releases the {@link ReadersAndUpdates}. This should only be called if the {@link #get(SegmentCommitInfo, boolean)}
    * is called with the create paramter set to true.
    * @return <code>true</code> if any files were written by this release call.
+   * 减少一次引用计数  应该就是某次使用rld结束  与 get() 对应
    */
   synchronized boolean release(ReadersAndUpdates rld, boolean assertInfoLive) throws IOException {
     boolean changed = false;
@@ -197,6 +216,7 @@ final class ReaderPool implements Closeable {
       if (poolReaders == false && rld.refCount() == 1 && readerMap.containsKey(rld.info)) {
         // This is the last ref to this RLD, and we're not
         // pooling, so remove it:
+        // 每次使用完 rld 对象后 都会就当前doc的存活情况生成一个 索引文件  TODO 这个到底是删除好了才调 还是删除前调???
         if (rld.writeLiveDocs(directory)) {
           // Make sure we only write del docs for a live segment:
           assert assertInfoLive == false || assertInfoIsLive(rld.info);
@@ -376,6 +396,7 @@ final class ReaderPool implements Closeable {
    * Obtain a ReadersAndLiveDocs instance from the
    * readerPool.  If create is true, you must later call
    * {@link #release(ReadersAndUpdates, boolean)}.
+   * 根据段信息 获取一个 读取段信息的对象
    */
   synchronized ReadersAndUpdates get(SegmentCommitInfo info, boolean create) {
     assert info.info.dir ==  originalDirectory: "info.dir=" + info.info.dir + " vs " + originalDirectory;
@@ -412,7 +433,7 @@ final class ReaderPool implements Closeable {
   }
 
   /**
-   * 生成一个 待删除 bean
+   * 创建一个描述某个段 删除doc信息的对象
    * @param info
    * @return
    */
