@@ -304,18 +304,33 @@ final class ReadersAndUpdates {
   public synchronized boolean writeLiveDocs(Directory dir) throws IOException {
     return pendingDeletes.writeLiveDocs(dir);
   }
-  
+
+  /**
+   * 处理 docValue 对象
+   * @param infos   此时对应某个段下 最新的fieldInfo (也就是已经按照docValue 更新过数值的docType)
+   * @param dir
+   * @param dvFormat
+   * @param reader
+   * @param fieldFiles
+   * @param maxDelGen
+   * @param infoStream
+   * @throws IOException
+   */
   private synchronized void handleDVUpdates(FieldInfos infos,
                                             Directory dir, DocValuesFormat dvFormat, final SegmentReader reader,
                                             Map<Integer,Set<String>> fieldFiles, long maxDelGen, InfoStream infoStream) throws IOException {
+
+    // key 对应fieldName
     for (Entry<String,List<DocValuesFieldUpdates>> ent : pendingDVUpdates.entrySet()) {
       final String field = ent.getKey();
       final List<DocValuesFieldUpdates> updates = ent.getValue();
+      // 看来默认所有update对象的 docValue type 都是一样的
       DocValuesType type = updates.get(0).type;
       assert type == DocValuesType.NUMERIC || type == DocValuesType.BINARY : "unsupported type: " + type;
       final List<DocValuesFieldUpdates> updatesToApply = new ArrayList<>();
       long bytes = 0;
       for(DocValuesFieldUpdates update : updates) {
+        // 只有年代小于 maxDelGen的才会被考虑需要处理   TODO maxDelGen 难道记录的不是已经处理好的年代吗  不是应该忽略该年代之前的请求吗
         if (update.delGen <= maxDelGen) {
           // safe to apply this one
           bytes += update.ramBytesUsed();
@@ -334,12 +349,18 @@ final class ReadersAndUpdates {
                                                info,
                                                bytes/1024./1024.));
       }
+      // 获取下一个有关 docValue 的年代
       final long nextDocValuesGen = info.getNextDocValuesGen();
+      // 生成后缀文件名 并准备开启一个新的索引文件
       final String segmentSuffix = Long.toString(nextDocValuesGen, Character.MAX_RADIX);
       final IOContext updatesContext = new IOContext(new FlushInfo(info.info.maxDoc(), bytes));
+
+      // 找到fieldInfo
       final FieldInfo fieldInfo = infos.fieldInfo(field);
       assert fieldInfo != null;
+      // 更新当前该field 的 docValue 所在索引文件的年代
       fieldInfo.setDocValuesGen(nextDocValuesGen);
+      // 只针对这个field 创建了一个新的 fieldInfos
       final FieldInfos fieldInfos = new FieldInfos(new FieldInfo[] { fieldInfo });
       // separately also track which files were created for this gen
       final TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
@@ -349,18 +370,27 @@ final class ReadersAndUpdates {
           if (info != fieldInfo) {
             throw new IllegalArgumentException("expected field info for field: " + fieldInfo.name + " but got: " + info.name);
           }
+          // 更新本次涉及到的所有 update 对象 生成docValue迭代器 并且将他们合并   合并后的迭代器 内部元素排序按照docId的正序
           DocValuesFieldUpdates.Iterator[] subs = new DocValuesFieldUpdates.Iterator[updatesToApply.size()];
           for(int i=0;i<subs.length;i++) {
             subs[i] = updatesToApply.get(i).iterator();
           }
           return  DocValuesFieldUpdates.mergedIterator(subs);
         };
+        // 在处理前的钩子
         pendingDeletes.onDocValuesUpdate(fieldInfo, updateSupplier.apply(fieldInfo));
+
+        // 如果docValue 是 二进制类型
         if (type == DocValuesType.BINARY) {
           fieldsConsumer.addBinaryField(fieldInfo, new EmptyDocValuesProducer() {
+
+            // 这里重写了根据 field 获取二进制值的方法
             @Override
             public BinaryDocValues getBinary(FieldInfo fieldInfoIn) throws IOException {
+              // 获取 有关该field下所有 更新信息涉及到的 doc 迭代器
               DocValuesFieldUpdates.Iterator iterator = updateSupplier.apply(fieldInfo);
+
+
               final MergedDocValues<BinaryDocValues> mergedDocValues = new MergedDocValues<>(
                   reader.getBinaryDocValues(field),
                   DocValuesFieldUpdates.Iterator.asBinaryDocValues(iterator), iterator);
@@ -549,6 +579,7 @@ final class ReadersAndUpdates {
     boolean any = false;
     for (List<DocValuesFieldUpdates> updates : pendingDVUpdates.values()) {
       // Sort by increasing delGen:
+      // 按 delGen 正序排序
       Collections.sort(updates, Comparator.comparingLong(a -> a.delGen));
       for (DocValuesFieldUpdates update : updates) {
         if (update.delGen <= maxDelGen && update.any()) {
@@ -565,6 +596,8 @@ final class ReadersAndUpdates {
 
     // Do this so we can delete any created files on
     // exception; this saves all codecs from having to do it:
+
+    // 上面确定了有需要更新的数据
     TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
     
     boolean success = false;
@@ -584,7 +617,9 @@ final class ReadersAndUpdates {
       try {
         // clone FieldInfos so that we can update their dvGen separately from
         // the reader's infos and write them to a new fieldInfos_gen file.
+        // 记录当前处理的所有 fieldInfo 最大的号码
         int maxFieldNumber = -1;
+        // 每个reader对象对应一组 fieldInfo
         Map<String, FieldInfo> byName = new HashMap<>();
         for (FieldInfo fi : reader.getFieldInfos()) {
           // cannot use builder.add(fi) because it does not preserve
@@ -603,16 +638,20 @@ final class ReadersAndUpdates {
           if (byName.containsKey(update.field)) {
             // the field already exists in this segment
             FieldInfo fi = byName.get(update.field);
+            // 更新关于这个 field的值类型
             fi.setDocValuesType(update.type);
           } else {
             // the field is not present in this segment so we clone the global field
             // (which is guaranteed to exist) and remaps its field number locally.
+            // 如果本次 update 中出现了 之前初始化时不存在的field信息  那么进行初始化 并将信息追加到全局的 field映射对象中
             assert fieldNumbers.contains(update.field, update.type);
             FieldInfo fi = cloneFieldInfo(builder.getOrAdd(update.field), ++maxFieldNumber);
             fi.setDocValuesType(update.type);
             byName.put(fi.name, fi);
           }
         }
+
+        // 这时 byName 已经存放了针对该segment 下最新的field信息了
         fieldInfos = new FieldInfos(byName.values().toArray(new FieldInfo[0]));
         final DocValuesFormat docValuesFormat = codec.docValuesFormat();
         
@@ -694,6 +733,12 @@ final class ReadersAndUpdates {
     return true;
   }
 
+  /**
+   * 创建一个 fieldInfo的副本
+   * @param fi
+   * @param fieldNumber
+   * @return
+   */
   private FieldInfo cloneFieldInfo(FieldInfo fi, int fieldNumber) {
     return new FieldInfo(fi.name, fieldNumber, fi.hasVectors(), fi.omitsNorms(), fi.hasPayloads(),
         fi.getIndexOptions(), fi.getDocValuesType(), fi.getDocValuesGen(), new HashMap<>(fi.attributes()),

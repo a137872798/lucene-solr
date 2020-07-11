@@ -84,8 +84,9 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
   /** Load metadata from the given {@link IndexInput}.
    *  @see DirectMonotonicReader#getInstance(Meta, RandomAccessInput) */
   public static Meta loadMeta(IndexInput metaIn, long numValues, int blockShift) throws IOException {
+    // 初始化内部的数组   blockShift 用于计算block的大小  每个block大小是 1<<blockShift
     Meta meta = new Meta(numValues, blockShift);
-    // 将内部数据全部读取出来 并写入到 meta 中
+    // 通过上面的初始化 就能知道 有多少个block
     for (int i = 0; i < meta.numBlocks; ++i) {
       meta.mins[i] = metaIn.readLong();
       meta.avgs[i] = Float.intBitsToFloat(metaIn.readInt());

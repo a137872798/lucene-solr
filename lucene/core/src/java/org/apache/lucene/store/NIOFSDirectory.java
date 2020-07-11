@@ -153,7 +153,8 @@ public class NIOFSDirectory extends FSDirectory {
     }
 
     /**
-     * 将数据读取出来 并写入到 入参中
+     * 将数据读取出来 并写入到 入参中    在这里可以看到 从文件中读取的数据在父类做了一层缓存 好处是读取出来的数据就可以实现 randomAccess 并且对IO的性能开销应该也会小
+     * 否则随机IO的性能不高
      * @param b the buffer to read bytes into
      * @throws IOException
      */

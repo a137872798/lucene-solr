@@ -23,6 +23,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /** Base implementation class for buffered {@link IndexInput}. */
+// 该类会对子类读取的数据做一层缓存   比如子类是文件系统 那么他就能够避免直接读取文件的随机IO所造成的高开销
 public abstract class BufferedIndexInput extends IndexInput implements RandomAccessInput {
 
   private static final ByteBuffer EMPTY_BYTEBUFFER = ByteBuffer.allocate(0);
@@ -89,6 +90,15 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
     readBytes(b, offset, len, true);
   }
 
+  /**
+   * 将数据读取到目标数组
+   * @param b the array to read bytes into
+   * @param offset the offset in the array to start storing bytes
+   * @param len the number of bytes to read
+   * @param useBuffer set to false if the caller will handle
+   * buffering.
+   * @throws IOException
+   */
   @Override
   public final void readBytes(byte[] b, int offset, int len, boolean useBuffer) throws IOException {
     int available = buffer.remaining();
@@ -98,6 +108,7 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
         buffer.get(b, offset, len);
     } else {
       // the buffer does not have enough data. First serve all we've got.
+      // 先读取前面的部分 并填充到 数组中
       if(available > 0){
         buffer.get(b, offset, available);
         offset += available;
@@ -108,6 +119,7 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
         // If the amount left to read is small enough, and
         // we are allowed to use our buffer, do it in the usual
         // buffered way: fill the buffer and copy from it:
+        // 新读取一批数据 填充到 bytebuffer中
         refill();
         if(buffer.remaining()<len){
           // Throw an exception when refill() could not read len bytes:
@@ -124,10 +136,12 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
         // this function, there is no need to do a seek
         // here, because there's no need to reread what we
         // had in the buffer.
+        // 不采用缓存的方式 就跳过 refill方法 直接走真正读取数据的  readInternal 方法
         long after = bufferStart+buffer.position()+len;
         if(after > length())
           throw new EOFException("read past EOF: " + this);
         readInternal(ByteBuffer.wrap(b, offset, len));
+        // 更新指针
         bufferStart = after;
         buffer.limit(0);  // trigger refill() on read
       }
@@ -273,7 +287,11 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
     }
     return buffer.getLong((int) index);
   }
-  
+
+  /**
+   * 从实现类中 新读取一批数据
+   * @throws IOException
+   */
   private void refill() throws IOException {
     long start = bufferStart + buffer.position();
     long end = start + bufferSize;
@@ -283,6 +301,7 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
     if (newLength <= 0)
       throw new EOFException("read past EOF: " + this);
 
+    // 代表首次读取数据  初始化 buffer 对象
     if (buffer == EMPTY_BYTEBUFFER) {
       buffer = ByteBuffer.allocate(bufferSize);  // allocate buffer lazily
       seekInternal(bufferStart);
@@ -304,14 +323,22 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
    */
   protected abstract void readInternal(ByteBuffer b) throws IOException;
 
+
+  /**
+   * 定义了 此时从文件的哪里开始读取数据
+   * @return
+   */
   @Override
   public final long getFilePointer() { return bufferStart + buffer.position(); }
 
   @Override
   public final void seek(long pos) throws IOException {
+    // 这里会额外做一层缓存 比如 NIOFileInput  会先将数据读取出来存储到buffer中
+    // 如果此时seek的数据已经命中了buffer 直接定位buffer的指针 并读取数据就好
     if (pos >= bufferStart && pos < (bufferStart + buffer.limit()))
       buffer.position((int)(pos - bufferStart));  // seek within buffer
     else {
+      // 核心在于这里相当于重新定义了 filePointer的位置 子类 文件系统就会以这个偏移量作为起点
       bufferStart = pos;
       buffer.limit(0);  // trigger refill() on read
       seekInternal(pos);

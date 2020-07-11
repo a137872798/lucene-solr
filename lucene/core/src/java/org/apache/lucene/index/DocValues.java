@@ -33,6 +33,7 @@ public final class DocValues {
 
   /** 
    * An empty {@link BinaryDocValues} which returns no documents
+   * 代表某个field 下没有任何的docValue
    */
   public static final BinaryDocValues emptyBinary() {
     return new BinaryDocValues() {

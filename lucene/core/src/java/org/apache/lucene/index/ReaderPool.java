@@ -45,6 +45,7 @@ import org.apache.lucene.util.InfoStream;
  *  places if it is in "near real-time mode" (getReader()
  *  has been called on this instance). */
 // 该对象是一个reader池   因为reader对象的创建需要获取句柄 相对比较耗时   并且lucene 经常读取索引文件中的数据 所以就需要这个池对象
+// 并且该对象可以调控下面所有的reader
 final class ReaderPool implements Closeable {
 
   /**
@@ -286,6 +287,7 @@ final class ReaderPool implements Closeable {
   /**
    * Returns a list of all currently maintained ReadersAndUpdates sorted by it's ram consumption largest to smallest.
    * This list can also contain readers that don't consume any ram at this point ie. don't have any updates buffered.
+   * 按照内存占用倒序 返回所有reader对象
    */
   synchronized List<ReadersAndUpdates> getReadersByRam() {
     class RamRecordingHolder {

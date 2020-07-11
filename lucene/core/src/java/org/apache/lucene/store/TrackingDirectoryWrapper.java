@@ -24,7 +24,7 @@ import java.util.Set;
 
 /** A delegating Directory that records which files were
  *  written to and deleted. */
-// 在使用该目录时 会记录由本次操作所创建的文件
+// 在使用该目录时 会记录由本次操作所创建的文件   便于之后删除无法正常操作的文件
 public final class TrackingDirectoryWrapper extends FilterDirectory {
 
   private final Set<String> createdFileNames = Collections.synchronizedSet(new HashSet<String>());

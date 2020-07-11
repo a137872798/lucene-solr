@@ -61,7 +61,9 @@ import static org.apache.lucene.codecs.lucene80.Lucene80DocValuesFormat.DIRECT_M
 import static org.apache.lucene.codecs.lucene80.Lucene80DocValuesFormat.NUMERIC_BLOCK_SHIFT;
 import static org.apache.lucene.codecs.lucene80.Lucene80DocValuesFormat.NUMERIC_BLOCK_SIZE;
 
-/** writer for {@link Lucene80DocValuesFormat} */
+/** writer for {@link Lucene80DocValuesFormat}
+ * 以field为单位 存储 docValue 信息
+ */
 final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Closeable {
 
   IndexOutput data, meta;

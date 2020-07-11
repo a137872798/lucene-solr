@@ -142,6 +142,7 @@ public final class Lucene80DocValuesFormat extends DocValuesFormat {
     return new Lucene80DocValuesConsumer(state, DATA_CODEC, DATA_EXTENSION, META_CODEC, META_EXTENSION);
   }
 
+
   @Override
   public DocValuesProducer fieldsProducer(SegmentReadState state) throws IOException {
     return new Lucene80DocValuesProducer(state, DATA_CODEC, DATA_EXTENSION, META_CODEC, META_EXTENSION);

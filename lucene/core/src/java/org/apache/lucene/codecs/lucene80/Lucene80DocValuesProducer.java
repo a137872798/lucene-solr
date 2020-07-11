@@ -51,7 +51,10 @@ import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.apache.lucene.util.packed.DirectReader;
 
 /** reader for {@link Lucene80DocValuesFormat} */
+// 该对象存储了 docValue
 final class Lucene80DocValuesProducer extends DocValuesProducer implements Closeable {
+
+  // 下面这些容器存储的数据 是从元数据文件中提取出来的  key 对应的是fieldName
   private final Map<String,NumericEntry> numerics = new HashMap<>();
   private final Map<String,BinaryEntry> binaries = new HashMap<>();
   private final Map<String,SortedEntry> sorted = new HashMap<>();
@@ -64,16 +67,17 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
 
   /**
    * expert: instantiates a new reader
-   * 负责读取某个field 下docValue 信息
+   * 负责读取某个field 下docValue 信息    存储两种格式文件  dvd  dvm
    * @param state
    * @param dataCodec
-   * @param dataExtension
+   * @param dataExtension   dvd
    * @param metaCodec
-   * @param metaExtension
+   * @param metaExtension   dvm
    * @throws IOException
    */
   Lucene80DocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
     String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
+    // 对应这个段下 最大的 docId
     this.maxDoc = state.segmentInfo.maxDoc();
     ramBytesUsed = RamUsageEstimator.shallowSizeOfInstance(getClass());
 
@@ -87,6 +91,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                                         Lucene80DocValuesFormat.VERSION_CURRENT,
                                         state.segmentInfo.getId(),
                                         state.segmentSuffix);
+        // 先读取元数据文件
         readFields(in, state.fieldInfos);
       } catch (Throwable exception) {
         priorE = exception;
@@ -95,6 +100,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       }
     }
 
+    // 这里只是打开句柄  还没有开始读取数据
     String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
     this.data = state.directory.openInput(dataName, state.context);
     boolean success = false;
@@ -122,13 +128,23 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     }
   }
 
+  /**
+   * 这里只是读取元数据
+   * @param meta
+   * @param infos
+   * @throws IOException
+   */
   private void readFields(ChecksumIndexInput meta, FieldInfos infos) throws IOException {
+    // dvm  第一个数据记录了fieldInfo 的 num
     for (int fieldNumber = meta.readInt(); fieldNumber != -1; fieldNumber = meta.readInt()) {
+      // 找到对应的info 对象
       FieldInfo info = infos.fieldInfo(fieldNumber);
       if (info == null) {
         throw new CorruptIndexException("Invalid field number: " + fieldNumber, meta);
       }
+      // 对应 docValue 的类型
       byte type = meta.readByte();
+      // 根据类型读取不同的长度 并将结果存储到内存容器中
       if (type == Lucene80DocValuesFormat.NUMERIC) {
         numerics.put(info.name, readNumeric(meta));
       } else if (type == Lucene80DocValuesFormat.BINARY) {
@@ -145,12 +161,24 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     }
   }
 
+  /**
+   * 从索引文件中读取 number 类型的数据
+   * @param meta
+   * @return
+   * @throws IOException
+   */
   private NumericEntry readNumeric(ChecksumIndexInput meta) throws IOException {
     NumericEntry entry = new NumericEntry();
     readNumeric(meta, entry);
     return entry;
   }
 
+  /**
+   * 从元数据文件中读取数据 并填充到 entry中
+   * @param meta
+   * @param entry
+   * @throws IOException
+   */
   private void readNumeric(ChecksumIndexInput meta, NumericEntry entry) throws IOException {
     entry.docsWithFieldOffset = meta.readLong();
     entry.docsWithFieldLength = meta.readLong();
@@ -181,6 +209,12 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     entry.valueJumpTableOffset = meta.readLong();
   }
 
+  /**
+   * 读取二进制数据
+   * @param meta
+   * @return
+   * @throws IOException
+   */
   private BinaryEntry readBinary(ChecksumIndexInput meta) throws IOException {
     BinaryEntry entry = new BinaryEntry();
     entry.dataOffset = meta.readLong();
@@ -189,15 +223,19 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     entry.docsWithFieldLength = meta.readLong();
     entry.jumpTableEntryCount = meta.readShort();
     entry.denseRankPower = meta.readByte();
+    // 代表这个field 下有多少doc
     entry.numDocsWithField = meta.readInt();
     entry.minLength = meta.readInt();
     entry.maxLength = meta.readInt();
+    // 当此时的版本号支持压缩时 或者  minLength和maxLength 不一致时 (因为压缩了 所以长度不一致)
     if ((version >= Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED && entry.numDocsWithField > 0) ||  entry.minLength < entry.maxLength) {
+      // 写入地址偏移量
       entry.addressesOffset = meta.readLong();
 
-      // Old count of uncompressed addresses 
+      // Old count of uncompressed addresses    旧版本 address数量是  doc + 1
       long numAddresses = entry.numDocsWithField + 1L;
       // New count of compressed addresses - the number of compresseed blocks
+      // 新版本数量是 numCompressedChunks
       if (version >= Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
         entry.numCompressedChunks = meta.readVInt();
         entry.docsPerChunkShift = meta.readVInt();
@@ -206,6 +244,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       }      
       
       final int blockShift = meta.readVInt();
+      // 接着会从meta 中连续读取几个用于还原单调容器数据的数据
       entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, numAddresses, blockShift);
       ramBytesUsed += entry.addressesMeta.ramBytesUsed();
       entry.addressesLength = meta.readLong();
@@ -295,6 +334,9 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     data.close();
   }
 
+  /**
+   * 该对象存储了  Num 类型的  docValue 数据 相关的元数据
+   */
   private static class NumericEntry {
     long[] table;
     int blockShift;
@@ -314,6 +356,10 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
   private static class BinaryEntry {
     long dataOffset;
     long dataLength;
+    /**
+     * 该值为-2 代表没有docValue 数据
+     * 为-1 代表数据是密集的
+     */
     long docsWithFieldOffset;
     long docsWithFieldLength;
     short jumpTableEntryCount;
@@ -321,6 +367,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     int numDocsWithField;
     int minLength;
     int maxLength;
+    // 这2个应该是对应 data文件的偏移量
     long addressesOffset;
     long addressesLength;
     DirectMonotonicReader.Meta addressesMeta;
@@ -849,20 +896,28 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       return uncompressedBytesRef;
     }    
   }
-  
 
+  /**
+   * 获取某个field 下所有二进制形式存储的 docValue
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public BinaryDocValues getBinary(FieldInfo field) throws IOException {
     if (version < Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
       return getUncompressedBinary(field);
     }
-    
+
+    // entry 是从元数据文件读取出来的
     BinaryEntry entry = binaries.get(field.name);
     if (entry.docsWithFieldOffset == -2) {
       return DocValues.emptyBinary();
     }
+    // 为-1时 代表数据是密集的
     if (entry.docsWithFieldOffset == -1) {
       // dense
+      // 这里根据 address相关信息生成一个 随机读取输入流
       final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
       final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
       return new DenseBinaryDocValues(maxDoc) {

@@ -22,6 +22,7 @@ import java.io.IOException;
 import org.apache.lucene.codecs.DocValuesProducer;
 
 /** Abstract base class implementing a {@link DocValuesProducer} that has no doc values. */
+// 为抽象方法定义了默认实现 子类根据自己需要重写相关方法
 public abstract class EmptyDocValuesProducer extends DocValuesProducer {
 
   /** Sole constructor */

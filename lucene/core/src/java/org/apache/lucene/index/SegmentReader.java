@@ -64,6 +64,10 @@ public final class SegmentReader extends CodecReader {
   private final int numDocs;
 
   final SegmentCoreReaders core;
+
+  /**
+   * 该对象 下维护了某个段 各个 gen 对应的 docValue 数据
+   */
   final SegmentDocValues segDocValues;
 
   /** True if we are holding RAM only liveDocs or DV updates, i.e. the SegmentCommitInfo delGen doesn't match our liveDocs. */

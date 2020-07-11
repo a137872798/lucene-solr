@@ -359,6 +359,13 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             return producer == null ? null : producer.getNumeric(field);
         }
 
+        /**
+         * 看来一个 field 应该是对应
+         *
+         * @param field
+         * @return
+         * @throws IOException
+         */
         @Override
         public BinaryDocValues getBinary(FieldInfo field) throws IOException {
             DocValuesProducer producer = fields.get(field.name);

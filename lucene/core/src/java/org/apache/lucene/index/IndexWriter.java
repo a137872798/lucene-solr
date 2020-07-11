@@ -753,15 +753,21 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     return docWriter.getFlushingBytes();
   }
 
+  /**
+   * 开始处理一些 update操作  前提是开启了自动刷盘
+   * @throws IOException
+   */
   final void writeSomeDocValuesUpdates() throws IOException {
     if (writeDocValuesLock.tryLock()) {
       try {
         final double ramBufferSizeMB = config.getRAMBufferSizeMB();
         // If the reader pool is > 50% of our IW buffer, then write the updates:
+        // 只要该数值是有效的 就代表开启了自动刷盘
         if (ramBufferSizeMB != IndexWriterConfig.DISABLE_AUTO_FLUSH) {
           long startNS = System.nanoTime();
 
           long ramBytesUsed = readerPool.ramBytesUsed();
+          // 此时记录的有关更新的数据 达到一定的内存值时 才会触发更新
           if (ramBytesUsed > 0.5 * ramBufferSizeMB * 1024 * 1024) {
             if (infoStream.isEnabled("BD")) {
               infoStream.message("BD", String.format(Locale.ROOT, "now write some pending DV updates: %.2f MB used vs IWC Buffer %.2f MB",
@@ -769,6 +775,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
 
             // Sort by largest ramBytesUsed:
+            // 按照内存占用大小倒序 返回所有待处理的reader
             final List<ReadersAndUpdates> list = readerPool.getReadersByRam();
             int count = 0;
             for (ReadersAndUpdates rld : list) {
@@ -792,6 +799,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 if (readerPool.get(rld.info, false) == null) {
                   continue;
                 }
+                // 将更新对象写入到文件
                 if (rld.writeFieldUpdates(directory, globalFieldNumberMap, bufferedUpdatesStream.getCompletedDelGen(), infoStream)) {
                   checkpointNoSIS();
                 }
@@ -5533,7 +5541,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
           deleter.incRef(delFiles);
         }
 
-        // 默认值为 0
         AtomicBoolean success = new AtomicBoolean();
         long delCount;
         // finishApply 的逻辑就是找到 所有 doc都应当被删除的segment 并丢弃
@@ -5547,6 +5554,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         // Since we just resolved some more deletes/updates, now is a good time to write them:
+        // 这里也是 tryLock  也就是竞争激烈的情况 不要求立即更新  也就是有某个实际会强制更新
         writeSomeDocValuesUpdates();
 
         // It's OK to add this here, even if the while loop retries, because delCount only includes newly
@@ -5649,7 +5657,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
       BufferedUpdatesStream.ApplyDeletesResult result;
       try {
-        // 当success 为false时  返回一个没有删除任何数据的空结果
         result = closeSegmentStates(segStates, success);
       } finally {
         // Matches the incRef we did above, but we must do the decRef after closing segment states else
@@ -5691,15 +5698,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     long totDelCount = 0;
     try {
       for (BufferedUpdatesStream.SegmentState segState : segStates) {
-        // 如果传入的 success 为 false 那么什么都不会做 返回一个失败的结果
         if (success) {
           // 获取一个 删除doc的 增量值
           totDelCount += segState.rld.getDelCount() - segState.startDelCount;
           // 代表总计要删除的doc
           int fullDelCount = segState.rld.getDelCount();
           assert fullDelCount <= segState.rld.info.info.maxDoc() : fullDelCount + " > " + segState.rld.info.info.maxDoc();
-          // 当要删除的量 达到 maxDoc  代表所有文档都要删除
-          // 检测合并策略是否 需要保留 已经被认定要丢弃所有doc的 段
+          // 当要删除的量 达到 maxDoc  代表所有文档都要删除    并且在 merge策略中 没有保留需要全删除的
           if (segState.rld.isFullyDeleted() && getConfig().getMergePolicy().keepFullyDeletedSegment(() -> segState.reader) == false) {
             if (allDeleted == null) {
               allDeleted = new ArrayList<>();

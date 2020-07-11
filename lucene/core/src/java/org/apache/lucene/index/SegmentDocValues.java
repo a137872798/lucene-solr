@@ -32,12 +32,13 @@ import org.apache.lucene.util.RefCount;
 /**
  * Manages the {@link DocValuesProducer} held by {@link SegmentReader} and
  * keeps track of their reference counting.
- * 维护 映射关系
+ * 该对象以 segment为单位 划分
  */
 final class SegmentDocValues {
 
   /**
    * key 是 gen
+   * value 是 该gen对应的索引文件存储的所有 docValue 数据
    */
   private final Map<Long,RefCount<DocValuesProducer>> genDVProducers = new HashMap<>();
 
@@ -59,6 +60,7 @@ final class SegmentDocValues {
     }
 
     // set SegmentReadState to list only the fields that are relevant to that gen
+    // 生成上下文对象
     SegmentReadState srs = new SegmentReadState(dvDir, si.info, infos, IOContext.READ, segmentSuffix);
     DocValuesFormat dvFormat = si.info.getCodec().docValuesFormat();
     // 返回一个 以field为单位 读取 docValue 的 reader对象
@@ -78,6 +80,7 @@ final class SegmentDocValues {
   synchronized DocValuesProducer getDocValuesProducer(long gen, SegmentCommitInfo si, Directory dir, FieldInfos infos) throws IOException {
     RefCount<DocValuesProducer> dvp = genDVProducers.get(gen);
     if (dvp == null) {
+      // 生成连接到索引文件的reader 对象
       dvp = newDocValuesProducer(si, dir, gen, infos);
       assert dvp != null;
       genDVProducers.put(gen, dvp);

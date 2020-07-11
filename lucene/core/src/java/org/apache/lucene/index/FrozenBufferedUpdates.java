@@ -204,6 +204,7 @@ final class FrozenBufferedUpdates {
       assert privateSegment == segStates[0].reader.getOriginalSegmentInfo();
     }
 
+    // state 负责查找数据 （生成doc的迭代器）    该对象内部的各种delete对象用于设定删除条件
     totalDelCount += applyTermDeletes(segStates);
     totalDelCount += applyQueryDeletes(segStates);
     totalDelCount += applyDocValuesUpdates(segStates);

@@ -174,10 +174,12 @@ public abstract class CodecReader extends LeafReader implements Accountable {
   @Override
   public final BinaryDocValues getBinaryDocValues(String field) throws IOException {
     ensureOpen();
+    // 从 fieldInfos 中 根据fieldName 找到 fieldInfo
     FieldInfo fi = getDVField(field, DocValuesType.BINARY);
     if (fi == null) {
       return null;
     }
+    // 读取之前写入到 docValue 索引文件中的数据
     return getDocValuesReader().getBinary(fi);
   }
 

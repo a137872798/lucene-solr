@@ -125,12 +125,13 @@ public abstract class IndexInput extends DataInput implements Cloneable,Closeabl
    */
   public RandomAccessInput randomAccessSlice(long offset, long length) throws IOException {
     final IndexInput slice = slice("randomaccess", offset, length);
+    // 如果返回的类型本身就支持随机读取 那么直接返回
     if (slice instanceof RandomAccessInput) {
       // slice() already supports random access
       return (RandomAccessInput) slice;
     } else {
       // return default impl
-      // 根据每次传入的参数定位到某个偏移量 然后读取数据
+      // 增加一个seek的前置操作
       return new RandomAccessInput() {
         @Override
         public byte readByte(long pos) throws IOException {
