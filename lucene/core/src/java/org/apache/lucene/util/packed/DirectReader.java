@@ -129,7 +129,10 @@ public class DirectReader {
       }
     }    
   }
-    
+
+  /**
+   * 因为该对象代表每个数据 都占用8位 刚好是一个byte 所以读取数据时 偏移量就是增加 index的值
+   */
   static final class DirectPackedReader8 extends LongValues {
     final RandomAccessInput in;
     final long offset;

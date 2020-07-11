@@ -232,6 +232,9 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       // 写入地址偏移量
       entry.addressesOffset = meta.readLong();
 
+      // numAddresses 代表  DirectMonotonicReader 对象一共写入了多少个值  每个block有一个blockSize  代表一个block可以写入多少long值  在存储时 采用差值存储的方式减少空间
+      // 通过 numAddresses >>> blockShift  可以计算出一共使用了多少block
+
       // Old count of uncompressed addresses    旧版本 address数量是  doc + 1
       long numAddresses = entry.numDocsWithField + 1L;
       // New count of compressed addresses - the number of compresseed blocks
@@ -663,6 +666,9 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     }
   }
 
+  /**
+   * 该对象是一个 密集的存储 二进制 docValue数据的对象
+   */
   private static abstract class DenseBinaryDocValues extends BinaryDocValues {
 
     final int maxDoc;
@@ -672,6 +678,11 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       this.maxDoc = maxDoc;
     }
 
+    /**
+     * 每次调用 nextDoc 都是自动传入下一个docId  也就是认为doc 本身是连续存储的
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
       return advance(doc + 1);
@@ -695,6 +706,12 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       return doc = target;
     }
 
+    /**
+     * 直接定位到某个 docId  同时配合binaryValue() 读取此时doc对应的 docValue
+     * @param target
+     * @return
+     * @throws IOException
+     */
     @Override
     public boolean advanceExact(int target) throws IOException {
       doc = target;
@@ -816,17 +833,43 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
   }  
   
   // Decompresses blocks of binary values to retrieve content
+  // 该对象可以通过传入一个 docId 获取该doc的相关数据
   class BinaryDecoder {
-    
+
+    /**
+     * 内部存储了一系列值  每个值对应一个 block的起点 block内部才是真正存储了doc的
+     */
     private final LongValues addresses;
+    /**
+     * 对应 dvd文件
+     */
     private final IndexInput compressedData;
-    // Cache of last uncompressed block 
+    // Cache of last uncompressed block
+    // 会暂存上一个访问的block
     private long lastBlockId = -1;
-    private final int []uncompressedDocStarts;
-    private int uncompressedBlockLength = 0;        
+
+    /**
+     * 对应当前读取的 chunk 下 每个doc的起始位置   下标从1开始   并且每次的值都会追加上上一个长度
+     */
+    private final int[] uncompressedDocStarts;
+
+    private int uncompressedBlockLength = 0;
+    /**
+     * 存储了 解压后的数据
+     */
     private final byte[] uncompressedBlock;
+
+    /**
+     * 对应某个 docValue
+     */
     private final BytesRef uncompressedBytesRef;
+    /**
+     * 一个chunk 中最多允许存放多少doc  address 就是用来定位 chunk的
+     */
     private final int docsPerChunk;
+    /**
+     * 掩码  便于计算某个doc所在的chunk
+     */
     private final int docsPerChunkShift;
     
     public BinaryDecoder(LongValues addresses, IndexInput compressedData, int biggestUncompressedBlockSize, int docsPerChunkShift) {
@@ -842,26 +885,37 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       
     }
 
-
+    /**
+     * 指定docId  获取对应的docValue 数据
+     * @param docNumber
+     * @return
+     * @throws IOException
+     */
     BytesRef decode(int docNumber) throws IOException {
-      int blockId = docNumber >> docsPerChunkShift; 
+      int blockId = docNumber >> docsPerChunkShift;
+      // 获取 某个chunk下存储的相对偏移量
       int docInBlockId = docNumber % docsPerChunk;
       assert docInBlockId < docsPerChunk;
       
       
       // already read and uncompressed?
+      // 此时还没有数据读取到内存中   加载相关信息时 以block为单位  当发现blockId一致时 就按照之前读取的下标快速定位到docValue
       if (blockId != lastBlockId) {
         lastBlockId = blockId;
+        // 找到 block 的起点
         long blockStartOffset = addresses.get(blockId);
+        // 将data索引文件定位到目标位置
         compressedData.seek(blockStartOffset);
         
         uncompressedBlockLength = 0;        
 
+        // 代表本block 下所有的 docValue 长度都是一样的
         int onlyLength = -1;
         for (int i = 0; i < docsPerChunk; i++) {
           if (i == 0) {
             // The first length value is special. It is shifted and has a bit to denote if
             // all other values are the same length
+            // 检测所有docValue的值是否一样
             int lengthPlusSameInd = compressedData.readVInt();
             int sameIndicator = lengthPlusSameInd & 1;
             int firstValLength = lengthPlusSameInd >>>1;
@@ -870,9 +924,11 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
             }
             uncompressedBlockLength += firstValLength;            
           } else {
+            // 追加不同的长度
             if (onlyLength == -1) {
               // Various lengths are stored - read each from disk
-              uncompressedBlockLength += compressedData.readVInt();            
+              uncompressedBlockLength += compressedData.readVInt();
+              // 代表长度一致
             } else {
               // Only one length 
               uncompressedBlockLength += onlyLength;
@@ -880,7 +936,8 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
           }
           uncompressedDocStarts[i+1] = uncompressedBlockLength;
         }
-        
+
+        // 代表doc下没有任何数据
         if (uncompressedBlockLength == 0) {
           uncompressedBytesRef.offset = 0;
           uncompressedBytesRef.length = 0;
@@ -888,9 +945,11 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
         
         assert uncompressedBlockLength <= uncompressedBlock.length;
+        //
         LZ4.decompress(compressedData, uncompressedBlockLength, uncompressedBlock);
       }
-      
+
+      // 代表不需要切换block内的数据
       uncompressedBytesRef.offset = uncompressedDocStarts[docInBlockId];        
       uncompressedBytesRef.length = uncompressedDocStarts[docInBlockId +1] - uncompressedBytesRef.offset;
       return uncompressedBytesRef;
@@ -919,8 +978,14 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       // dense
       // 这里根据 address相关信息生成一个 随机读取输入流
       final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+      // address 信息是采用 单调递增+位存储的形式保存的 现在对数据进行还原
       final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+
+      // 返回一个基于连续存储doc 的迭代器对象
       return new DenseBinaryDocValues(maxDoc) {
+        /**
+         * address 应该是用于定位每个doc存储的位置   (对应data文件的数据)
+         */
         BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
 
         @Override
@@ -929,7 +994,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
       };
     } else {
-      // sparse
+      // sparse   看来这个DISI 是按照某种特殊算法存储的
       final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
           entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
       final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);

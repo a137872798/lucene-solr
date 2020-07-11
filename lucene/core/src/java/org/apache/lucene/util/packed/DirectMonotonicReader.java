@@ -55,11 +55,14 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
     final long[] mins;
     final float[] avgs;
     final byte[] bpvs;
+    /**
+     * 这个偏移量是 以byte 为单位的
+     */
     final long[] offsets;
 
     Meta(long numValues, int blockShift) {
       this.blockShift = blockShift;
-      // 获取块的下标
+      // 获取总共有多少block  而 blockSize 代表每个block内部有多少数据
       long numBlocks = numValues >>> blockShift;
       if ((numBlocks << blockShift) < numValues) {
         numBlocks += 1;
@@ -82,7 +85,9 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
   }
 
   /** Load metadata from the given {@link IndexInput}.
-   *  @see DirectMonotonicReader#getInstance(Meta, RandomAccessInput) */
+   *  @see DirectMonotonicReader#getInstance(Meta, RandomAccessInput)
+   * @param numValues  一开始还原数据的时候就知道  一共写入了多少值    每个block 有一个 blockSize 代表内部存储了多少long 值
+   */
   public static Meta loadMeta(IndexInput metaIn, long numValues, int blockShift) throws IOException {
     // 初始化内部的数组   blockShift 用于计算block的大小  每个block大小是 1<<blockShift
     Meta meta = new Meta(numValues, blockShift);
@@ -90,9 +95,9 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
     for (int i = 0; i < meta.numBlocks; ++i) {
       meta.mins[i] = metaIn.readLong();
       meta.avgs[i] = Float.intBitsToFloat(metaIn.readInt());
-      // 代表 data 在本次 flush 写入了多少数据
+      // 在写入数据 前的相对偏移量 (还要加上文件的baseOffset)
       meta.offsets[i] = metaIn.readLong();
-      // 代表增量数据使用了多少位表示  如果是0代表所有数据都是一样的
+      // 记录存储数据 需要多少位
       meta.bpvs[i] = metaIn.readByte();
     }
     return meta;
@@ -100,16 +105,16 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
 
   /**
    * Retrieves an instance from the specified slice.
-   * 通过一个元数据对象 返回一个 reader 该reader 会根据元数据信息读取  data内的数据
+   * 每个reader 对应一个block  而 blockSize 则代表每个 block内部有多少数据 也就是reader对应的 LongValue 可以读取多少数据
    */
   public static DirectMonotonicReader getInstance(Meta meta, RandomAccessInput data) throws IOException {
     final LongValues[] readers = new LongValues[meta.numBlocks];
     for (int i = 0; i < meta.mins.length; ++i) {
+      // 代表数据大小一致 都是 该block的最小值
       if (meta.bpvs[i] == 0) {
-        // 这里返回的是基本值 在读取的时候 还要加上差值 以及  avg   0 代表data中没有写入任何数据 同时所有的值都是一样的
         readers[i] = EMPTY;
       } else {
-        // offsets[i] 偏移量
+        // offsets[i] 代表本次 flush 写入数据的起始偏移量
         readers[i] = DirectReader.getInstance(data, meta.bpvs[i], meta.offsets[i]);
       }
     }
@@ -122,15 +127,18 @@ public final class DirectMonotonicReader extends LongValues implements Accountab
   private final long[] mins;
   private final float[] avgs;
   private final byte[] bpvs;
+  /**
+   * block 中有多少block的数据都是0
+   */
   private final int nonZeroBpvs;
 
   /**
    * 该对象在读取值的时候 会通过 mins 和 avgs 对数据进行还原
-   * @param blockShift
-   * @param readers
-   * @param mins
-   * @param avgs
-   * @param bpvs
+   * @param blockShift  block数量
+   * @param readers  一个block 对应一个 LongValues 代表一个block可以读取多个long值
+   * @param mins  对应的block的最小值
+   * @param avgs  对应block的期望值
+   * @param bpvs  代表该block下每个值占用多少位
    */
   private DirectMonotonicReader(int blockShift, LongValues[] readers, long[] mins, float[] avgs, byte[] bpvs) {
     this.blockShift = blockShift;
