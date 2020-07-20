@@ -48,7 +48,6 @@ public abstract class MergeScheduler implements Closeable {
   /** 
    * Wraps the incoming {@link Directory} so that we can merge-throttle it
    * using {@link RateLimitedIndexOutput}.
-   * TODO 啥子哦 感觉没多久就会明白了  包装成 Directory 后就能够用一些过滤器之类的进行加工处理了
    */
   public Directory wrapForMerge(OneMerge merge, Directory in) {
     // A no-op by default.

@@ -218,7 +218,7 @@ final class ReadersAndUpdates {
     return pendingDeletes.delete(docID);
   }
 
-  // NOTE: removes callers ref    释放引用计数
+  // NOTE: removes callers ref    释放引用计数 尝试关闭内部所有reader 对象
   public synchronized void dropReaders() throws IOException {
     // TODO: can we somehow use IOUtils here...?  problem is
     // we are calling .decRef not .close)...

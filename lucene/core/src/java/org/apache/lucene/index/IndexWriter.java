@@ -349,12 +349,23 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * 存储事件的队列   该对象会收集 docWriter 的 perThread生成的各种事件  为什么在这种场景要使用 MPSC 的模型  是因为大多数事件类型都是 IO 吗 所以即使使用多线程也无法提升性能
    */
   static final class EventQueue implements Closeable {
+
+    /**
+     * 代表 IndexWriter 已经被关闭
+     */
     private volatile boolean closed;
     // we use a semaphore here instead of simply synced methods to allow
     // events to be processed concurrently by multiple threads such that all events
-    // for a certain thread are processed once the thread returns from IW
+    // for a certain thread are processed once the thread returns from IW  这里使用信号量的意义是?  允许一定程度的并发 但是避免高并发 ???  有用吗 外部捕获到对应异常时如何处理呢
     private final Semaphore permits = new Semaphore(Integer.MAX_VALUE);
+    /**
+     * 缓冲区  或者说缓冲队列
+     */
     private final Queue<Event> queue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * 实际方法被委托给该对象
+     */
     private final IndexWriter writer;
 
     EventQueue(IndexWriter writer) {
@@ -391,36 +402,40 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 在当前线程中处理所有的事件
+     * 在当前线程中处理所有的事件  该线程也就是IO线程
      * @throws IOException
      */
     private void processEventsInternal() throws IOException {
       assert Integer.MAX_VALUE - permits.availablePermits() > 0 : "must acquire a permit before processing events";
       Event event;
       while ((event = queue.poll()) != null) {
-        // 该方法支持并发
         event.process(writer);
       }
     }
 
+    /**
+     * 关闭任务队列 并且执行剩余任务  类似线程池的优雅关闭
+     * @throws IOException
+     */
     @Override
     public synchronized void close() throws IOException { // synced to prevent double closing
       assert closed == false : "we should never close this twice";
       closed = true;
       // it's possible that we close this queue while we are in a processEvents call
-      // 如果当关闭任务队列时 writer已经出现了异常 那么事件将被抛弃
+      // writer此时存在某种异常无法正常工作所以放弃之前的任务
       if (writer.getTragicException() != null) {
         // we are already handling a tragic exception let's drop it all on the floor and return
         queue.clear();
       } else {
         // now we acquire all the permits to ensure we are the only one processing the queue
         try {
+          // 确保其他线程无法再调用 acquire
           permits.acquire(Integer.MAX_VALUE);
         } catch (InterruptedException e) {
           throw new ThreadInterruptedException(e);
         }
         try {
-          // 当前线程会处理所有事件
+          // 当前线程(IO线程)会处理所有事件
           processEventsInternal();
         } finally {
           permits.release(Integer.MAX_VALUE);
@@ -507,24 +522,22 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   private final boolean softDeletesEnabled;
 
   /**
-   * 这里设置了一个 监听doc刷盘的对象
+   * IndexWriter 携带一个内置的监听器对象 监听 docWriter工作状况 并根据不同情况触发不同钩子
    */
   private final DocumentsWriter.FlushNotifications flushNotifications = new DocumentsWriter.FlushNotifications() {
 
     /**
-     * 当一组不再被使用的file 被删除时
-     * 使用writer 删除这组文件
-     * 看来是做异步化
+     *
      * @param files
      */
     @Override
     public void deleteUnusedFiles(Collection<String> files) {
-      // w 就是 IndexWriter
+      // 删除不再访问的文件 委托给IndexFileDeleter对象
       eventQueue.add(w -> w.deleteNewFiles(files));
     }
 
     /**
-     * 代表在针对某个段信息 进行刷盘时出现了异常
+     * 代表某个段信息刷盘失败了   实际上会变成deleteNewFiles  也就是删除刷盘失败的文件
      * @param info
      */
     @Override
@@ -533,7 +546,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 当某个segment 刷盘完成时  发布该segment
+     * 当某个segment 刷盘完成时  发布该segment  注意此时是非强制的
      * @throws IOException
      */
     @Override
@@ -542,7 +555,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 当检测到异常时
+     * 当检测到异常时 设置异常对象
      * @param event
      * @param message
      */
@@ -552,7 +565,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 将更新数据写入 磁盘   indexWriter 会创建一个 DocumentsWriter 并将本对象作为监听器设置到内部  每当针对doc的更新操作积累到一定量时 触发对应事件
+     * 每当成功执行 delete/flush 时 会累加计数器的值 达到阈值后强制触发 publish方法
      */
     @Override
     public void onDeletesApplied() {
@@ -567,7 +580,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 当 ticket数量超过了pool容量时  代表产生了堆积
+     * 也是某个值超过阈值时 强制触发 publish 方法
      */
     @Override
     public void onTicketBacklog() {
@@ -653,6 +666,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     // Do this up front before flushing so that the readers
     // obtained during this flush are pooled, the first time
     // this method is called:
+    // 设置成 允许reader池化
     readerPool.enableReaderPooling();
     DirectoryReader r = null;
     doBeforeFlush();
@@ -5034,6 +5048,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    * This method should be called on a tragic event ie. if a downstream class of the writer
    * hits an unrecoverable exception. This method does not rethrow the tragic event exception. 
    * Note: This method will not close the writer but can be called from any location without respecting any lock order
+   * 代表检测到异常
    */
   private void onTragicEvent(Throwable tragedy, String location) {
     // This is not supposed to be tragic: IW is supposed to catch this and
@@ -5044,6 +5059,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     if (infoStream.isEnabled("IW")) {
       infoStream.message("IW", "hit tragic " + tragedy.getClass().getSimpleName() + " inside " + location);
     }
+    // 仅设置一次异常对象
     this.tragedy.compareAndSet(null, tragedy); // only set it once
   }
 

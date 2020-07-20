@@ -309,6 +309,7 @@ public abstract class BufferedIndexInput extends IndexInput implements RandomAcc
     buffer.position(0);
     buffer.limit(newLength);
     bufferStart = start;
+    // 如果下层是文件流 就是从文件读取数据并填满这个缓冲区
     readInternal(buffer);
     // Make sure sub classes don't mess up with the buffer.
     assert buffer.order() == ByteOrder.BIG_ENDIAN : buffer.order();

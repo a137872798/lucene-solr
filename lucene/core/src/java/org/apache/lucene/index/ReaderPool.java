@@ -45,11 +45,11 @@ import org.apache.lucene.util.InfoStream;
  *  places if it is in "near real-time mode" (getReader()
  *  has been called on this instance). */
 // 该对象是一个reader池   因为reader对象的创建需要获取句柄 相对比较耗时   并且lucene 经常读取索引文件中的数据 所以就需要这个池对象
-// 并且该对象可以调控下面所有的reader
+// 并且该对象可以统一管理下面所有的reader
 final class ReaderPool implements Closeable {
 
   /**
-   * 索引文件以段为单位存储 每个段下维护了多个doc->field->term 等信息
+   * 以段为单位 存储该段下读取各个维度数据的 reader
    */
   private final Map<SegmentCommitInfo,ReadersAndUpdates> readerMap = new HashMap<>();
 
@@ -63,7 +63,7 @@ final class ReaderPool implements Closeable {
    */
   private final FieldInfos.FieldNumbers fieldNumbers;
   /**
-   * 获取此时已经完成的 update 的年代信息
+   * 获取此时已经完成的 update/delete 的年代信息   对应 BufferedUpdatesStream::getCompletedDelGen
    */
   private final LongSupplier completedDelGenSupplier;
   private final InfoStream infoStream;
@@ -71,6 +71,10 @@ final class ReaderPool implements Closeable {
    * 本次 IndexWriter 涉及到的所有段信息
    */
   private final SegmentInfos segmentInfos;
+
+  /**
+   * 被标识为 软删除的 field
+   */
   private final String softDeletesField;
   // This is a "write once" variable (like the organic dye
   // on a DVD-R that may or may not be heated by a laser and
@@ -84,7 +88,7 @@ final class ReaderPool implements Closeable {
   // readers.
   // in practice this should be called once the readers are likely
   // to be needed and reused ie if IndexWriter#getReader is called.
-  // 是否将reader池化处理
+  // 是否将reader池化处理   该变量只允许被修改一次 且之后无法修改
   private volatile boolean poolReaders;
   private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -93,7 +97,7 @@ final class ReaderPool implements Closeable {
    * @param directory   读取的目标目录  已经被包装过 (比如读取前确保此时持有文件锁)
    * @param originalDirectory    原始目录 未包装
    * @param segmentInfos   本次涉及到所有的段信息  如果indexWriter 选择新建一个段 那么该对象内部为空
-   * @param fieldNumbers  这里存放了本目录下所有段包含的所有 fieldNum 与 fieldName的映射关系  以及每个field 的标识
+   * @param fieldNumbers  这是一个以 IndexWriter为单位的全局映射对象
    * @param completedDelGenSupplier   用于获取已经完成del的gen信息
    * @param infoStream
    * @param softDeletesField  被标明使用软删除的字段
@@ -197,11 +201,12 @@ final class ReaderPool implements Closeable {
    * Releases the {@link ReadersAndUpdates}. This should only be called if the {@link #get(SegmentCommitInfo, boolean)}
    * is called with the create paramter set to true.
    * @return <code>true</code> if any files were written by this release call.
-   * 减少一次引用计数  应该就是某次使用rld结束  与 get() 对应
+   * 释放某个 rld对象的引用计数
    */
   synchronized boolean release(ReadersAndUpdates rld, boolean assertInfoLive) throws IOException {
     boolean changed = false;
     // Matches incRef in get:
+    // 先减少一次引用计数  应该是在调用 release前必须要调用某个方法
     rld.decRef();
 
     if (rld.refCount() == 0) {
@@ -214,10 +219,11 @@ final class ReaderPool implements Closeable {
       // Pool still holds a ref:
       assert rld.refCount() > 0: "refCount=" + rld.refCount() + " reader=" + rld.info;
 
+      // 如果未开启池化 并且此时引用计数马上要归0    (contains为false应该就是已经释放掉了)
       if (poolReaders == false && rld.refCount() == 1 && readerMap.containsKey(rld.info)) {
         // This is the last ref to this RLD, and we're not
         // pooling, so remove it:
-        // 每次使用完 rld 对象后 都会就当前doc的存活情况生成一个 索引文件  TODO 这个到底是删除好了才调 还是删除前调???
+        // 如果此时存在pendingDelete数据 那么生成最新的 liveDoc索引文件
         if (rld.writeLiveDocs(directory)) {
           // Make sure we only write del docs for a live segment:
           assert assertInfoLive == false || assertInfoIsLive(rld.info);
@@ -241,6 +247,7 @@ final class ReaderPool implements Closeable {
         }
       }
     }
+    // 开启池化后不做任何处理 仅减少引用计数
     return changed;
   }
 

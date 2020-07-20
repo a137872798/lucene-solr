@@ -30,7 +30,7 @@ import org.apache.lucene.util.IOUtils;
 
 /**
  * This class handles accounting and applying pending deletes for live segment readers
- * 记录某个段总计删除了多少doc
+ * 该对象维护此时待删除的 doc 以及还存活的doc
  */
 class PendingDeletes {
 
@@ -40,15 +40,15 @@ class PendingDeletes {
    */
   protected final SegmentCommitInfo info;
   // Read-only live docs, null until live docs are initialized or if all docs are alive
-  // 描述此时还存在的 docId 位图   该对象未被初始化时默认所有doc都存活
+  // 描述此时还存在的 docId 位图   该对象未被初始化时默认所有doc都存活 (节省空间的一种方法)
   private Bits liveDocs;
   // Writeable live docs, null if this instance is not ready to accept writes, in which
   // case getMutableBits needs to be called
-  // 每次在标记哪些doc不可用前 都先操作这个位图
+  // 当要删除某个doc之前 先操作该位图  之后应该有一个同步操作 将liveDoc与该位图同步
   private FixedBitSet writeableLiveDocs;
 
   /**
-   * 当前有多少待删除的doc
+   * 当前有多少待删除的doc   每次调用delete只会增加该值 而不会立即写入到索引文件
    */
   protected int pendingDeleteCount;
 
@@ -59,6 +59,7 @@ class PendingDeletes {
 
   PendingDeletes(SegmentReader reader, SegmentCommitInfo info) {
     this(info, reader.getLiveDocs(), true);
+    // 也就是删除的文档最先反映在 reader对象上  当真正删除后 修改info的delCount
     pendingDeleteCount = reader.numDeletedDocs() - info.getDelCount();
   }
 
@@ -76,7 +77,10 @@ class PendingDeletes {
     this.liveDocsInitialized = liveDocsInitialized;
   }
 
-
+  /**
+   * 返回可变位图 数据根据 liveDocs 初始化
+   * @return
+   */
   protected FixedBitSet getMutableBits() {
     // if we pull mutable bits but we haven't been initialized something is completely off.
     // this means we receive deletes without having the bitset that is on-disk ready to be cloned
@@ -89,7 +93,7 @@ class PendingDeletes {
       if (liveDocs != null) {
         writeableLiveDocs = FixedBitSet.copyOf(liveDocs);
       } else {
-        // 在liveDocs 还没有初始化的时候 认为所有位都已经被占用 (当前所有doc都还存活)
+        // 在liveDocs 还没有初始化的时候 认为所有doc都存活
         writeableLiveDocs = new FixedBitSet(info.info.maxDoc());
         writeableLiveDocs.set(0, info.info.maxDoc());
       }
@@ -106,13 +110,14 @@ class PendingDeletes {
    */
   boolean delete(int docID) throws IOException {
     assert info.info.maxDoc() > 0;
-    // 每次要修改的都是 writableBitSet
     FixedBitSet mutableBits = getMutableBits();
     assert mutableBits != null;
     assert docID >= 0 && docID < mutableBits.length() : "out of bounds: docid=" + docID + " liveDocsLength=" + mutableBits.length() + " seg=" + info.info.name + " maxDoc=" + info.info.maxDoc();
     final boolean didDelete = mutableBits.get(docID);
     // 如果位图上的标识被清除代表增加了要删除的doc
     if (didDelete) {
+      // 每次要修改的都是 writableBitSet
+      // 之后才会同步到liveDocs，那个时候应该就是写入到索引文件的时候
       mutableBits.clear(docID);
       pendingDeleteCount++;
     }
@@ -124,6 +129,7 @@ class PendingDeletes {
    */
   Bits getLiveDocs() {
     // Prevent modifications to the returned live docs
+    // 这个方法应该有特定的调用时机 否则针对writeableLiveDocs 的改动都丢失了
     writeableLiveDocs = null;
     return liveDocs;
   }
@@ -144,7 +150,7 @@ class PendingDeletes {
 
   /**
    * Called once a new reader is opened for this segment ie. when deletes or updates are applied.
-   * 当某个段下 读取各种数据的reader 被创建时 触发该方法
+   * 某个reader 初始化完成后 读取了 docLive文件的数据  这时就可以用来初始化内部的 liveDocs数据了
    */
   void onNewReader(CodecReader reader, SegmentCommitInfo info) throws IOException {
     if (liveDocsInitialized == false) {
@@ -209,6 +215,7 @@ class PendingDeletes {
     // Do this so we can delete any created files on
     // exception; this saves all codecs from having to do
     // it:
+    // 包装成会记录本次操作涉及到的所有文件名的对象
     TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
 
     // We can write directly to the actual name (vs to a
@@ -217,13 +224,14 @@ class PendingDeletes {
     boolean success = false;
     try {
       Codec codec = info.info.getCodec();
+      // TODO 执行该方法时 liveDocs 应该已经同步过一次最新数据了 (删除动作已经生效)
       codec.liveDocsFormat().writeLiveDocs(liveDocs, trackingDir, info, pendingDeleteCount, IOContext.DEFAULT);
       success = true;
     } finally {
       if (!success) {
         // Advance only the nextWriteDelGen so that a 2nd
         // attempt to write will write to a new file
-        // 更新了 gen后 写入的索引文件也会改变
+        // 更新 gen 之后的重试就会写入到新的文件
         info.advanceNextWriteDelGen();
 
         // Delete any partially created file(s):
@@ -238,8 +246,9 @@ class PendingDeletes {
     // then info's delGen remains pointing to the previous
     // (successfully written) del docs:
     info.advanceDelGen();
-    // 更新 commitInfo的删除数量
+    // 更新 info的删除数量
     info.setDelCount(info.getDelCount() + pendingDeleteCount);
+    // 重置 pendingDeleteCount
     dropChanges();
     return true;
   }

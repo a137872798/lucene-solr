@@ -698,7 +698,7 @@ final class DocumentsWriter implements Closeable, Accountable {
     /**
      * Called when files were written to disk that are not used anymore. It's the implementation's responsibility
      * to clean these files up
-     * 将没有使用的文件删除
+     * 当某组文件确保不会再被使用时触发
      */
     void deleteUnusedFiles(Collection<String> files);
 

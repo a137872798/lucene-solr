@@ -667,7 +667,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
   }
 
   /**
-   * 该对象是一个 密集的存储 二进制 docValue数据的对象
+   * 该对象是一个通过密集算法(压缩)存储二进制 docValue数据的对象
    */
   private static abstract class DenseBinaryDocValues extends BinaryDocValues {
 
@@ -719,6 +719,9 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     }
   }
 
+  /**
+   * 因为该对象内部的 docId 不是连续的 所以nextDoc 无法直接将doc+1 而是通过disi对象获取下一个doc
+   */
   private static abstract class SparseBinaryDocValues extends BinaryDocValues {
 
     final IndexedDISI disi;
@@ -727,6 +730,11 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       this.disi = disi;
     }
 
+    /**
+     * 切换到下一个存在的docId
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
       return disi.nextDoc();
@@ -871,7 +879,15 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
      * 掩码  便于计算某个doc所在的chunk
      */
     private final int docsPerChunkShift;
-    
+
+
+    /**
+     *
+     * @param addresses
+     * @param compressedData  这里承载了数据 (对应dvd文件)
+     * @param biggestUncompressedBlockSize  当解压后最多允许存储多少数据   从 compressedData读取出来的数据长度是 未解压的版本
+     * @param docsPerChunkShift  每个chunk 存储多少文档
+     */
     public BinaryDecoder(LongValues addresses, IndexInput compressedData, int biggestUncompressedBlockSize, int docsPerChunkShift) {
       super();
       this.addresses = addresses;
@@ -886,12 +902,14 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     }
 
     /**
-     * 指定docId  获取对应的docValue 数据
+     * 代表第几个doc
+     * 这里采用批量读取的原因就是  在压缩时就是尽可能将大块数据一起压缩 在解压的时候也会一次性解压很多数据 (单数据压缩就失去压缩的意义了)
      * @param docNumber
      * @return
      * @throws IOException
      */
     BytesRef decode(int docNumber) throws IOException {
+      // 先定位到某个 chunk
       int blockId = docNumber >> docsPerChunkShift;
       // 获取 某个chunk下存储的相对偏移量
       int docInBlockId = docNumber % docsPerChunk;
@@ -937,7 +955,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
           uncompressedDocStarts[i+1] = uncompressedBlockLength;
         }
 
-        // 代表doc下没有任何数据
+        // 代表doc下没有任何数据  返回空数据
         if (uncompressedBlockLength == 0) {
           uncompressedBytesRef.offset = 0;
           uncompressedBytesRef.length = 0;
@@ -945,7 +963,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
         
         assert uncompressedBlockLength <= uncompressedBlock.length;
-        //
+        // 将数据解压并填充到byte[]中
         LZ4.decompress(compressedData, uncompressedBlockLength, uncompressedBlock);
       }
 
@@ -981,13 +999,19 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
       // address 信息是采用 单调递增+位存储的形式保存的 现在对数据进行还原
       final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
 
-      // 返回一个基于连续存储doc 的迭代器对象
+      // 返回一个基于连续存储doc 的迭代器对象      因为本身doc就是连续存储的 BinaryDecoder 存放数据时是将docId 转换成blockId 也就是docId相近的会分配到一个block中 他们的数据是连续存储的
+      // 而如果docId 是分散的就不行  需要额外做一层转换 使得docId转换后的值相距不远
       return new DenseBinaryDocValues(maxDoc) {
         /**
          * address 应该是用于定位每个doc存储的位置   (对应data文件的数据)
          */
         BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
 
+        /**
+         * 找到使用 LZ4 压缩算法存储到 dvd中的数据
+         * @return
+         * @throws IOException
+         */
         @Override
         public BytesRef binaryValue() throws IOException {          
           return decoder.decode(doc);
@@ -996,12 +1020,21 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
     } else {
       // sparse   看来这个DISI 是按照某种特殊算法存储的
       final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+          // 跳跃表内部的实体数量 每个占用8 byte
           entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
+
+      // 同样要读取有关 doc-block 体系偏移量的元数据
       final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+      // 对地址数据进行还原
       final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
       return new SparseBinaryDocValues(disi) {
         BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
 
+        /**
+         * 这里唯一的区别就是 没有直接使用docId 而是通过  disi做了一层映射
+         * @return
+         * @throws IOException
+         */
         @Override
         public BytesRef binaryValue() throws IOException {
           return decoder.decode(disi.index());

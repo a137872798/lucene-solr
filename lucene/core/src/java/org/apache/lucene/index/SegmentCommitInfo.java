@@ -58,7 +58,7 @@ public class SegmentCommitInfo {
 
   // Normally 1+delGen, unless an exception was hit on last
   // attempt to write:
-  // 下一次删除doc的话 删除动作属于哪个年代  默认就是 delGen+1
+  // 下一次删除doc的话 生成的文件名年代信息 默认就是 delGen+1
   private long nextWriteDelGen;
 
   // Generation number of the FieldInfos (-1 if there are no updates)
@@ -363,6 +363,10 @@ public class SegmentCommitInfo {
     return softDelCount;
   }
 
+  /**
+   * 只有当删除处理后 liveDoc信息写入到位图对象后 才会更新info.delCount
+   * @param delCount
+   */
   void setDelCount(int delCount) {
     if (delCount < 0 || delCount > info.maxDoc()) {
       throw new IllegalArgumentException("invalid delCount=" + delCount + " (maxDoc=" + info.maxDoc() + ")");

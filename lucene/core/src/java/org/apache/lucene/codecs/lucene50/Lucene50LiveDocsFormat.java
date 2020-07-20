@@ -103,11 +103,11 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
   }
 
   /**
-   * @param bits   记录当前还有哪些doc 存活的位图
+   * @param bits
    * @param dir    索引文件写入的目标目录
    * @param info
    * @param newDelCount   记录此时有多少待删除的doc
-   * @param context
+   * @param context  对应文件对象 该参数是无效的
    * @throws IOException
    */
   @Override
@@ -122,6 +122,7 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
       final int longCount = FixedBitSet.bits2words(bits.length());
       for (int i = 0; i < longCount; ++i) {
         long currentBits = 0;
+        // 在遍历long的每个位
         for (int j = i << 6, end = Math.min(j + 63, bits.length() - 1); j <= end; ++j) {
           if (bits.get(j)) {
             currentBits |= 1L << j; // mod 64
@@ -134,6 +135,7 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
       }
       CodecUtil.writeFooter(output);
     }
+    // 从这里可以看出 调用该方法时 要求删除动作已经作用在传入的位图上
     if (delCount != info.getDelCount() + newDelCount) {
       throw new CorruptIndexException("bits.deleted=" + delCount + 
           " info.delcount=" + info.getDelCount() + " newdelcount=" + newDelCount, name);
