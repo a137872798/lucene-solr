@@ -111,7 +111,7 @@ final class IndexedDISI extends DocIdSetIterator {
 
     /**
      * @param block          本批数据写入的block
-     * @param buffer         存储数据的位图对象  长度固定为 65535
+     * @param buffer         存储数据的位图对象  长度固定为 65535  此时位图已经存储了划分到该block下的所有doc (只取低16位)
      * @param cardinality    当前block中总计写入了多少数据
      * @param denseRankPower rank因子对象  范围在 7~15之内 默认为9
      * @param out            数据写入对象
@@ -125,19 +125,23 @@ final class IndexedDISI extends DocIdSetIterator {
         // 这里写入的数据量 -1
         out.writeShort((short) (cardinality - 1));
         // 这个是参考那个稀疏视图的实现 也就是对数据进行分级
-        // 本次写入的数据超过了 某个阈值 代表本次数据不算稀疏
+        // 本次写入的数据超过了 某个阈值 可以采用分块存储的方式
         if (cardinality > MAX_ARRAY_LENGTH) {
             // 不会出现这种情况  在 Lucene80DocValuesConsumer中已经判断过了 所有doc都更新docValue的情况不会进入这里
             if (cardinality != 65536) { // all docs are set
                 if (denseRankPower != -1) {
+                    // denseRankPower 越大 rank[] 就越大 rank每2个值分别记录高8位和低8位 (有关这个rank内位图有多少有效值)
                     final byte[] rank = createRank(buffer, denseRankPower);
+                    // 将rank数组信息写入到 out中
                     out.writeBytes(rank, rank.length);
                 }
+                // 有了上面的rank[] 能够知道每多少long内有多少有效值  同时可以直接定位目标doc大概在哪个rank内
                 for (long word : buffer.getBits()) {
                     out.writeLong(word);
                 }
             }
         } else {
+            // 代表数据比较松散 那么直接追加数据就好
             BitSetIterator it = new BitSetIterator(buffer, cardinality);
             for (int doc = it.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = it.nextDoc()) {
                 out.writeShort((short) doc);
@@ -152,28 +156,32 @@ final class IndexedDISI extends DocIdSetIterator {
      * 创建rank[] 此时还没有填充数据
      *
      * @param buffer
-     * @param denseRankPower  这个值好像是用来划分块的 该值越大 拆分的就越细
+     * @param denseRankPower  这个值越大 每个rank包含的long值越多 同时范围也越宽(rank越少)
      * @return
      */
     private static byte[] createRank(FixedBitSet buffer, byte denseRankPower) {
-        //
+        // 对于位图的每多少个long 允许生成一个 rank
+        // denseRankPower 最大值为15 也就是longsPerRank=512  最大就是2个rank rank[]长度为4
         final int longsPerRank = 1 << (denseRankPower - 6);
         // 获得掩码
         final int rankMark = longsPerRank - 1;
-        // 这个值 范围为 0~8
+        // DENSE_BLOCK_LONGS >> rankIndexShift 用于计算有多少rank   rank[] 每次都是连续读取2个值的 也就是有效长度只有一半
         final int rankIndexShift = denseRankPower - 7; // 6 for the long (2^6) + 1 for 2 bytes/entry
-        // rank的长度为 4~1024
+        // rank[]的大小刚好是 longsPerRank 的2倍
         final byte[] rank = new byte[DENSE_BLOCK_LONGS >> rankIndexShift];
         // 以long[]的形式返回位图对象
         final long[] bits = buffer.getBits();
         int bitCount = 0;
+        // 默认情况下 使用1024个long值来存储数据
         for (int word = 0; word < DENSE_BLOCK_LONGS; word++) {
             // 代表每多少个word 才允许写入一个到 rank中
             if ((word & rankMark) == 0) { // Every longsPerRank longs
-                // 连续写入2个值 一个是之前已经写入了多少值
+                // 连续写入2个值 一个只记录高8位的值  一个只记录低8位
+                // word >> rankIndexShift 就是计算 该word落在哪个 rank上
                 rank[word >> rankIndexShift] = (byte) (bitCount >> 8);
                 rank[(word >> rankIndexShift) + 1] = (byte) (bitCount & 0xFF);
             }
+            // 当没有达到rank的限制时  将每个long 有多少有效位记录下来
             bitCount += Long.bitCount(bits[word]);
         }
         return rank;
@@ -223,6 +231,7 @@ final class IndexedDISI extends DocIdSetIterator {
         int totalCardinality = 0;
         // 代表当前块下已经存储了多少值
         int blockCardinality = 0;
+        // 65535/64 = 1024 也就是该位图由1024个long组成
         final FixedBitSet buffer = new FixedBitSet(1 << 16);
         int[] jumps = new int[ArrayUtil.oversize(1, Integer.BYTES * 2)];
         int prevBlock = -1;
@@ -238,18 +247,19 @@ final class IndexedDISI extends DocIdSetIterator {
                 // 这个 jumps 内维护了 offset 和 index 信息
                 jumps = addJumps(jumps, out.getFilePointer() - origo, totalCardinality, jumpBlockIndex, prevBlock + 1);
                 jumpBlockIndex = prevBlock + 1;
-                // Flush block
+                // Flush block  将位图的信息写入到out中
                 flush(prevBlock, buffer, blockCardinality, denseRankPower, out);
                 // Reset for next block
                 buffer.clear(0, buffer.length());
                 totalCardinality += blockCardinality;
                 blockCardinality = 0;
             }
-            // 同属于一个block的情况  只保存低16位
+            // 同属于一个block的情况  继续标记位图
             buffer.set(doc & 0xFFFF);
             blockCardinality++;
             prevBlock = block;
         }
+        // 代表还有剩余的数据 单独写入一次
         if (blockCardinality > 0) {
             jumps = addJumps(jumps, out.getFilePointer() - origo, totalCardinality, jumpBlockIndex, prevBlock + 1);
             totalCardinality += blockCardinality;
@@ -257,14 +267,21 @@ final class IndexedDISI extends DocIdSetIterator {
             buffer.clear(0, buffer.length());
             prevBlock++;
         }
+
+        // 查找上一个写入的 block
         final int lastBlock = prevBlock == -1 ? 0 : prevBlock; // There will always be at least 1 block (NO_MORE_DOCS)
         // Last entry is a SPARSE with blockIndex == 32767 and the single entry 65535, which becomes the docID NO_MORE_DOCS
         // To avoid creating 65K jump-table entries, only a single entry is created pointing to the offset of the
         // NO_MORE_DOCS block, with the jumpBlockIndex set to the logical EMPTY block after all real blocks.
+        // 针对最后一次写入 还需要单独生成 jumps
         jumps = addJumps(jumps, out.getFilePointer() - origo, totalCardinality, lastBlock, lastBlock + 1);
+
+        // 这里又写入了一个 满位图
         buffer.set(DocIdSetIterator.NO_MORE_DOCS & 0xFFFF);
+        // 最后一次写入 block为0
         flush(DocIdSetIterator.NO_MORE_DOCS >>> 16, buffer, 1, denseRankPower, out);
         // offset+index jump-table stored at the end
+        // 将 jump信息持久化
         return flushBlockJumps(jumps, lastBlock + 1, out, origo);
     }
 
@@ -292,7 +309,9 @@ final class IndexedDISI extends DocIdSetIterator {
 
     // Flushes the offset & index jump-table for blocks. This should be the last data written to out
     // This method returns the blockCount for the blocks reachable for the jump_table or -1 for no jump-table
+    // 写入 jump信息
     private static short flushBlockJumps(int[] jumps, int blockCount, IndexOutput out, long origo) throws IOException {
+        // 代表只使用了 一个 block 因为最后还会针对NO_MORE_DOCS 写入一次数据  这种特殊情况直接将block置0
         if (blockCount == 2) { // Jumps with a single real entry + NO_MORE_DOCS is just wasted space so we ignore that
             blockCount = 0;
         }

@@ -44,8 +44,9 @@ import org.apache.lucene.util.CloseableThreadLocal;
 import org.apache.lucene.util.IOUtils;
 
 /** Holds core readers that are shared (unchanged) when
- * SegmentReader is cloned or reopened */
-// 该对象内部组合了各种输入流  可以以field为单位读取全部相关信息  相当于一个总入口
+ * SegmentReader is cloned or reopened
+ * 该对象内部组合了各种输入流  可以以field为单位读取全部相关信息  相当于一个总入口
+ */
 final class SegmentCoreReaders {
 
   // Counts how many other readers share the core objects
@@ -56,9 +57,7 @@ final class SegmentCoreReaders {
   // SegmentReaders:
   private final AtomicInteger ref = new AtomicInteger(1);
 
-  /**
-   * 该对象内部 按照field 分成多个reader 对象 负责读取索引文件中的数据
-   */
+  // 下面对应各种索引文件的输入流
   final FieldsProducer fields;
   final NormsProducer normsProducer;
 
@@ -113,7 +112,7 @@ final class SegmentCoreReaders {
     boolean success = false;
     
     try {
-      // 代表生成了 复合模式的文件
+      // 代表生成了 复合模式的文件   TODO 复合模式就不看了 这个不影响主流程
       if (si.info.getUseCompoundFile()) {
         cfsDir = cfsReader = codec.compoundFormat().getCompoundReader(dir, si.info, context);
       } else {
@@ -123,10 +122,13 @@ final class SegmentCoreReaders {
 
       segment = si.info.name;
 
-      // 读取该段下 所有field的信息
+      // 先还原该段下所有的 fieldInfo
       coreFieldInfos = codec.fieldInfosFormat().read(cfsDir, si.info, "", context);
-      
+
+      // 生成一个读取时的上下文对象
       final SegmentReadState segmentReadState = new SegmentReadState(cfsDir, si.info, coreFieldInfos, context);
+
+
       final PostingsFormat format = codec.postingsFormat();
       // Ask codec for its Fields
       // 该对象可以读取 每个field 下的position/payload 等信息

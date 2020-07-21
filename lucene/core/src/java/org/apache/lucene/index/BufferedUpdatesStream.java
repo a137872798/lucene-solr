@@ -51,7 +51,7 @@ import org.apache.lucene.util.InfoStream;
 final class BufferedUpdatesStream implements Accountable {
 
   /**
-   * 待执行的改动任务
+   * 待执行的 update
    */
   private final Set<FrozenBufferedUpdates> updates = new HashSet<>();
 

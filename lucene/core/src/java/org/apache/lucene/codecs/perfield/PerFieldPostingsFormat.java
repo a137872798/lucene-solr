@@ -65,6 +65,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * filenames would look like <code>_1_Lucene40_0.prx</code>.
  * @see ServiceLoader
  * @lucene.experimental
+ * 该对象会以 field为单位 单独创建索引文件
  */
 
 public abstract class PerFieldPostingsFormat extends PostingsFormat {
@@ -351,21 +352,23 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           // 代表该field的某些信息会存储到索引文件中
           if (fi.getIndexOptions() != IndexOptions.NONE) {
             final String fieldName = fi.name;
-            // 获取描述存储格式的信息
+            // 检测该fieldInfo 有没有指定 使用的存储格式
             final String formatName = fi.getAttribute(PER_FIELD_FORMAT_KEY);
             if (formatName != null) {
               // null formatName means the field is in fieldInfos, but has no postings!
-              // 获取索引文件后缀信息
+              // 格式名 和使用的后缀名必须同时存在
               final String suffix = fi.getAttribute(PER_FIELD_SUFFIX_KEY);
               if (suffix == null) {
                 throw new IllegalStateException("missing attribute: " + PER_FIELD_SUFFIX_KEY + " for field: " + fieldName);
               }
-              // 这里是真正的 索引文件reader 对象
+              // 创建指定的索引格式对象
               PostingsFormat format = PostingsFormat.forName(formatName);
               String segmentSuffix = getSuffix(formatName, suffix);
               if (!formats.containsKey(segmentSuffix)) {
+                // 提前生成 producer 对象并存储在 formats容器中
                 formats.put(segmentSuffix, format.fieldsProducer(new SegmentReadState(readState, segmentSuffix)));
               }
+              // 以fieldName 为key 存储producer
               fields.put(fieldName, formats.get(segmentSuffix));
             }
           }

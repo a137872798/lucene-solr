@@ -342,7 +342,7 @@ final class ReadersAndUpdates {
      * @param dir
      * @param dvFormat
      * @param reader
-     * @param fieldFiles
+     * @param fieldFiles 代表该field关联的所有索引文件 包含 meta data 等  在该方法结束后会将创建的fileName回填到容器中
      * @param maxDelGen
      * @param infoStream
      * @throws IOException
@@ -416,6 +416,8 @@ final class ReadersAndUpdates {
 
                 // 如果docValue 是 二进制类型
                 if (type == DocValuesType.BINARY) {
+
+                    // 这里将docValue的信息写入到索引文件中
                     fieldsConsumer.addBinaryField(fieldInfo, new EmptyDocValuesProducer() {
 
                         // 这里重写了根据 field 获取二进制值的方法
@@ -619,27 +621,38 @@ final class ReadersAndUpdates {
             } while (hasValue == false);
             return docIDOut;
         }
-    }
+    };
 
-    ;
 
+    /**
+     *
+     * @param fieldInfos  当前field的信息
+     * @param dir  目标目录
+     * @param infosFormat  标明 fieldInfo 会以什么格式存储
+     * @return
+     * @throws IOException
+     */
     private synchronized Set<String> writeFieldInfosGen(FieldInfos fieldInfos, Directory dir,
                                                         FieldInfosFormat infosFormat) throws IOException {
         final long nextFieldInfosGen = info.getNextFieldInfosGen();
+        // 生成文件名
         final String segmentSuffix = Long.toString(nextFieldInfosGen, Character.MAX_RADIX);
         // we write approximately that many bytes (based on Lucene46DVF):
         // HEADER + FOOTER: 40
         // 90 bytes per-field (over estimating long name and attributes map)
+        // 这里预估会占用多少大小
         final long estInfosSize = 40 + 90 * fieldInfos.size();
         final IOContext infosContext = new IOContext(new FlushInfo(info.info.maxDoc(), estInfosSize));
         // separately also track which files were created for this gen
         final TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
+        // 写入 fieldInfo  （就是将fieldInfo 挨个属性写入到索引文件中）
         infosFormat.write(trackingDir, info.info, segmentSuffix, fieldInfos, infosContext);
         info.advanceFieldInfosGen();
         return trackingDir.getCreatedFiles();
     }
 
     /**
+     * 将当前该对象内部维护的docValue写入到索引文件中
      * @param dir          本次写入的目标目录
      * @param fieldNumbers fieldNum 映射容器
      * @param maxDelGen    此时已经完成的update对象 对应的delGen
@@ -681,9 +694,10 @@ final class ReadersAndUpdates {
             final Codec codec = info.info.getCodec();
 
             // reader could be null e.g. for a just merged segment (from
-            // IndexWriter.commitMergedDeletes).
+            // IndexWriter.commitMergedDeletes).   啥 merge 可能会导致 reader为null
             final SegmentReader reader;
             if (this.reader == null) {
+                // 这里只创建读取一次的对象
                 reader = new SegmentReader(info, indexCreatedVersionMajor, IOContext.READONCE);
                 pendingDeletes.onNewReader(reader, info);
             } else {
@@ -695,13 +709,14 @@ final class ReadersAndUpdates {
                 // the reader's infos and write them to a new fieldInfos_gen file.
                 // 记录当前处理的所有 fieldInfo 最大的号码
                 int maxFieldNumber = -1;
-                // 每个reader对象对应一组 fieldInfo
+                // 以 fieldName 为key 创建一个映射对象
                 Map<String, FieldInfo> byName = new HashMap<>();
                 for (FieldInfo fi : reader.getFieldInfos()) {
                     // cannot use builder.add(fi) because it does not preserve
                     // the local field number. Field numbers can be different from
                     // the global ones if the segment was created externally (and added to
                     // this index with IndexWriter#addIndexes(Directory)).
+                    // 创建副本对象 并存储到byName中
                     byName.put(fi.name, cloneFieldInfo(fi, fi.number));
                     maxFieldNumber = Math.max(fi.number, maxFieldNumber);
                 }
@@ -711,6 +726,7 @@ final class ReadersAndUpdates {
                 for (List<DocValuesFieldUpdates> updates : pendingDVUpdates.values()) {
                     DocValuesFieldUpdates update = updates.get(0);
 
+                    // 如果update对象相关的field信息已经存在  代表是针对之前已经存在的field进行更新  这时使用update对象去覆盖之前的属性
                     if (byName.containsKey(update.field)) {
                         // the field already exists in this segment
                         FieldInfo fi = byName.get(update.field);
@@ -719,9 +735,11 @@ final class ReadersAndUpdates {
                     } else {
                         // the field is not present in this segment so we clone the global field
                         // (which is guaranteed to exist) and remaps its field number locally.
-                        // 如果本次 update 中出现了 之前初始化时不存在的field信息  那么进行初始化 并将信息追加到全局的 field映射对象中
+                        // 代表本次创建了新的field
                         assert fieldNumbers.contains(update.field, update.type);
+                        // 这里 num+1
                         FieldInfo fi = cloneFieldInfo(builder.getOrAdd(update.field), ++maxFieldNumber);
+                        // 指定 docValue的类型 并添加到映射容器中
                         fi.setDocValuesType(update.type);
                         byName.put(fi.name, fi);
                     }
@@ -731,8 +749,10 @@ final class ReadersAndUpdates {
                 fieldInfos = new FieldInfos(byName.values().toArray(new FieldInfo[0]));
                 final DocValuesFormat docValuesFormat = codec.docValuesFormat();
 
+                // 将 docValue 进行持久化
                 handleDVUpdates(fieldInfos, trackingDir, docValuesFormat, reader, newDVFiles, maxDelGen, infoStream);
 
+                // 这里更新 fieldInfo的信息
                 fieldInfosFiles = writeFieldInfosGen(fieldInfos, trackingDir, codec.fieldInfosFormat());
             } finally {
                 if (reader != this.reader) {
@@ -755,6 +775,7 @@ final class ReadersAndUpdates {
             }
         }
 
+        // 至此 docValue 和 fieldInfo 的最新数据已经刷盘成功
         // Prune the now-written DV updates:
         long bytesFreed = 0;
         Iterator<Map.Entry<String, List<DocValuesFieldUpdates>>> it = pendingDVUpdates.entrySet().iterator();
@@ -762,6 +783,7 @@ final class ReadersAndUpdates {
             Map.Entry<String, List<DocValuesFieldUpdates>> ent = it.next();
             int upto = 0;
             List<DocValuesFieldUpdates> updates = ent.getValue();
+            // 这里就是做清理工作 将 delGen前的 update移除
             for (DocValuesFieldUpdates update : updates) {
                 if (update.delGen > maxDelGen) {
                     // not yet applied
@@ -783,6 +805,7 @@ final class ReadersAndUpdates {
 
         // if there is a reader open, reopen it to reflect the updates
         if (reader != null) {
+            // 重新读取数据 确保能读取到最新的改动
             swapNewReaderWithLatestLiveDocs();
         }
 
@@ -795,6 +818,7 @@ final class ReadersAndUpdates {
         // were not updated in this session, and add new mappings for fields that
         // were updated now.
         assert newDVFiles.isEmpty() == false;
+        // 将此时包含docValue update 信息的文件设置到 info对象上
         for (Entry<Integer, Set<String>> e : info.getDocValuesUpdatesFiles().entrySet()) {
             if (newDVFiles.containsKey(e.getKey()) == false) {
                 newDVFiles.put(e.getKey(), e.getValue());
@@ -823,7 +847,7 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * 以当前reader对象为基础  重新创建一个reader对象 不过liveDoc相关信息需要重新读取
+     * 读取最新的数据
      *
      * @param reader
      * @return
@@ -865,6 +889,7 @@ final class ReadersAndUpdates {
         return isMerging;
     }
 
+
     final static class MergeReader {
         final SegmentReader reader;
         final Bits hardLiveDocs;
@@ -884,6 +909,7 @@ final class ReadersAndUpdates {
         // successfully written, e.g. because there was a hole in the delGens,
         // or they arrived after we wrote all DVs for merge but before we set
         // isMerging here:
+        // 将待执行的 update 对象 全部转移到 merging 中
         for (Map.Entry<String, List<DocValuesFieldUpdates>> ent : pendingDVUpdates.entrySet()) {
             List<DocValuesFieldUpdates> mergingUpdates = mergingDVUpdates.get(ent.getKey());
             if (mergingUpdates == null) {
@@ -894,6 +920,7 @@ final class ReadersAndUpdates {
         }
 
         SegmentReader reader = getReader(context);
+        // 代表有部分 删除的doc信息没有更新到reader内部
         if (pendingDeletes.needsRefresh(reader)) {
             // beware of zombies:
             assert pendingDeletes.getLiveDocs() != null;
@@ -906,6 +933,7 @@ final class ReadersAndUpdates {
     /**
      * Drops all merging updates. Called from IndexWriter after this segment
      * finished merging (whether successfully or not).
+     * 丢弃在 merging过程中插入的新的 update 对象
      */
     public synchronized void dropMergingUpdates() {
         mergingDVUpdates.clear();

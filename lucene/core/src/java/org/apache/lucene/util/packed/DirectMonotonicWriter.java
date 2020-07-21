@@ -96,7 +96,7 @@ public final class DirectMonotonicWriter {
   private void flush() throws IOException {
     assert bufferSize != 0;
 
-    // 这里减期望有什么用???
+    // 减去期望
     final float avgInc = (float) ((double) (buffer[bufferSize-1] - buffer[0]) / Math.max(1, bufferSize - 1));
     for (int i = 0; i < bufferSize; ++i) {
       final long expected = (long) (avgInc * (long) i);
@@ -123,7 +123,7 @@ public final class DirectMonotonicWriter {
     meta.writeInt(Float.floatToIntBits(avgInc));
     // 代表偏移量信息
     meta.writeLong(data.getFilePointer() - baseDataPointer);
-    // 代表所有的值都是一样的 也就是 数据的变化是平稳的
+    // 代表所有的值都是一样的
     if (maxDelta == 0) {
       meta.writeByte((byte) 0);
     } else {

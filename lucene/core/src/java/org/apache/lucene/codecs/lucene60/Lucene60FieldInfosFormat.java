@@ -108,7 +108,7 @@ public final class Lucene60FieldInfosFormat extends FieldInfosFormat {
   }
 
   /**
-   * 在初始化 IndexWriter时 如果复用之前的segment_N 文件   会通过记录的索引文件名恢复之前写入的数据
+   * 从索引文件中恢复fieldInfo信息
    * @param directory  索引文件所在的目录
    * @param segmentInfo    代表读取的 fieldInfos 属于哪个segment
    * @param segmentSuffix   索引文件后缀名    实际上是存储在segment元数据文件中的 fieldInfosGen

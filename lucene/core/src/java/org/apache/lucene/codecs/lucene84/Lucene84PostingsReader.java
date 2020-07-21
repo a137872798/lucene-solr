@@ -55,7 +55,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * with postings format.
  *
  * @lucene.experimental
- * 该对象读取 field 下的信息
+ * 该对象存储了 field 的一些特殊位置信息  frq,pos,offset,payloads
  */
 public final class Lucene84PostingsReader extends PostingsReaderBase {
 

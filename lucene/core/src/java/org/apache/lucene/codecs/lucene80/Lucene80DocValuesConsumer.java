@@ -507,11 +507,11 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       meta.writeVInt(totalChunks);
       // 格式信息
       meta.writeVInt(Lucene80DocValuesFormat.BINARY_BLOCK_SHIFT);
-      // 记录未压缩前的长度
+      // 记录未压缩前的block块的   主要是用来还原的
       meta.writeVInt(maxUncompressedBlockLength);
       meta.writeVInt(DIRECT_MONOTONIC_BLOCK_SHIFT);
-      
-    
+
+      // 为临时文件写入文件尾   这个临时文件记录了每次flush写入的长度
       CodecUtil.writeFooter(tempBinaryOffsets);
       IOUtils.close(tempBinaryOffsets);             
       // write the compressed block offsets info to the meta file by reading from temp file
@@ -521,7 +521,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
           Lucene80DocValuesFormat.VERSION_CURRENT);
         Throwable priorE = null;
         try {
-          // 内部数据通过 期望/min 进行压缩处理 减小实际写入的内存
+          // 内部数据通过 期望/min 进行压缩处理 减小实际写入的开销  每个block的min等元数据信息写入到meta 实际数据写入到data
           final DirectMonotonicWriter filePointers = DirectMonotonicWriter.getInstance(meta, data, totalChunks, DIRECT_MONOTONIC_BLOCK_SHIFT);
           long fp = blockAddressesStart;
           for (int i = 0; i < totalChunks; ++i) {
@@ -585,7 +585,8 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         // 随着每次读取到一个doc 增加该值
         numDocsWithField++;
         BytesRef v = values.binaryValue();
-        // 将 docId 以及绑定的docValue 写入到writer中  同时每满足写入32个 docValue 会触发一次被动刷盘
+        // 将 docId 以及绑定的docValue 写入到writer中  同时每满足写入32个 docValue 会触发一次被动刷盘  注意因为这里doc都是分散的
+        // 正常情况下想要找到某个docValue 只能不断读取数据 直到找到匹配的doc 那么效率会很低 所以才需要disi 作为一个索引
         blockWriter.addDoc(doc, v);      
         int length = v.length;      
         minLength = Math.min(length, minLength);
@@ -614,10 +615,14 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         long offset = data.getFilePointer();
         meta.writeLong(offset); // docsWithFieldOffset      写入data文件的偏移量
         values = valuesProducer.getBinary(field);
+        // 这里使用特殊的数据结构划分 doc  形成一个类似索引的结构
         final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);  //  写入 jumpTable 相关数据   默认的 rankPower 为9
-        meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength    写入完毕后记录长度
-        meta.writeShort(jumpTableEntryCount);  // 记录标识
-        meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);  // 记录写入的类型
+        // 记录 disi数据的长度
+        meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength
+        // 记录总计有多少个jump 块
+        meta.writeShort(jumpTableEntryCount);
+        // 记录 power的值
+        meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
       }
 
       // 分别记录 该field 下有多少docValue  最大值的长度 最小值的长度

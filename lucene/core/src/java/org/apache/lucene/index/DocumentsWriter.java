@@ -142,6 +142,7 @@ final class DocumentsWriter implements Closeable, Accountable {
    * we release all changes. NRT Readers otherwise suddenly return true from
    * isCurrent while there are actually changes currently committed. See also
    * #anyChanges() & #flushAllThreads
+   * 代表在fullFlush 之前是否有未刷盤的数据
    */
   private volatile boolean pendingChangesInCurrentFullFlush;
 
@@ -414,6 +415,10 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
 
 
+  /**
+   * 检测当前是否有未提交数据
+   * @return
+   */
   boolean anyChanges() {
     /*
      * changes are either in a DWPT or in the deleteQueue.
@@ -769,6 +774,7 @@ final class DocumentsWriter implements Closeable, Accountable {
    * FlushAllThreads is synced by IW fullFlushLock. Flushing all threads is a
    * two stage operation; the caller must ensure (in try/finally) that finishFlush
    * is called after this method, to release the flush lock in DWFlushControl
+   * 返回当前所有的flush线程
    */
   long flushAllThreads()
     throws IOException {
@@ -784,6 +790,7 @@ final class DocumentsWriter implements Closeable, Accountable {
       /* Cutover to a new delete queue.  This must be synced on the flush control
        * otherwise a new DWPT could sneak into the loop with an already flushing
        * delete queue */
+      // 该方法会冻结当前所有的perThread 并将内部待刷盘任务转移到 flushQueue中
       seqNo = flushControl.markForFullFlush(); // swaps this.deleteQueue synced on FlushControl
       assert setFlushingDeleteQueue(flushingDeleteQueue);
     }
@@ -794,16 +801,20 @@ final class DocumentsWriter implements Closeable, Accountable {
     try {
       DocumentsWriterPerThread flushingDWPT;
       // Help out with flushing:
+      // 从flushQueue中取出任务并刷盘
       while ((flushingDWPT = flushControl.nextPendingFlush()) != null) {
         anythingFlushed |= doFlush(flushingDWPT);
       }
       // If a concurrent flush is still in flight wait for it
-      flushControl.waitForFlush();  
+      // 阻塞直到所有的 perThread任务完成
+      flushControl.waitForFlush();
+      // 如果刷盘任何数据 而 存在一些 update/delete信息
       if (anythingFlushed == false && flushingDeleteQueue.anyChanges()) { // apply deletes if we did not flush any document
         if (infoStream.isEnabled("DW")) {
           infoStream.message("DW", Thread.currentThread().getName() + ": flush naked frozen global deletes");
         }
         assert assertTicketQueueModification(flushingDeleteQueue);
+        // 这里根据 deleteQueue的信息 生成frozen对象 并保存到队列中
         ticketQueue.addDeletes(flushingDeleteQueue);
       }
       // we can't assert that we don't have any tickets in teh queue since we might add a DocumentsWriterDeleteQueue

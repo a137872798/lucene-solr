@@ -22,14 +22,14 @@ import org.apache.lucene.util.Version;
 /**
  * Provides read-only metadata about a leaf.
  * @lucene.experimental
- * 数据以 数据页为单位   对应某一个 segment
+ * 本身只记录了一些元数据信息
  */
 public final class LeafMetaData {
 
   private final int createdVersionMajor;
   private final Version minVersion;
   /**
-   * 该对象内部存储了 某个segment下所有段的排序规则
+   * 查询出来的数据是否已经按照某种规则排序了
    */
   private final Sort sort;
 

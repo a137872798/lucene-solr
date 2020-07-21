@@ -669,6 +669,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     // 设置成 允许reader池化
     readerPool.enableReaderPooling();
     DirectoryReader r = null;
+    // 执行刷盘前的钩子
     doBeforeFlush();
     boolean anyChanges = false;
     /*
@@ -684,10 +685,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
       synchronized (fullFlushLock) {
         try {
           // TODO: should we somehow make the seqNo available in the returned NRT reader?
+          // 返回负数 代表数据成功刷盘
           anyChanges = docWriter.flushAllThreads() < 0;
           if (anyChanges == false) {
             // prevent double increment since docWriter#doFlush increments the flushcount
             // if we flushed anything.
+            // 当没有任何数据写入时 也要增加刷盘次数
             flushCount.incrementAndGet();
           }
           publishFlushedSegments(true);
@@ -5245,7 +5248,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
    */
   private void publishFlushedSegments(boolean forced) throws IOException {
 
-    // 清理已经完成flush的ticket
+    // 处理还存在于queue的所有flushTicket
     docWriter.purgeFlushTickets(forced, ticket -> {
 
       // 找到描述刷盘结果的对象
@@ -5483,6 +5486,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
   final void forceApply(FrozenBufferedUpdates updates) throws IOException {
     updates.lock();
     try {
+      // 如果这个update 对象已经处理过了 忽略
       if (updates.isApplied()) {
         // already done
         return;

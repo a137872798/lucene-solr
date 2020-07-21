@@ -67,15 +67,16 @@ public class SegmentCommitInfo {
   
   // Normally 1+fieldInfosGen, unless an exception was hit on last attempt to
   // write
-  // 同 nextWriteDelGen
+  // 代表下次写入fieldInfo 数据时 使用的后缀
   private long nextWriteFieldInfosGen;
   
   // Generation number of the DocValues (-1 if there are no updates)
-  // 代表 docValue的年代
+  // 代表 docValue的年代  每当将docValue的变化刷盘后 该值+1
   private long docValuesGen;
   
   // Normally 1+dvGen, unless an exception was hit on last attempt to
   // write
+  // 代表下一次写入 docValue的年代
   private long nextWriteDocValuesGen;
 
   // Track the per-field DocValues update files

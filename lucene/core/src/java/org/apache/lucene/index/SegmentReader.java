@@ -71,6 +71,7 @@ public final class SegmentReader extends CodecReader {
   final SegmentDocValues segDocValues;
 
   /** True if we are holding RAM only liveDocs or DV updates, i.e. the SegmentCommitInfo delGen doesn't match our liveDocs. */
+  // 如果为true 代表 liveDoc 和update信息一直存储在内存中 而没有刷盘
   final boolean isNRT;
   
   final DocValuesProducer docValuesProducer;
@@ -95,7 +96,7 @@ public final class SegmentReader extends CodecReader {
     // We pull liveDocs/DV updates from disk:
     this.isNRT = false;
 
-    // 生成 segment 读取对象
+    // 该对象内部对应各种索引文件的reader对象
     core = new SegmentCoreReaders(si.info.dir, si, context);
     segDocValues = new SegmentDocValues();
     
@@ -110,12 +111,12 @@ public final class SegmentReader extends CodecReader {
         hardLiveDocs = liveDocs = codec.liveDocsFormat().readLiveDocs(directory(), si, IOContext.READONCE);
       } else {
         assert si.getDelCount() == 0;
-        // 为null 应该代表所有doc都存活吧
+        // 代表所有doc 都存活
         hardLiveDocs = liveDocs = null;
       }
       // 代表此时该段下还有多少doc
       numDocs = si.info.maxDoc() - si.getDelCount();
-      
+
       fieldInfos = initFieldInfos();
       // 初始化读取 docValue的 reader 对象
       docValuesProducer = initDocValuesProducer();

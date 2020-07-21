@@ -646,7 +646,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
                     // it's possible that we get a DWPT with 0 docs if we flush concurrently to
                     // threads getting DWPTs from the pool. In this case we simply remove it from
                     // the pool and drop it on the floor.
-                    // 将线程移出 pool
+                    // 没有需要写入的数据 直接移除就好
                     boolean checkout = perThreadPool.checkout(next);
                     assert checkout;
                 }
