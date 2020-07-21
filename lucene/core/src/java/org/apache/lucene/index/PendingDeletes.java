@@ -150,7 +150,7 @@ class PendingDeletes {
 
   /**
    * Called once a new reader is opened for this segment ie. when deletes or updates are applied.
-   * 某个reader 初始化完成后 读取了 docLive文件的数据  这时就可以用来初始化内部的 liveDocs数据了
+   * 某个reader 初始化完成后 读取了 liveDoc文件的数据  这时就可以用来初始化内部的 liveDocs数据了
    */
   void onNewReader(CodecReader reader, SegmentCommitInfo info) throws IOException {
     if (liveDocsInitialized == false) {

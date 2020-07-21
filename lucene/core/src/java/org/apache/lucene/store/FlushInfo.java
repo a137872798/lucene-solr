@@ -31,7 +31,7 @@ public class FlushInfo {
   public final int numDocs;
 
   /**
-   * 预估会写入多少 segment   一个 doc 内部有多个 segment  然后每个segment 又有多个 term  此时就是lucene的最小单位 代表某个词
+   * 预估会写入多少 byte
    */
   public final long estimatedSegmentSize;
   

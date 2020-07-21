@@ -368,6 +368,10 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
   class CompressedBinaryBlockWriter implements Closeable {
     final FastCompressionHashTable ht = new LZ4.FastCompressionHashTable();    
     int uncompressedBlockLength = 0;
+
+    /**
+     * 记录每次 flush时 压缩前的最大长度
+     */
     int maxUncompressedBlockLength = 0;
     /**
      * 记录当前 block 已经写入了多少doc
@@ -379,13 +383,17 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     final int[] docLengths = new int[Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK]; 
     byte[] block = BytesRef.EMPTY_BYTES;
     /**
-     * 记录总计触发了多少次 flushData
+     * 记录总计触发了多少次 flushData   或者说某次大流程中总共刷盘了多少次
      */
     int totalChunks = 0;
     /**
      * 记录此时 data文件的最大偏移量
      */
     long maxPointer = 0;
+
+    /**
+     * 记录数据文件的起点
+     */
     final long blockAddressesStart;
 
     /**
@@ -395,6 +403,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     
     
     public CompressedBinaryBlockWriter() throws IOException {
+      // 创建临时文件
       tempBinaryOffsets = state.directory.createTempOutput(state.segmentInfo.name, "binary_pointers", state.context);
       boolean success = false;
       try {
@@ -420,24 +429,27 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       System.arraycopy(v.bytes, v.offset, block, uncompressedBlockLength, v.length);
       uncompressedBlockLength += v.length;
       numDocsInCurrentBlock++;
-      // 当满足一个刷盘大小时 才进行刷盘 (类似批处理的思路)
+      // 当满足一个刷盘大小时 才进行刷盘 (类似批处理的思路)  这里是每当添加32个docValue时 强制刷盘
       if (numDocsInCurrentBlock == Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK) {
         flushData();
       }      
     }
 
     /**
-     * 每当写入多少 doc的关联数据时  将之前的数据刷盘
+     * 每当写入多少 doc的关联数据时  将之前的数据刷盘  为什么需要临时文件呢  应该是这样 临时文件还存在代表整个操作还没有完成 这时 data文件是不完整的
      * @throws IOException
      */
     private void flushData() throws IOException {
       if (numDocsInCurrentBlock > 0) {
         // Write offset to this block to temporary offsets file
         totalChunks++;
+
+        // 代表上一次刷盘后的数据起点
         long thisBlockStartPointer = data.getFilePointer();
         
         // Optimisation - check if all lengths are same
         boolean allLengthsSame = true;
+        // 先检测所有长度是否一致
         for (int i = 1; i < Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK; i++) {
           if (docLengths[i] != docLengths[i-1]) {
             allLengthsSame = false;
@@ -470,7 +482,9 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         // Ensure initialized with zeroes because full array is always written
         Arrays.fill(docLengths, 0);
         uncompressedBlockLength = 0;
+        // 获取此时data写入到的位置
         maxPointer = data.getFilePointer();
+        // 在临时文件中记录一个总长度
         tempBinaryOffsets.writeVLong(maxPointer - thisBlockStartPointer);
       }
     }
@@ -541,33 +555,37 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
   }
 
   /**
-   * 存储某个 field 下的docValue
+   * 存储某个 field 下的docValue (全量 如果某个DocValue未改变 写入原值 否则写入新值)
    * @param field field information
-   * @param valuesProducer Binary values to write.
+   * @param valuesProducer Binary values to write.    这里包含了本次最新的 docValue  (部分数据可能是之前已经写入到磁盘的)
    * @throws IOException
    */
   @Override
   public void addBinaryField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
+    // 往元数据索引文件中写入 fieldNum 和 docValue 类型
+
     // 标明 此时存储的 docValue是属于哪个 field的
     meta.writeInt(field.number);
     // 代表 docValue 的值类型是 二进制类型
     meta.writeByte(Lucene80DocValuesFormat.BINARY);
 
-    // 这里构建了一个 LZ4 写入对象
+    // 这里构建了一个 压缩对象
     try (CompressedBinaryBlockWriter blockWriter = new CompressedBinaryBlockWriter()){
-      // 通过指定 field 找到关联的 docValues  (该对象具备迭代内部docValue的能力)
+      // 通过指定 field 找到关联的 docValues  (docValues具备迭代内部docValue的能力)
       BinaryDocValues values = valuesProducer.getBinary(field);
-      // 获取并写入当前数据文件的起始偏移量
+      // 获取并将当前数据文件的起始偏移量写入到元数据文件
       long start = data.getFilePointer();
       meta.writeLong(start); // dataOffset
+      // TODO docValue 对应一个doc还是什么???  一个field 为什么可以对应多个文档啊
       int numDocsWithField = 0;
       int minLength = Integer.MAX_VALUE;
       int maxLength = 0;
-      // 这里写入doc数据时 当超过一定长度时 会触发被动flush
+      // 这里写入doc数据时 当超过一定长度时 会触发被动flush    nextDoc只会遍历到 hasValue == true 的doc
       for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
+        // 随着每次读取到一个doc 增加该值
         numDocsWithField++;
         BytesRef v = values.binaryValue();
-        // 将 docId 以及绑定的docValue 写入到writer中
+        // 将 docId 以及绑定的docValue 写入到writer中  同时每满足写入32个 docValue 会触发一次被动刷盘
         blockWriter.addDoc(doc, v);      
         int length = v.length;      
         minLength = Math.min(length, minLength);
@@ -577,25 +595,26 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       blockWriter.flushData();
 
       assert numDocsWithField <= maxDoc;
-      // 写入本次 刷盘的长度
+      // 写入总长度
       meta.writeLong(data.getFilePointer() - start); // dataLength
 
       // 这个套路跟 norm 一样
       if (numDocsWithField == 0) {
-        meta.writeLong(-2); // docsWithFieldOffset      这个标识用于区分 本次是 doc数量达到上限还是 doc数量为0
+        meta.writeLong(-2); // docsWithFieldOffset     -2代表没有写入任何数据
         meta.writeLong(0L); // docsWithFieldLength
-        meta.writeShort((short) -1); // jumpTableEntryCount
+        meta.writeShort((short) -1); // jumpTableEntryCount    大量的 docValue直接读取会比较慢 这里通过jumpTable 作为一种索引结构 快速的定位到某个docValue的位置
         meta.writeByte((byte) -1);   // denseRankPower
       } else if (numDocsWithField == maxDoc) {
-        meta.writeLong(-1); // docsWithFieldOffset
+        meta.writeLong(-1); // docsWithFieldOffset     -1代表每个doc都有对应的值 没有空缺的情况
         meta.writeLong(0L); // docsWithFieldLength
-        meta.writeShort((short) -1); // jumpTableEntryCount
+        meta.writeShort((short) -1); // jumpTableEntryCount     这种情况应该是 docValue本身排序就会存在规则 (连续的就容易寻找) 所以也不需要借助 jumpTable
         meta.writeByte((byte) -1);   // denseRankPower
       } else {
+        // 为分散的 docValue 建立一个索引数据 也是写入到 data文件中
         long offset = data.getFilePointer();
-        meta.writeLong(offset); // docsWithFieldOffset     写入数据文件此时的起始偏移量
-        values = valuesProducer.getBinary(field);   // 上面将 values 写入到 data文件中  这里按照特殊格式又写入了一次
-        final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);  // 这里将数据做特殊处理后写入到 data中
+        meta.writeLong(offset); // docsWithFieldOffset      写入data文件的偏移量
+        values = valuesProducer.getBinary(field);
+        final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);  //  写入 jumpTable 相关数据   默认的 rankPower 为9
         meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength    写入完毕后记录长度
         meta.writeShort(jumpTableEntryCount);  // 记录标识
         meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);  // 记录写入的类型

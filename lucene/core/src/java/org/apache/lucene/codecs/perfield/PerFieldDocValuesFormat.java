@@ -59,6 +59,7 @@ import org.apache.lucene.util.IOUtils;
  *
  * @lucene.experimental
  * @see ServiceLoader
+ * 该索引文件以 field为单位
  */
 
 public abstract class PerFieldDocValuesFormat extends DocValuesFormat {

@@ -108,13 +108,26 @@ final class IndexedDISI extends DocIdSetIterator {
      */
     static final int MAX_ARRAY_LENGTH = (1 << 12) - 1;
 
+
+    /**
+     * @param block          本批数据写入的block
+     * @param buffer         存储数据的位图对象  长度固定为 65535
+     * @param cardinality    当前block中总计写入了多少数据
+     * @param denseRankPower rank因子对象  范围在 7~15之内 默认为9
+     * @param out            数据写入对象
+     * @throws IOException
+     */
     private static void flush(
             int block, FixedBitSet buffer, int cardinality, byte denseRankPower, IndexOutput out) throws IOException {
         assert block >= 0 && block < 65536;
         out.writeShort((short) block);
         assert cardinality > 0 && cardinality <= 65536;
+        // 这里写入的数据量 -1
         out.writeShort((short) (cardinality - 1));
+        // 这个是参考那个稀疏视图的实现 也就是对数据进行分级
+        // 本次写入的数据超过了 某个阈值 代表本次数据不算稀疏
         if (cardinality > MAX_ARRAY_LENGTH) {
+            // 不会出现这种情况  在 Lucene80DocValuesConsumer中已经判断过了 所有doc都更新docValue的情况不会进入这里
             if (cardinality != 65536) { // all docs are set
                 if (denseRankPower != -1) {
                     final byte[] rank = createRank(buffer, denseRankPower);
@@ -132,18 +145,32 @@ final class IndexedDISI extends DocIdSetIterator {
         }
     }
 
-    // Creates a DENSE rank-entry (the number of set bits up to a given point) for the buffer.
-    // One rank-entry for every {@code 2^denseRankPower} bits, with each rank-entry using 2 bytes.
-    // Represented as a byte[] for fast flushing and mirroring of the retrieval representation.
+    /**
+     * Creates a DENSE rank-entry (the number of set bits up to a given point) for the buffer.
+     * One rank-entry for every {@code 2^denseRankPower} bits, with each rank-entry using 2 bytes.
+     * Represented as a byte[] for fast flushing and mirroring of the retrieval representation.
+     * 创建rank[] 此时还没有填充数据
+     *
+     * @param buffer
+     * @param denseRankPower  这个值好像是用来划分块的 该值越大 拆分的就越细
+     * @return
+     */
     private static byte[] createRank(FixedBitSet buffer, byte denseRankPower) {
+        //
         final int longsPerRank = 1 << (denseRankPower - 6);
+        // 获得掩码
         final int rankMark = longsPerRank - 1;
+        // 这个值 范围为 0~8
         final int rankIndexShift = denseRankPower - 7; // 6 for the long (2^6) + 1 for 2 bytes/entry
+        // rank的长度为 4~1024
         final byte[] rank = new byte[DENSE_BLOCK_LONGS >> rankIndexShift];
+        // 以long[]的形式返回位图对象
         final long[] bits = buffer.getBits();
         int bitCount = 0;
         for (int word = 0; word < DENSE_BLOCK_LONGS; word++) {
+            // 代表每多少个word 才允许写入一个到 rank中
             if ((word & rankMark) == 0) { // Every longsPerRank longs
+                // 连续写入2个值 一个是之前已经写入了多少值
                 rank[word >> rankIndexShift] = (byte) (bitCount >> 8);
                 rank[(word >> rankIndexShift) + 1] = (byte) (bitCount & 0xFF);
             }
@@ -174,12 +201,12 @@ final class IndexedDISI extends DocIdSetIterator {
      * The caller must keep track of the number of jump-table entries (returned by this method) as well as the
      * denseRankPower and provide them when constructing an IndexedDISI for reading.
      *
-     * @param it             the document IDs.
-     * @param out            destination for the blocks.
+     * @param it             the document IDs.   内部包含本次相关的所有docId  (仅迭代hasValue的doc)
+     * @param out            destination for the blocks.    会将结果写入到该输出流
      * @param denseRankPower for {@link Method#DENSE} blocks, a rank will be written every {@code 2^denseRankPower} docIDs.
      *                       Values &lt; 7 (every 128 docIDs) or &gt; 15 (every 32768 docIDs) disables DENSE rank.
      *                       Recommended values are 8-12: Every 256-4096 docIDs or 4-64 longs.
-     *                       {@link #DEFAULT_DENSE_RANK_POWER} is 9: Every 512 docIDs.
+     *                       {@link #DEFAULT_DENSE_RANK_POWER} is 9: Every 512 docIDs.     一种因子 用来确定某个block下存储多少docId  一般不推荐太大或太小 (小于7大于15)  默认值为9
      *                       This should be stored in meta and used when creating an instance of IndexedDISI.
      * @return the number of jump-table entries following the blocks, -1 for no entries.
      * This should be stored in meta and used when creating an instance of IndexedDISI.
@@ -192,17 +219,23 @@ final class IndexedDISI extends DocIdSetIterator {
             throw new IllegalArgumentException("Acceptable values for denseRankPower are 7-15 (every 128-32768 docIDs). " +
                     "The provided power was " + denseRankPower + " (every " + (int) Math.pow(2, denseRankPower) + " docIDs)");
         }
+        // 记录所有block 总计存储了多少数据
         int totalCardinality = 0;
+        // 代表当前块下已经存储了多少值
         int blockCardinality = 0;
         final FixedBitSet buffer = new FixedBitSet(1 << 16);
         int[] jumps = new int[ArrayUtil.oversize(1, Integer.BYTES * 2)];
         int prevBlock = -1;
         int jumpBlockIndex = 0;
 
+        // 开始遍历每个 hasValue的 doc
         for (int doc = it.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = it.nextDoc()) {
+            // 每个block的大小是 2^16
             final int block = doc >>> 16;
+            // 代表发生了 block的切换
             if (prevBlock != -1 && block != prevBlock) {
                 // Track offset+index from previous block up to current
+                // 这个 jumps 内维护了 offset 和 index 信息
                 jumps = addJumps(jumps, out.getFilePointer() - origo, totalCardinality, jumpBlockIndex, prevBlock + 1);
                 jumpBlockIndex = prevBlock + 1;
                 // Flush block
@@ -212,6 +245,7 @@ final class IndexedDISI extends DocIdSetIterator {
                 totalCardinality += blockCardinality;
                 blockCardinality = 0;
             }
+            // 同属于一个block的情况  只保存低16位
             buffer.set(doc & 0xFFFF);
             blockCardinality++;
             prevBlock = block;
@@ -234,10 +268,21 @@ final class IndexedDISI extends DocIdSetIterator {
         return flushBlockJumps(jumps, lastBlock + 1, out, origo);
     }
 
-    // Adds entries to the offset & index jump-table for blocks
+    /**
+     * Adds entries to the offset & index jump-table for blocks
+     * 构建一个 jumpTableEntry对象 并存储到 data文件中
+     *
+     * @param jumps      存储相关信息的容器
+     * @param offset     此次要写入数据 距离data文件起始位置的偏移量
+     * @param index      此时总计写入了多少doc
+     * @param startBlock 本批数据存储在哪个block
+     * @param endBlock   本批数据写入的block 对应的下一个block
+     * @return
+     */
     private static int[] addJumps(int[] jumps, long offset, int index, int startBlock, int endBlock) {
         assert offset < Integer.MAX_VALUE : "Logically the offset should not exceed 2^30 but was >= Integer.MAX_VALUE";
         jumps = ArrayUtil.grow(jumps, (endBlock + 1) * 2);
+        // 记录每个block 内部写入多少数据 以及起点在哪
         for (int b = startBlock; b < endBlock; b++) {
             jumps[b * 2] = index;
             jumps[b * 2 + 1] = (int) offset;
