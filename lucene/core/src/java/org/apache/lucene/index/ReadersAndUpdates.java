@@ -876,6 +876,9 @@ final class ReadersAndUpdates {
         reader = createNewReaderWithLatestLiveDocs(reader);
     }
 
+    /**
+     * 将当前对象标记成 merge中   在merge() 时可以看到 会为参与merge的所有reader对象都打上标记
+     */
     synchronized void setIsMerging() {
         // This ensures any newly resolved doc value updates while we are merging are
         // saved for re-applying after this segment is done merging:
@@ -902,6 +905,7 @@ final class ReadersAndUpdates {
 
     /**
      * Returns a reader for merge, with the latest doc values updates and deletions.
+     * 获取一个用于merge的 reader对象  就是除了 SegmentReader 外 还携带了 最新的liveDoc
      */
     synchronized MergeReader getReaderForMerge(IOContext context) throws IOException {
 

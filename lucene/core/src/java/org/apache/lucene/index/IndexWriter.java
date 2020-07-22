@@ -2383,7 +2383,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (newMergesFound) {
                 final int numMerges = spec.merges.size();
                 for (int i = 0; i < numMerges; i++) {
-                    // 为所有包含merge信息的对象设置 maxNumSegment
+                    // 为所有包含merge信息的对象设置 maxNumSegment  为什么这里不用 register???
                     final MergePolicy.OneMerge merge = spec.merges.get(i);
                     merge.maxNumSegments = maxNumSegments;
                 }
@@ -4278,6 +4278,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * single segment.
      *
      * @lucene.experimental
+     * 执行merge任务
      */
     protected void merge(MergePolicy.OneMerge merge) throws IOException {
 
@@ -4289,6 +4290,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         try {
             try {
                 try {
+                    // 做一些准备工作
                     mergeInit(merge);
 
                     if (infoStream.isEnabled("IW")) {
@@ -4448,14 +4450,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Does initial setup for a merge, which is fast but holds
      * the synchronized lock on IndexWriter instance.
+     * 在执行merge任务前 先进行初始化
      */
     final void mergeInit(MergePolicy.OneMerge merge) throws IOException {
         assert Thread.holdsLock(this) == false;
         // Make sure any deletes that must be resolved before we commit the merge are complete:
+        // 在merge前 需要将所有update/delete 信息刷盘
         bufferedUpdatesStream.waitApplyForMerge(merge.segments, this);
 
         boolean success = false;
         try {
+            // 主要就是将本线程设置到 progress中 以及创建一个新的segment用于存储merge后的数据
             _mergeInit(merge);
             success = true;
         } finally {
@@ -4468,6 +4473,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 在merge前执行一些初始化工作
+     * @param merge
+     * @throws IOException
+     */
     private synchronized void _mergeInit(MergePolicy.OneMerge merge) throws IOException {
 
         testPoint("startMergeInit");
@@ -4484,6 +4494,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             return;
         }
 
+        // 主要是将执行merge 的线程设置到 progress中
         merge.mergeInit();
 
         if (merge.isAborted()) {
@@ -4502,6 +4513,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // Must move the pending doc values updates to disk now, else the newly merged segment will not see them:
         // TODO: we could fix merging to pull the merged DV iterator so we don't have to move these updates to disk first, i.e. just carry them
         // in memory:
+        // 将 docValue信息写入到索引文件中 并将reader对象标记成 isMerging
         if (readerPool.writeDocValuesUpdatesForMerge(merge.segments)) {
             checkpoint();
         }
@@ -4509,6 +4521,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // Bind a new segment name here so even with
         // ConcurrentMergePolicy we keep deterministic segment
         // names.
+        // 每次merge都会生成一个新的 段对象
         final String mergeSegmentName = newSegmentName();
         // We set the min version to null for now, it will be set later by SegmentMerger
         SegmentInfo si = new SegmentInfo(directoryOrig, Version.LATEST, null, mergeSegmentName, -1, false, config.getCodec(),
@@ -4528,6 +4541,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         setDiagnostics(info, source, null);
     }
 
+    /**
+     * 设置一些用于诊断的描述信息
+     * @param info
+     * @param source
+     * @param details
+     */
     private static void setDiagnostics(SegmentInfo info, String source, Map<String, String> details) {
         Map<String, String> diagnostics = new HashMap<>();
         diagnostics.put("source", source);
@@ -4551,11 +4570,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Does finishing for a merge, which is fast but holds
      * the synchronized lock on IndexWriter instance.
+     * 当某个merge线程执行完毕时  可能是正常merge 也可能是失败  就是从 merge容器中移除该对象
      */
     private synchronized void mergeFinish(MergePolicy.OneMerge merge) {
 
         // forceMerge, addIndexes or waitForMerges may be waiting
         // on merges to finish.
+        // 看来本线程之前在等待什么东西
         notifyAll();
 
         // It's possible we are called twice, eg if there was an
@@ -4629,14 +4650,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * Does the actual (time-consuming) work of the merge,
      * but without holding synchronized lock on IndexWriter
      * instance
+     * 执行一些不需要获取锁的耗时操作
      */
     private int mergeMiddle(MergePolicy.OneMerge merge, MergePolicy mergePolicy) throws IOException {
         testPoint("mergeMiddleStart");
         merge.checkAborted();
 
+        // 对原本使用的目录进行包装 具备限流的功能  也就是每当往 为merge创建的 segment写入数据时 达到限制值 就会被限流 暂停写入的线程
         Directory mergeDirectory = mergeScheduler.wrapForMerge(merge, directory);
         List<SegmentCommitInfo> sourceSegments = merge.segments;
 
+        // 将一些merge的相关信息提取出来 生成 MergeInfo  并设置到上下文中
         IOContext context = new IOContext(merge.getStoreMergeInfo());
 
         final TrackingDirectoryWrapper dirWrapper = new TrackingDirectoryWrapper(mergeDirectory);
@@ -4659,9 +4683,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
                 // Hold onto the "live" reader; we will use this to
                 // commit merged deletes
+                // 获取该对象对应的reader 对象
                 final ReadersAndUpdates rld = getPooledInstance(info, true);
                 rld.setIsMerging();
 
+                // MergeReader 对象内部除了 segmentReader对象外 还有 liveDoc 对象
                 ReadersAndUpdates.MergeReader mr = rld.getReaderForMerge(context);
                 SegmentReader reader = mr.reader;
 
@@ -5998,6 +6024,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             return writer.hasPendingMerges();
         }
 
+        /**
+         * 使用 MergeScheduler 处理OneMerge对象 最终会委托到IndexWriter执行任务
+         * @param merge
+         * @throws IOException
+         */
         @Override
         public void merge(MergePolicy.OneMerge merge) throws IOException {
             assert Thread.holdsLock(writer) == false;

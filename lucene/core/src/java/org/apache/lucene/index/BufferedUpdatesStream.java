@@ -208,6 +208,7 @@ final class BufferedUpdatesStream implements Accountable {
    *  called when a merge needs to finish and must ensure all deletes to the merging
    *  segments are resolved.
    * @param mergeInfos
+   * 在merge 前将所有改动刷盘
    */
   void waitApplyForMerge(List<SegmentCommitInfo> mergeInfos, IndexWriter writer) throws IOException {
     long maxDelGen = Long.MIN_VALUE;
@@ -264,7 +265,7 @@ final class BufferedUpdatesStream implements Accountable {
       // Frozen packets are now resolved, concurrently, by the indexing threads that
       // create them, by adding a DocumentsWriter.ResolveUpdatesEvent to the events queue,
       // but if we get here and the packet is not yet resolved, we resolve it now ourselves:
-      // 代表抢占锁失败 稍后执行
+      // 尝试抢占锁 并在成功时 执行 forceApply
       if (writer.tryApply(packet) == false) {
         // if somebody else is currently applying it - move on to the next one and force apply below
         pendingPackets.add(packet);

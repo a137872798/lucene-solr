@@ -806,14 +806,17 @@ public class TieredMergePolicy extends MergePolicy {
     boolean forceMergeRunning = false;
     while (iter.hasNext()) {
       SegmentSizeAndDocs segSizeDocs = iter.next();
+      // 不在容器中的需要跳过
       final Boolean isOriginal = segmentsToMerge.get(segSizeDocs.segInfo);
       if (isOriginal == null) {
         iter.remove();
       } else {
+        // 代表这个段虽然在 map中  但是已经处于merging了
         if (merging.contains(segSizeDocs.segInfo)) {
           forceMergeRunning = true;
           iter.remove();
         } else {
+          // 其余的才在考虑范围内
           totalMergeBytes += segSizeDocs.sizeInBytes;
         }
       }

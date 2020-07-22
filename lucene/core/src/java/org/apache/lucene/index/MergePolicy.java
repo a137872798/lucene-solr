@@ -232,7 +232,7 @@ public abstract class MergePolicy {
      */
     // 执行某次合并操作涉及到的所有信息   该对象在初始化的同时 会生成一个  Processor 对象 这个对象可以从外部控制merge线程的状态 比如merge需要暂停了 就是通过processor来下达指令
     public static class OneMerge {
-        // 该片段相关的提交信息 (单个segment)
+        // 本次merge后最终生成的 segment对象
         SegmentCommitInfo info;         // used by IndexWriter
         /**
          * 该对象是否已经注册到下次merge任务中
@@ -259,9 +259,12 @@ public abstract class MergePolicy {
         volatile long totalMergeBytes;
 
         /**
-         * 这里还存放着一组 用于读取 segment的reader
+         * 每个涉及到的每个 segment对应的 reader对象
          */
         List<SegmentReader> readers;        // used by IndexWriter
+        /**
+         * 代表此时 liveDoc 位图对象
+         */
         List<Bits> hardLiveDocs;        // used by IndexWriter
 
         /**
