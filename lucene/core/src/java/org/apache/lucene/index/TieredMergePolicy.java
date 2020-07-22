@@ -84,7 +84,7 @@ import java.util.Set;
 //     merge is already running (under CMS) and then bias
 //     ourselves towards picking smaller merges if so (or,
 //     maybe CMS should do so)
-// 分层合并策略 是当前版本 lucene默认的合并策略  在 LogMergePolicy中  是选择相邻的segment 进行合并   而该对象会先对segment进行排序 之后在进行合并
+// 包含分层特性的merge 对象      MergePolicy 最核心的功能还是挑选哪些segment 应该被merge
 
 public class TieredMergePolicy extends MergePolicy {
   /** Default noCFSRatio.  If a merge's size is {@code >= 10%} of
@@ -97,8 +97,7 @@ public class TieredMergePolicy extends MergePolicy {
   // 单次合并 最多多少个segment
   private int maxMergeAtOnce = 10;
   /**
-   * 待合并的 segment数据总集大小不能超过该值
-   * 并且如果某个段的大小 超过了 maxMergedSegmentBytes/2 那么忽略该段
+   * 单次merge对应的 segment总大小 并且超过1/2就认为是一个大对象
    */
   private long maxMergedSegmentBytes = 5*1024*1024*1024L;
   private int maxMergeAtOnceExplicit = 30;
@@ -108,10 +107,14 @@ public class TieredMergePolicy extends MergePolicy {
    */
   private long floorSegmentBytes = 2*1024*1024L;
   /**
-   * 每层需要满足 10个段 才允许合并
+   * 每层维护10个段
    */
   private double segsPerTier = 10.0;
   private double forceMergeDeletesPctAllowed = 10.0;
+
+  /**
+   * 这是一个删除率的阈值  超过该值认为本次merge 的效率会高(删除了更多的无效doc)  删除率低于该值 且segment本身比较大的话是会被排除在考虑范围外的
+   */
   private double deletesPctAllowed = 33.0;
 
   /** Sole constructor, setting all settings to their
@@ -270,10 +273,13 @@ public class TieredMergePolicy extends MergePolicy {
   }
 
   /**
-   * 包含一些关键信息的 bean对象
+   * 描述某个段的大小  以及总计有多少doc 有多少doc被标记为要删除
    */
   private static class SegmentSizeAndDocs {
     private final SegmentCommitInfo segInfo;
+    /**
+     * sizeInBytes + delCount = totalSize
+     */
     private final long sizeInBytes;
     private final int delCount;
     private final int maxDoc;
@@ -310,11 +316,13 @@ public class TieredMergePolicy extends MergePolicy {
   // The size can change concurrently while we are running here, because deletes
   // are now applied concurrently, and this can piss off TimSort!  So we
   // call size() once per segment and sort by that:
-
+  // 按照段内数据大小进行排序  这里是倒序
   private List<SegmentSizeAndDocs> getSortedBySegmentSize(final SegmentInfos infos, final MergeContext mergeContext) throws IOException {
     List<SegmentSizeAndDocs> sortedBySize = new ArrayList<>();
 
     for (SegmentCommitInfo info : infos) {
+      // size() 返回的是不需要被删除的大小s
+      // mergeContext.numDeletesToMerge 返回的是需要删除的大小
       sortedBySize.add(new SegmentSizeAndDocs(info, size(info, mergeContext), mergeContext.numDeletesToMerge(info)));
     }
 
@@ -332,7 +340,7 @@ public class TieredMergePolicy extends MergePolicy {
   }
 
   /**
-   * 找到需要merge的段
+   * 查找本次需要merge的 段 并转换成 OneMerge对象 同时该方法代表对单个OneMerge内部的数据量没有做限制
    * @param mergeTrigger the event that triggered the merge
    * @param infos
    * @param mergeContext the IndexWriter to find the merges on
@@ -341,6 +349,8 @@ public class TieredMergePolicy extends MergePolicy {
    */
   @Override
   public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos infos, MergeContext mergeContext) throws IOException {
+
+    // 从 writer上获取 此时已经在merge中的segment
     final Set<SegmentCommitInfo> merging = mergeContext.getMergingSegments();
     // Compute total index bytes & print details about the index
     // 记录总大小
@@ -354,7 +364,7 @@ public class TieredMergePolicy extends MergePolicy {
     // 记录所有正在merging的段大小总和
     long mergingBytes = 0;
 
-    // 将段按照大小倒序排序
+    // 将段按照大小倒序排序 （除开被删除的部分）
     List<SegmentSizeAndDocs> sortedInfos = getSortedBySegmentSize(infos, mergeContext);
     Iterator<SegmentSizeAndDocs> iter = sortedInfos.iterator();
     while (iter.hasNext()) {
@@ -369,15 +379,17 @@ public class TieredMergePolicy extends MergePolicy {
         }
         message("  seg=" + segString(mergeContext, Collections.singleton(segSizeDocs.segInfo)) + " size=" + String.format(Locale.ROOT, "%.3f", segBytes / 1024 / 1024.) + " MB" + extra, mergeContext);
       }
+
+      // 当前segment 已经在merge中了
       if (merging.contains(segSizeDocs.segInfo)) {
         mergingBytes += segSizeDocs.sizeInBytes;
+        // 移除掉 已经在merging的段
         iter.remove();
         // if this segment is merging, then its deletes are being reclaimed already.
         // only count live docs in the total max doc
         // 已经在合并中的段  将 去除del 后的doc数量 加到 total中
         totalMaxDoc += segSizeDocs.maxDoc - segSizeDocs.delCount;
       } else {
-        // 正常情况 是增加 maxDoc 同时 还要增加一个 del数量
         totalDelDocs += segSizeDocs.delCount;
         totalMaxDoc += segSizeDocs.maxDoc;
       }
@@ -397,24 +409,27 @@ public class TieredMergePolicy extends MergePolicy {
     // If we're above certain thresholds of deleted docs, we can merge very large segments.
     // 记录本次segInfos 中出现了多少 特别大的对象
     int tooBigCount = 0;
-    // 这里能够遍历到的是已经剔除掉 merging的
+
     iter = sortedInfos.iterator();
 
     // remove large segments from consideration under two conditions.
     // 1> Overall percent deleted docs relatively small and this segment is larger than 50% maxSegSize
     // 2>i overall percent deleted docs large and this segment is large and has few deleted docs
 
+    // 这里是根据段的大小决定是否要排除某些备选对象
+    // 1.如果某个段直接超过了每次允许merge的大小的1/2
+    // 2.它的删除率很低                            代表什么 这个段能够被清理的量会小，同时因为数据量大 还会很耗时 所以这种对象在merge时是极力避免的
     while (iter.hasNext()) {
       SegmentSizeAndDocs segSizeDocs = iter.next();
       // 计算每个段 的删除率
       double segDelPct = 100 * (double) segSizeDocs.delCount / (double) segSizeDocs.maxDoc;
-      // 当段大小超过了 merge总大小的一半   并且 （ 删除的量 小于允许值 || 该段的删除率小于某个值 ）
+      // 当段大小超过了 merge总大小的一半   并且 （ 总的删除率小于允许值 || 该段的删除率小于某个值 ）
       if (segSizeDocs.sizeInBytes > maxMergedSegmentBytes / 2 && (totalDelPct <= deletesPctAllowed || segDelPct <= deletesPctAllowed)) {
-        // 那么认为本次被选中的段中 存在那种特别大的段
+        // 这种段不被考虑
         iter.remove();
         // 增加一个 big对象计数器
         tooBigCount++; // Just for reporting purposes.
-        // 该大对象的相关值 会去除
+        // 大块的segment 是被排除在 分层计算外的
         totIndexBytes -= segSizeDocs.sizeInBytes;
         allowedDelCount -= segSizeDocs.delCount;
       }
@@ -424,31 +439,33 @@ public class TieredMergePolicy extends MergePolicy {
     // 计算单次合并包含多少个段
     final int mergeFactor = (int) Math.min(maxMergeAtOnce, segsPerTier);
     // Compute max allowed segments in the index
-    // 这里计算了一个下限值
+    // minSegmentBytes 是本次候选segment中 最小的大小
     long levelSize = Math.max(minSegmentBytes, floorSegmentBytes);
-    // 代表一个总大小   这个值是包含 del的
+    // 代表除开 大段对象后 剩余对象的 大小(已经去除了del的部分)
     long bytesLeft = totIndexBytes;
     double allowedSegCount = 0;
+    // TODO 暂时不明白为什么用下面的方式决定本次要merge的segment数量 先不管
     while (true) {
-      // 这是预估的段数量吧  毕竟是用 / 下限计算的   每次循环中 level会越来越小 因为levelSize 在变大
+      // 每次计算出属于该层的数据块有多少个
+      // 这是预估的段数量吧
       final double segCountLevel = bytesLeft / (double) levelSize;
-      // 在count不断减少  直到 低于一个要求值时  或者 size达到最大值时 选择退出循环
+      // 代表此时已经得到一个合适的 levelSize了 允许退出循环    或者此时size不能再增加了
       if (segCountLevel < segsPerTier || levelSize == maxMergedSegmentBytes) {
         allowedSegCount += Math.ceil(segCountLevel);
         break;
       }
-      // segCount 每次都增加 segsPerTier 这么大的值  最后一次只增加segCountLevel 大小的值
+      // 进入到这里代表 segCountLevel >= 10
       allowedSegCount += segsPerTier;
-      // 这个左范围会越来越小
+      // 这里裁剪掉10个大小
       bytesLeft -= segsPerTier * levelSize;
-      // 不断的提升下限值
+      // 每次分母都会变成上一次的倍数
       levelSize = Math.min(maxMergedSegmentBytes, levelSize * mergeFactor);
     }
     // allowedSegCount may occasionally be less than segsPerTier
     // if segment sizes are below the floor size
+    // 实际上会merge多少个segment
     allowedSegCount = Math.max(allowedSegCount, segsPerTier);
 
-    // tooBigCount 这个参数只是为了打印日志吗???
     if (verbose(mergeContext) && tooBigCount > 0) {
       message("  allowedSegmentCount=" + allowedSegCount + " vs count=" + infos.size() +
           " (eligible count=" + sortedInfos.size() + ") tooBigCount= " + tooBigCount, mergeContext);
@@ -463,11 +480,11 @@ public class TieredMergePolicy extends MergePolicy {
    * @param sortedEligibleInfos   候选对象  已经剔除了 merging 中的segment   注意这里已经完成排序了
    * @param maxMergedSegmentBytes   单次merge的segment  bytes总大小
    * @param mergeFactor     单次merge多少个段
-   * @param allowedSegCount
+   * @param allowedSegCount  实际会merge多少块
    * @param allowedDelCount   这是允许删除的大小
    * @param mergeType     默认情况使用 自然方式进行merge    在强制删除模式 和强制合并模式下 传入参数不同
-   * @param mergeContext    上下文对象 对外暴露一些api 用于访问一些属性
-   * @param maxMergeIsRunning   当前正在merge中的量是否很大
+   * @param mergeContext    就是 indexWriter
+   * @param maxMergeIsRunning   是否正在执行一些大数据块的merge (也就是正在merge的数据量要超过 最大merge限制)
    * @return
    * @throws IOException
    */
@@ -490,11 +507,12 @@ public class TieredMergePolicy extends MergePolicy {
     if (verbose(mergeContext)) {
       message("findMerges: " + originalSortedSize + " segments", mergeContext);
     }
+    // 已经不存在候选的 segment 了 直接返回
     if (originalSortedSize == 0) {
       return null;
     }
 
-    // 这里存储已经merge好的段对象
+    // 这里存储已经分配好的段对象
     final Set<SegmentCommitInfo> toBeMerged = new HashSet<>();
 
     MergeSpecification spec = null;
@@ -503,10 +521,10 @@ public class TieredMergePolicy extends MergePolicy {
     // The trigger point for total deleted documents in the index leads to a bunch of large segment
     // merges at the same time. So only put one large merge in the list of merges per cycle. We'll pick up another
     // merge next time around.
+    // 代表多个结果中 只要有一次出现了 tooLarge
     boolean haveOneLargeMerge = false;
 
-    // 内部是拆解出 多个 oneMerge
-    // 什么才是合并的最优解???   小而多?? 好像并不是
+    // 这层循环是生成多个 onMerge
     while (true) {
 
       // Gather eligible segments for merging, ie segments
@@ -516,7 +534,7 @@ public class TieredMergePolicy extends MergePolicy {
       // Remove ineligible segments. These are either already being merged or already picked by prior iterations
       Iterator<SegmentSizeAndDocs> iter = sortedEligible.iterator();
       while (iter.hasNext()) {
-        // 将上一轮已经挑选出来的 segemnt 剔除后 使用剩余的segment 继续尝试生成 oneMerge
+        // 将上一轮已经挑选出来的 segment 剔除
         SegmentSizeAndDocs segSizeDocs = iter.next();
         if (toBeMerged.contains(segSizeDocs.segInfo)) {
           iter.remove();
@@ -537,40 +555,47 @@ public class TieredMergePolicy extends MergePolicy {
       // 看来自然删除的模式 会尽可能将多个segment 进行合并 这里剩余的段已经不多了 所以不急着一次性处理完
       // 而在 forceXXX 中 会尽可能将所有segment合并
       if (mergeType == MERGE_TYPE.NATURAL &&
-              // 当segment 列表中 段对象剔除的差不多了  并且允许删除的数量也没有超标时 允许直接返回
+              // 当segment 列表中 段对象剔除的差不多了  并且允许删除的数量也没有超过阈值 允许直接返回
+              // 这个del就是用来判断本次merge是否有意义 比如segment内部有大量需要删除的数据 那么这一步就有必要
           sortedEligible.size() <= allowedSegCount &&
           remainingDelCount <= allowedDelCount) {
         return spec;
       }
 
       // OK we are over budget -- find best merge!
+      // 代表本次在考虑范围内的段数量超过了允许的总数量
       // 这里尝试选取最优解
       MergeScore bestScore = null;
       List<SegmentCommitInfo> best = null;
       boolean bestTooLarge = false;
       long bestMergeBytes = 0;
 
-      // 开始遍历 segment   内循环负责挑选segment 外循环负责 将太大的segment 排出选择范围外(为了装箱问题最优解 )
+      // 这里是根据当前候选的segment 选取bestOneMerge
+      // 每次起点会+1
       for (int startIdx = 0; startIdx < sortedEligible.size(); startIdx++) {
 
-        // 当前参与merge的段的总大小    如果有某个超范围的segment加入了   大小是不算入该值的
         long totAfterMergeBytes = 0;
 
         final List<SegmentCommitInfo> candidate = new ArrayList<>();
-        // 当 需要merge的段大小总计接近该值时  该标识设置为true
+
+        // 代表本轮挑选merge的段时  发生了超过限制的情况
         boolean hitTooLarge = false;
+
+        // 记录内循环此时已经累加了多少待merge的值
         long bytesThisMerge = 0;
-        // 看来在循环过程中 会不断往 candidate中填充数据 一旦填充到要求值 就不会进行内循环了 或者本次merge的byte值已经达到了上限
-        // merge的目的到底是什么 merge有一个下限 也就是 碎片段不应该被 合并吗  ???
+
+        // 内循环从外层的起点开始 直到读取到本次merge指定的段数量前  以及当merge的量已经超过本次最大bytes时 结束循环
         for (int idx = startIdx; idx < sortedEligible.size() && candidate.size() < mergeFactor && bytesThisMerge < maxMergedSegmentBytes; idx++) {
+          // 定位到当前 segment
           final SegmentSizeAndDocs segSizeDocs = sortedEligible.get(idx);
           final long segBytes = segSizeDocs.sizeInBytes;
 
-          // 代表此时 大小超过了 merge的上限
+          // 代表本次会超过限制 这时还会往后遍历希望插入一个更小的值 尽可能的接近maxMergedSegmentBytes
           if (totAfterMergeBytes + segBytes > maxMergedSegmentBytes) {
-            // 只要在未满足 最大数量时   有一次 大小先超过了限制值 就会设置为true  也就是该值为false 时 直接就是最优解了 采用的都是尽可能大的segment
+
             hitTooLarge = true;
-            // 只有当 候选对象还没有设置时 才会添加   也就是 如果第一个值特别大是可能会添加进去的  这个大小是不算入 totAfterMergeBytes 的
+            // 只有当 候选对象还没有设置时 才会添加   也就是 如果第一个值特别大是可能会添加进去的
+            // 同时这个大小是不算入totAfterMergeBytes的
             if (candidate.size() == 0) {
               // We should never have something coming in that _cannot_ be merged, so handle singleton merges
               candidate.add(segSizeDocs.segInfo);
@@ -582,6 +607,7 @@ public class TieredMergePolicy extends MergePolicy {
             // size; this in general is not perfect since
             // this is really "bin packing" and we'd have
             // to try different permutations.
+            // 进入下次循环 等待一个合适大小的segment
             continue;
           }
           // 正常情况就是从大到小 开始添加
@@ -590,6 +616,8 @@ public class TieredMergePolicy extends MergePolicy {
           totAfterMergeBytes += segBytes;
         }
 
+        // 上面这个循环的任务就是选取本批预备merge的所有段 下面会为它打分
+
         // We should never see an empty candidate: we iterated over maxMergeAtOnce
         // segments, and already pre-excluded the too-large segments:
         assert candidate.size() > 0;
@@ -597,6 +625,8 @@ public class TieredMergePolicy extends MergePolicy {
         // A singleton merge with no deletes makes no sense. We can get here when forceMerge is looping around...
         // 2种情况 一种是加入了一个超规格的 segment  还有一种就是 一个略小于上限的segment  并且与剩下任何一个segment 都会超标
         // 如果这个段不支持瘦身的话  重选candidate 并且从下一个略小的segment开始
+
+        // 单个segment 且没有delCount的话 本身是没有merge的必要的 所以直接开始下一批数据的选取
         if (candidate.size() == 1) {
           SegmentSizeAndDocs segSizeDocs = segInfosSizes.get(candidate.get(0));
           if (segSizeDocs.delCount == 0) {
@@ -608,15 +638,16 @@ public class TieredMergePolicy extends MergePolicy {
         // whose length is less than the merge factor, it means we are reaching
         // the tail of the list of segments and will only find smaller merges.
         // Stop here.
-        // 第一次循环不会进入这里 ??? 跟上面描述都不一样 而且已经是最优解了 为什么不退出外循环???
-        // 好吧 在去掉第一个segment 后才有可能进入这个分支
+        // hitTooLarge == false 代表每次都是顺利的插入segment 都没有因为超过限制而跳过某个segment
+        // 那么这时 candidate.size() < mergeFactor 只能理解为当前已经没有足够的segment去merge了
+        // 继续往下遍历只会得到更小的merge块 所以退出循环
         if (bestScore != null &&
             hitTooLarge == false &&
             candidate.size() < mergeFactor) {
           break;
         }
 
-        // 对该组合打分
+        // 每当生成一个组合时 就要进行一次打分
         final MergeScore score = score(candidate, hitTooLarge, segInfosSizes);
         if (verbose(mergeContext)) {
           message("  maybe=" + segString(mergeContext, candidate) + " score=" + score.getScore() + " " + score.getExplanation() + " tooLarge=" + hitTooLarge + " size=" + String.format(Locale.ROOT, "%.3f MB", totAfterMergeBytes/1024./1024.), mergeContext);
@@ -631,14 +662,14 @@ public class TieredMergePolicy extends MergePolicy {
         }
       }
 
-      // 当没有选出最优解时 直接返回spec 实际上是返回null
+      // 代表没有一次segment的数量是满足条件的
       if (best == null) {
         return spec;
       }
       // The mergeType == FORCE_MERGE_DELETES behaves as the code does currently and can create a large number of
       // concurrent big merges. If we make findForcedDeletesMerges behave as findForcedMerges and cycle through
       // we should remove this.
-      // haveOneLargeMerge 代表一个 OneMerge 对象都还没有生成
+      // 这里是已经选出最优解的情况
       if (haveOneLargeMerge == false || bestTooLarge == false || mergeType == MERGE_TYPE.FORCE_MERGE_DELETES) {
 
         haveOneLargeMerge |= bestTooLarge;
@@ -657,30 +688,29 @@ public class TieredMergePolicy extends MergePolicy {
       // consideration on the next loop.
       // 将这些segment排除后 继续合并 生成 oneMerge 对象
       toBeMerged.addAll(best);
+    // 这里才是 while 退出循环
     }
   }
 
   /**
+   * TODO 打分逻辑就不看了
    * Expert: scores one merge; subclasses can override.
-   * @param hitTooLarge 只要在未满足 最大数量时   有一次 大小先超过了限制值 就会设置为true  也就是该值为false 时 直接就是最优解了 采用的都是尽可能大的segment
+   * @param hitTooLarge 只要在未满足 最大数量时   有一次 大小先超过了限制值 就会设置为true
    *
    */
-  // 针对候选的segment进行打分  子类可以自己拓展
   protected MergeScore score(List<SegmentCommitInfo> candidate, boolean hitTooLarge, Map<SegmentCommitInfo, SegmentSizeAndDocs> segmentsSizes) throws IOException {
 
-    // before 在merge之前的大小 也就是删除某些doc之前的大小
     long totBeforeMergeBytes = 0;
-    // segmentsSizes.get(info).sizeInBytes 对应的大小都是剔除掉 delDoc的
-    // 计算candidate 内所有segment 大小总和
     long totAfterMergeBytes = 0;
-    // 同上 但是 segBytes小于下限的情况 会使用下限替代 也就是可能略大于上面的值
     long totAfterMergeBytesFloored = 0;
+
     for(SegmentCommitInfo info : candidate) {
       // 找到该段的大小
       final long segBytes = segmentsSizes.get(info).sizeInBytes;
       totAfterMergeBytes += segBytes;
+      // 这里额外计算一个大小  也就是当segment小于 floor时 用floor计算
       totAfterMergeBytesFloored += floorSize(segBytes);
-      // 该 方法返回的是未剔除 delDoc的大小
+      // 这是文件大小
       totBeforeMergeBytes += info.sizeInBytes();
     }
 
@@ -741,7 +771,7 @@ public class TieredMergePolicy extends MergePolicy {
   }
 
   /**
-   * 进行强制合并  这个先不看
+   * 寻找需要被merger的 对象 并填充到 MergeSpecification
    * @param infos
    * @param maxSegmentCount requested maximum number of segments in the index (currently this
    *                        is always 1)
@@ -751,8 +781,8 @@ public class TieredMergePolicy extends MergePolicy {
    *                        given SegmentInfo, that means this segment was
    *                        an original segment present in the
    *                        to-be-merged index; else, it was a segment
-   *                        produced by a cascaded merge.   这参数 神马意思???
-   * @param mergeContext    the IndexWriter to find the merges on
+   *                        produced by a cascaded merge.   这个参数记录了当前正在merge的 segment
+   * @param mergeContext    the IndexWriter to find the merges on     可以简单认为就是 IndexWriter
    * @return
    * @throws IOException
    */

@@ -219,7 +219,7 @@ final class DocumentsWriterFlushQueue {
      */
     private boolean failed = false;
     /**
-     * 代表本次刷盘已经发布  (当刷盘任务结束时 就要进行发布任务)
+     * 代表本次刷盘结果已经发布  (当刷盘任务结束时 就要进行发布任务)
      */
     private boolean published = false;
 

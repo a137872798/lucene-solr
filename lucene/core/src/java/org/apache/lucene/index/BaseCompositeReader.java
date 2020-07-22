@@ -54,7 +54,7 @@ public abstract class BaseCompositeReader<R extends IndexReader> extends Composi
    */
   private final R[] subReaders;
   /**
-   * 每个元素对应 每个子reader的读取的首个 docNo
+   * 每个元素对应 每个子reader的读取的首个 docNo 并且最后一个元素 代表maxDoc
    */
   private final int[] starts;       // 1st docno for each reader
   /**
@@ -83,16 +83,14 @@ public abstract class BaseCompositeReader<R extends IndexReader> extends Composi
   protected BaseCompositeReader(R[] subReaders) throws IOException {
     this.subReaders = subReaders;
     this.subReadersList = Collections.unmodifiableList(Arrays.asList(subReaders));
-    // 对start数组进行扩容
     starts = new int[subReaders.length + 1];    // build starts array
     long maxDoc = 0;
     for (int i = 0; i < subReaders.length; i++) {
       starts[i] = (int) maxDoc;
       final IndexReader r = subReaders[i];
-      // 该值会不断累加 并设置到 starts 对应的位置上
-      // 这里采用累加的方式是为了便于之后使用二分查找
+      // 难道每个段对应的文档是递增的吗
       maxDoc += r.maxDoc();      // compute maxDocs
-      // 为子reader 建立关联关系
+      // 将所有子reader对象 关联到 当前reader对象上
       r.registerParentReader(this);
     }
 

@@ -275,7 +275,7 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * TODO 该方法先忽略
+     * 计算该 rld对象对应的 segment下需要删除多少数据
      *
      * @param policy
      * @return

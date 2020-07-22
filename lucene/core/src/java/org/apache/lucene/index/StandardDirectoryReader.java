@@ -51,6 +51,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
   private final boolean writeAllDeletes;
 
   /** called only from static open() methods */
+  // 该对象内部维护了一组reader 对象  并且该对象本身具备近实时查询的能力 同时该对象作为所有子reader的父对象
   StandardDirectoryReader(Directory directory, LeafReader[] readers, IndexWriter writer,
                           SegmentInfos sis, boolean applyAllDeletes, boolean writeAllDeletes) throws IOException {
     super(directory, readers);
@@ -61,16 +62,25 @@ public final class StandardDirectoryReader extends DirectoryReader {
   }
 
   /** called from DirectoryReader.open(...) methods */
-  // 通过一个指定的目录对象初始化
   static DirectoryReader open(final Directory directory, final IndexCommit commit) throws IOException {
     return new SegmentInfos.FindSegmentsFile<DirectoryReader>(directory) {
+
+      /**
+       * 通过指定的 segmentName 读取段文件数据
+       * @param segmentFileName
+       * @return
+       * @throws IOException
+       */
       @Override
       protected DirectoryReader doBody(String segmentFileName) throws IOException {
+        // 根据文件名 解析多个segment的信息
         SegmentInfos sis = SegmentInfos.readCommit(directory, segmentFileName);
         final SegmentReader[] readers = new SegmentReader[sis.size()];
         boolean success = false;
         try {
+          // 为每个段对象生成读取各种索引文件的reader对象
           for (int i = sis.size()-1; i >= 0; i--) {
+            // 每个 SegmentReader 对象是 LeafReader的子类 也就是他们本身可以组成一个树结构
             readers[i] = new SegmentReader(sis.info(i), sis.getIndexCreatedVersionMajor(), IOContext.READ);
           }
 
@@ -89,7 +99,16 @@ public final class StandardDirectoryReader extends DirectoryReader {
     }.run(commit);
   }
 
-  /** Used by near real-time search */
+  /**
+   * Used by near real-time search
+   * 该对象主要用于近实时查询
+   * @param writer
+   * @param infos  本次涉及到的所有段 信息
+   * @param applyAllDeletes
+   * @param writeAllDeletes
+   * @return
+   * @throws IOException
+   */
   static DirectoryReader open(IndexWriter writer, SegmentInfos infos, boolean applyAllDeletes, boolean writeAllDeletes) throws IOException {
     // IndexWriter synchronizes externally before calling
     // us, which ensures infos will not change; so there's
@@ -109,13 +128,17 @@ public final class StandardDirectoryReader extends DirectoryReader {
         // IndexWriter's segmentInfos:
         final SegmentCommitInfo info = infos.info(i);
         assert info.info.dir == dir;
+        // 创建的 rld对象内 包含了 segmentReader 对象
         final ReadersAndUpdates rld = writer.getPooledInstance(info, true);
         try {
+          // 抽取reader 对象
           final SegmentReader reader = rld.getReadOnlyClone(IOContext.READ);
+          // 当确保reader 下还存在 doc  或者 即使所有doc都被删除还是保留segment 那么将reader 添加到容器中
           if (reader.numDocs() > 0 || writer.getConfig().mergePolicy.keepFullyDeletedSegment(() -> reader)) {
             // Steal the ref:
             readers.add(reader);
             infosUpto++;
+          // 无效的reader对象被释放
           } else {
             reader.decRef();
             segmentInfos.remove(infosUpto);
@@ -127,6 +150,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
 
       writer.incRefDeleter(segmentInfos);
 
+      // 将readers 整合成 StandardDirectoryReader 后返回
       StandardDirectoryReader result = new StandardDirectoryReader(dir,
           readers.toArray(new SegmentReader[readers.size()]), writer,
           segmentInfos, applyAllDeletes, writeAllDeletes);
@@ -150,6 +174,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
     // to lookup a reader using its segment name
     final Map<String,Integer> segmentReaders = (oldReaders == null ? Collections.emptyMap() : new HashMap<>(oldReaders.size()));
 
+    // 先将旧的 reader对象按照segmentName 进行分组
     if (oldReaders != null) {
       // create a Map SegmentName->SegmentReader
       for (int i = 0, c = oldReaders.size(); i < c; i++) {
@@ -162,7 +187,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
     for (int i = infos.size() - 1; i>=0; i--) {
       SegmentCommitInfo commitInfo = infos.info(i);
 
-      // find SegmentReader for this segment
+      // find SegmentReader for this segment   找到旧的reader对象
       Integer oldReaderIndex = segmentReaders.get(commitInfo.info.name);
       SegmentReader oldReader;
       if (oldReaderIndex == null) {
@@ -182,18 +207,23 @@ public final class StandardDirectoryReader extends DirectoryReader {
       boolean success = false;
       try {
         SegmentReader newReader;
+        // 当旧的reader对象不存在 或者索引变成了使用复合文件 那么需要重新创建 reader对象
         if (oldReader == null || commitInfo.info.getUseCompoundFile() != oldReader.getSegmentInfo().info.getUseCompoundFile()) {
           // this is a new reader; in case we hit an exception we can decRef it safely
           newReader = new SegmentReader(commitInfo, infos.getIndexCreatedVersionMajor(), IOContext.READ);
           newReaders[i] = newReader;
         } else {
+          // 如果之前的数据一直存储在内存中 还没有刷盘
           if (oldReader.isNRT) {
-            // We must load liveDocs/DV updates from disk:
+            // We must load liveDocs/DV updates from disk:   从磁盘上重新读取一次数据
             Bits liveDocs = commitInfo.hasDeletions() ? commitInfo.info.getCodec().liveDocsFormat()
                 .readLiveDocs(commitInfo.info.dir, commitInfo, IOContext.READONCE) : null;
+
+            // 使用从磁盘读取的 liveDoc 初始化reader对象
             newReaders[i] = new SegmentReader(commitInfo, oldReader, liveDocs, liveDocs,
                 commitInfo.info.maxDoc() - commitInfo.getDelCount(), false);
           } else {
+            // 代表此时fieldInfo 和 del 都没有发生变化 选择复用之前的reader对象
             if (oldReader.getSegmentInfo().getDelGen() == commitInfo.getDelGen()
                 && oldReader.getSegmentInfo().getFieldInfosGen() == commitInfo.getFieldInfosGen()) {
               // No change; this reader will be shared between
@@ -206,11 +236,12 @@ public final class StandardDirectoryReader extends DirectoryReader {
               assert commitInfo.info.dir == oldReader.getSegmentInfo().info.dir;
 
               if (oldReader.getSegmentInfo().getDelGen() == commitInfo.getDelGen()) {
-                // only DV updates
+                // only DV updates  因为 liveDoc的信息可以复用 只要重新获取fieldInfo和docValueUpdate就好
                 newReaders[i] = new SegmentReader(commitInfo, oldReader, oldReader.getLiveDocs(),
                     oldReader.getHardLiveDocs(), oldReader.numDocs(), false); // this is not an NRT reader!
               } else {
                 // both DV and liveDocs have changed
+                // 数据都需要重新读取
                 Bits liveDocs = commitInfo.hasDeletions() ? commitInfo.info.getCodec().liveDocsFormat()
                     .readLiveDocs(commitInfo.info.dir, commitInfo, IOContext.READONCE) : null;
                 newReaders[i] = new SegmentReader(commitInfo, oldReader, liveDocs, liveDocs,
@@ -230,6 +261,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
   }
 
   // TODO: move somewhere shared if it's useful elsewhere
+  // 减少之前分配的引用计数
   private static void decRefWhileHandlingException(SegmentReader[] readers) {
     for(SegmentReader reader : readers) {
       if (reader != null) {

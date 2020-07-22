@@ -349,7 +349,8 @@ public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
    * cloned and not protected for modification outside of this reader.
    * Subclasses of {@code DirectoryReader} should take care to not allow
    * modification of this internal array, e.g. {@link #doOpenIfChanged()}.
-   *                       使用一组子reader 和一个目录对象进行初始化
+   * @param directory 代表所有reader对应索引文件所在的目录
+   * @param segmentReaders 每个reader对象对应一个 segment 
    */
   protected DirectoryReader(Directory directory, LeafReader[] segmentReaders) throws IOException {
     super(segmentReaders);

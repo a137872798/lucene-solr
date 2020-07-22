@@ -830,7 +830,12 @@ final class DocumentsWriter implements Closeable, Accountable {
       return seqNo;
     }
   }
-  
+
+  /**
+   * 代表完成了一次全刷盘操作
+   * @param success
+   * @throws IOException
+   */
   void finishFullFlush(boolean success) throws IOException {
     try {
       if (infoStream.isEnabled("DW")) {
@@ -839,8 +844,10 @@ final class DocumentsWriter implements Closeable, Accountable {
       assert setFlushingDeleteQueue(null);
       if (success) {
         // Release the flush lock
+        // 释放 flush锁 同时将flush过程中添加的任务(在block队列中) 转移到 flush队列中
         flushControl.finishFullFlush();
       } else {
+        // 当刷盘过程中出现异常  终止刷盘任务
         flushControl.abortFullFlushes();
       }
     } finally {

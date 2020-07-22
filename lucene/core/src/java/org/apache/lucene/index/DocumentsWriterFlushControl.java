@@ -699,6 +699,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
     /**
      * 将阻塞的刷盘任务转移到 flushQueue中
+     * 应该是之后想插入的任务发现 此时已经进入刷盘状态了 直接先添加到  blockedFlushed 中
      */
     synchronized void finishFullFlush() {
         assert fullFlush;
@@ -750,7 +751,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
                     doAfterFlush(dwpt);
                 }
             }
-            // 找到所有 阻塞中的刷盘任务 并终止
+            // 此次刷盘失败 连同被阻塞的刷盘任务一起关闭
             for (DocumentsWriterPerThread blockedFlush : blockedFlushes) {
                 try {
                     addFlushingDWPT(blockedFlush); // add the blockedFlushes for correct accounting in doAfterFlush

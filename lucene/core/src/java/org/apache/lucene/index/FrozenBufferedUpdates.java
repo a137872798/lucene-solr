@@ -188,7 +188,7 @@ final class FrozenBufferedUpdates {
 
   /** Applies pending delete-by-term, delete-by-query and doc values updates to all segments in the index, returning
    *  the number of new deleted or updated documents.
-   * @param segStates 每个段对应一个该对象 内部包含了可以读取该段所有索引数据的reader对象
+   * @param segStates 每个对象对应一个段 内部包含了可以读取该段所有索引数据的reader对象
    */
   long apply(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
     assert applyLock.isHeldByCurrentThread();
@@ -204,7 +204,7 @@ final class FrozenBufferedUpdates {
       assert privateSegment == segStates[0].reader.getOriginalSegmentInfo();
     }
 
-    // state 负责查找数据 （生成doc的迭代器）    该对象内部的各种delete对象用于设定删除条件
+    // 找到本次要删除的doc数量总和
     totalDelCount += applyTermDeletes(segStates);
     totalDelCount += applyQueryDeletes(segStates);
     totalDelCount += applyDocValuesUpdates(segStates);

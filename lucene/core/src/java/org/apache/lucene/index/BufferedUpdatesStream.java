@@ -187,7 +187,7 @@ final class BufferedUpdatesStream implements Accountable {
     // practice?
     assert packet.applied.getCount() == 1: "packet=" + packet;
 
-    // 因为已经处理完毕 此时允许其他线程持有该对象了
+    // 标记该对象已经被处理完了
     packet.applied.countDown();
 
     updates.remove(packet);

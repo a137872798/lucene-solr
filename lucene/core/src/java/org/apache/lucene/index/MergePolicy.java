@@ -234,19 +234,28 @@ public abstract class MergePolicy {
     public static class OneMerge {
         // 该片段相关的提交信息 (单个segment)
         SegmentCommitInfo info;         // used by IndexWriter
+        /**
+         * 该对象是否已经注册到下次merge任务中
+         */
         boolean registerDone;           // used by IndexWriter
         long mergeGen;                  // used by IndexWriter
+        /**
+         * 本次merge的段中是否有在 writer对应的目录外的
+         */
         boolean isExternal;             // used by IndexWriter
+        /**
+         * 该对象本次允许merge的数量
+         */
         int maxNumSegments = -1;        // used by IndexWriter
 
         /**
          * Estimated size in bytes of the merged segment.
          */
-        // 预计会融合多少byte
+        // 预计会融合多少byte  (所有segment未删除的部分总和)   这里没有考虑数量限制
         public volatile long estimatedMergeBytes;       // used by IndexWriter
 
         // Sum of sizeInBytes of all SegmentInfos; set by IW.mergeInit
-        // 代表总的融合数
+        // 与上面相比 还追加了会被删除的数量
         volatile long totalMergeBytes;
 
         /**
@@ -644,6 +653,8 @@ public abstract class MergePolicy {
      * Return the byte size of the provided {@link
      * SegmentCommitInfo}, pro-rated by percentage of
      * non-deleted documents is set.
+     * @param mergeContext  可以简单认为就是 IndexWriter
+     * 计算某个 segment的大小
      */
     protected long size(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
         long byteSize = info.sizeInBytes();
@@ -651,6 +662,7 @@ public abstract class MergePolicy {
         assert assertDelCount(delCount, info);
         double delRatio = info.info.maxDoc() <= 0 ? 0d : (double) delCount / (double) info.info.maxDoc();
         assert delRatio <= 1.0;
+        // 这里返回的就是 除了要被删除之外的 segment大小
         return (info.info.maxDoc() <= 0 ? byteSize : (long) (byteSize * (1.0 - delRatio)));
     }
 

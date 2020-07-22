@@ -206,7 +206,6 @@ final class ReaderPool implements Closeable {
   synchronized boolean release(ReadersAndUpdates rld, boolean assertInfoLive) throws IOException {
     boolean changed = false;
     // Matches incRef in get:
-    // 先减少一次引用计数  应该是在调用 release前必须要调用某个方法
     rld.decRef();
 
     if (rld.refCount() == 0) {
