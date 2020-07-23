@@ -31,249 +31,255 @@ import org.apache.lucene.util.packed.PackedInts;
 import org.apache.lucene.util.packed.PackedLongValues;
 
 final class MultiSorter {
-  
-  /** Does a merge sort of the leaves of the incoming reader, returning {@link DocMap} to map each leaf's
-   *  documents into the merged segment.  The documents for each incoming leaf reader must already be sorted by the same sort!
-   *  Returns null if the merge sort is not needed (segments are already in index sort order).
-   **/
-  static MergeState.DocMap[] sort(Sort sort, List<CodecReader> readers) throws IOException {
 
-    // TODO: optimize if only 1 reader is incoming, though that's a rare case
+    /**
+     * Does a merge sort of the leaves of the incoming reader, returning {@link DocMap} to map each leaf's
+     * documents into the merged segment.  The documents for each incoming leaf reader must already be sorted by the same sort!
+     * Returns null if the merge sort is not needed (segments are already in index sort order).
+     **/
+    static MergeState.DocMap[] sort(Sort sort, List<CodecReader> readers) throws IOException {
 
-    SortField fields[] = sort.getSort();
-    final ComparableProvider[][] comparables = new ComparableProvider[fields.length][];
-    final int[] reverseMuls = new int[fields.length];
-    for(int i=0;i<fields.length;i++) {
-      comparables[i] = getComparableProviders(readers, fields[i]);
-      reverseMuls[i] = fields[i].getReverse() ? -1 : 1;
-    }
-    int leafCount = readers.size();
+        // TODO: optimize if only 1 reader is incoming, though that's a rare case
+        // 返回所有被排序的 field     每个field可以定义自己的规则
+        // 如果reader下没有该field 返回null
+        SortField fields[] = sort.getSort();
+        final ComparableProvider[][] comparables = new ComparableProvider[fields.length][];
+        final int[] reverseMuls = new int[fields.length];
 
-    PriorityQueue<LeafAndDocID> queue = new PriorityQueue<LeafAndDocID>(leafCount) {
-        @Override
-        public boolean lessThan(LeafAndDocID a, LeafAndDocID b) {
-          for(int i=0;i<comparables.length;i++) {
-            int cmp = Long.compare(a.valuesAsComparableLongs[i], b.valuesAsComparableLongs[i]);
-            if (cmp != 0) {
-              return reverseMuls[i] * cmp < 0;
-            }
-          }
-
-          // tie-break by docID natural order:
-          if (a.readerIndex != b.readerIndex) {
-            return a.readerIndex < b.readerIndex;
-          } else {
-            return a.docID < b.docID;
-          }
+        for (int i = 0; i < fields.length; i++) {
+            comparables[i] = getComparableProviders(readers, fields[i]);
+            reverseMuls[i] = fields[i].getReverse() ? -1 : 1;
         }
-    };
+        int leafCount = readers.size();
 
-    PackedLongValues.Builder[] builders = new PackedLongValues.Builder[leafCount];
+        PriorityQueue<LeafAndDocID> queue = new PriorityQueue<LeafAndDocID>(leafCount) {
+            @Override
+            public boolean lessThan(LeafAndDocID a, LeafAndDocID b) {
+                for (int i = 0; i < comparables.length; i++) {
+                    int cmp = Long.compare(a.valuesAsComparableLongs[i], b.valuesAsComparableLongs[i]);
+                    if (cmp != 0) {
+                        return reverseMuls[i] * cmp < 0;
+                    }
+                }
 
-    for(int i=0;i<leafCount;i++) {
-      CodecReader reader = readers.get(i);
-      LeafAndDocID leaf = new LeafAndDocID(i, reader.getLiveDocs(), reader.maxDoc(), comparables.length);
-      for(int j=0;j<comparables.length;j++) {
-        leaf.valuesAsComparableLongs[j] = comparables[j][i].getAsComparableLong(leaf.docID);
-      }
-      queue.add(leaf);
-      builders[i] = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
-    }
-
-    // merge sort:
-    int mappedDocID = 0;
-    int lastReaderIndex = 0;
-    boolean isSorted = true;
-    while (queue.size() != 0) {
-      LeafAndDocID top = queue.top();
-      if (lastReaderIndex > top.readerIndex) {
-        // merge sort is needed
-        isSorted = false;
-      }
-      lastReaderIndex = top.readerIndex;
-      builders[top.readerIndex].add(mappedDocID);
-      if (top.liveDocs == null || top.liveDocs.get(top.docID)) {
-        mappedDocID++;
-      }
-      top.docID++;
-      if (top.docID < top.maxDoc) {
-        for(int j=0;j<comparables.length;j++) {
-          top.valuesAsComparableLongs[j] = comparables[j][top.readerIndex].getAsComparableLong(top.docID);
-        }
-        queue.updateTop();
-      } else {
-        queue.pop();
-      }
-    }
-    if (isSorted) {
-      return null;
-    }
-
-    MergeState.DocMap[] docMaps = new MergeState.DocMap[leafCount];
-    for(int i=0;i<leafCount;i++) {
-      final PackedLongValues remapped = builders[i].build();
-      final Bits liveDocs = readers.get(i).getLiveDocs();
-      docMaps[i] = new MergeState.DocMap() {
-          @Override
-          public int get(int docID) {
-            if (liveDocs == null || liveDocs.get(docID)) {
-              return (int) remapped.get(docID);
-            } else {
-              return -1;
+                // tie-break by docID natural order:
+                if (a.readerIndex != b.readerIndex) {
+                    return a.readerIndex < b.readerIndex;
+                } else {
+                    return a.docID < b.docID;
+                }
             }
-          }
         };
-    }
 
-    return docMaps;
-  }
+        PackedLongValues.Builder[] builders = new PackedLongValues.Builder[leafCount];
 
-  private static class LeafAndDocID {
-    final int readerIndex;
-    final Bits liveDocs;
-    final int maxDoc;
-    final long[] valuesAsComparableLongs;
-    int docID;
-
-    public LeafAndDocID(int readerIndex, Bits liveDocs, int maxDoc, int numComparables) {
-      this.readerIndex = readerIndex;
-      this.liveDocs = liveDocs;
-      this.maxDoc = maxDoc;
-      this.valuesAsComparableLongs = new long[numComparables];
-    }
-  }
-
-  /** Returns a long so that the natural ordering of long values matches the
-   *  ordering of doc IDs for the given comparator. */
-  private interface ComparableProvider {
-    long getAsComparableLong(int docID) throws IOException;
-  }
-
-  /** Returns {@code ComparableProvider}s for the provided readers to represent the requested {@link SortField} sort order. */
-  private static ComparableProvider[] getComparableProviders(List<CodecReader> readers, SortField sortField) throws IOException {
-
-    ComparableProvider[] providers = new ComparableProvider[readers.size()];
-    final SortField.Type sortType = Sorter.getSortFieldType(sortField);
-
-    switch(sortType) {
-
-    case STRING:
-      {
-        // this uses the efficient segment-local ordinal map:
-        final SortedDocValues[] values = new SortedDocValues[readers.size()];
-        for(int i=0;i<readers.size();i++) {
-          final SortedDocValues sorted = Sorter.getOrWrapSorted(readers.get(i), sortField);
-          values[i] = sorted;
-        }
-        OrdinalMap ordinalMap = OrdinalMap.build(null, values, PackedInts.DEFAULT);
-        final int missingOrd;
-        if (sortField.getMissingValue() == SortField.STRING_LAST) {
-          missingOrd = Integer.MAX_VALUE;
-        } else {
-          missingOrd = Integer.MIN_VALUE;
+        for (int i = 0; i < leafCount; i++) {
+            CodecReader reader = readers.get(i);
+            LeafAndDocID leaf = new LeafAndDocID(i, reader.getLiveDocs(), reader.maxDoc(), comparables.length);
+            for (int j = 0; j < comparables.length; j++) {
+                leaf.valuesAsComparableLongs[j] = comparables[j][i].getAsComparableLong(leaf.docID);
+            }
+            queue.add(leaf);
+            builders[i] = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
         }
 
-        for(int readerIndex=0;readerIndex<readers.size();readerIndex++) {
-          final SortedDocValues readerValues = values[readerIndex];
-          final LongValues globalOrds = ordinalMap.getGlobalOrds(readerIndex);
-          providers[readerIndex] = new ComparableProvider() {
-              @Override
-              public long getAsComparableLong(int docID) throws IOException {
-                if (readerValues.advanceExact(docID)) {
-                  // translate segment's ord to global ord space:
-                  return globalOrds.get(readerValues.ordValue());
+        // merge sort:
+        int mappedDocID = 0;
+        int lastReaderIndex = 0;
+        boolean isSorted = true;
+        while (queue.size() != 0) {
+            LeafAndDocID top = queue.top();
+            if (lastReaderIndex > top.readerIndex) {
+                // merge sort is needed
+                isSorted = false;
+            }
+            lastReaderIndex = top.readerIndex;
+            builders[top.readerIndex].add(mappedDocID);
+            if (top.liveDocs == null || top.liveDocs.get(top.docID)) {
+                mappedDocID++;
+            }
+            top.docID++;
+            if (top.docID < top.maxDoc) {
+                for (int j = 0; j < comparables.length; j++) {
+                    top.valuesAsComparableLongs[j] = comparables[j][top.readerIndex].getAsComparableLong(top.docID);
+                }
+                queue.updateTop();
+            } else {
+                queue.pop();
+            }
+        }
+        if (isSorted) {
+            return null;
+        }
+
+        MergeState.DocMap[] docMaps = new MergeState.DocMap[leafCount];
+        for (int i = 0; i < leafCount; i++) {
+            final PackedLongValues remapped = builders[i].build();
+            final Bits liveDocs = readers.get(i).getLiveDocs();
+            docMaps[i] = new MergeState.DocMap() {
+                @Override
+                public int get(int docID) {
+                    if (liveDocs == null || liveDocs.get(docID)) {
+                        return (int) remapped.get(docID);
+                    } else {
+                        return -1;
+                    }
+                }
+            };
+        }
+
+        return docMaps;
+    }
+
+    private static class LeafAndDocID {
+        final int readerIndex;
+        final Bits liveDocs;
+        final int maxDoc;
+        final long[] valuesAsComparableLongs;
+        int docID;
+
+        public LeafAndDocID(int readerIndex, Bits liveDocs, int maxDoc, int numComparables) {
+            this.readerIndex = readerIndex;
+            this.liveDocs = liveDocs;
+            this.maxDoc = maxDoc;
+            this.valuesAsComparableLongs = new long[numComparables];
+        }
+    }
+
+    /**
+     * Returns a long so that the natural ordering of long values matches the
+     * ordering of doc IDs for the given comparator.
+     */
+    private interface ComparableProvider {
+        long getAsComparableLong(int docID) throws IOException;
+    }
+
+    /**
+     * Returns {@code ComparableProvider}s for the provided readers to represent the requested {@link SortField} sort order.
+     */
+    private static ComparableProvider[] getComparableProviders(List<CodecReader> readers, SortField sortField) throws IOException {
+
+        ComparableProvider[] providers = new ComparableProvider[readers.size()];
+        // 返回排序类型
+        final SortField.Type sortType = Sorter.getSortFieldType(sortField);
+
+        switch (sortType) {
+
+            case STRING: {
+                // this uses the efficient segment-local ordinal map:
+                final SortedDocValues[] values = new SortedDocValues[readers.size()];
+                for (int i = 0; i < readers.size(); i++) {
+                    // 获取遍历所有 docValue的迭代器 同时该迭代器还具备了 通过docId 查询ord的功能   如果该segment下没有该field的信息 返回一个 empty对象
+                    final SortedDocValues sorted = Sorter.getOrWrapSorted(readers.get(i), sortField);
+                    values[i] = sorted;
+                }
+                // 应该是将所有 reader对象内的数据整合起来 计算一个全局顺序
+                OrdinalMap ordinalMap = OrdinalMap.build(null, values, PackedInts.DEFAULT);
+                final int missingOrd;
+                if (sortField.getMissingValue() == SortField.STRING_LAST) {
+                    missingOrd = Integer.MAX_VALUE;
                 } else {
-                  return missingOrd;
+                    missingOrd = Integer.MIN_VALUE;
                 }
-              }
-            };
-        }
-      }
-      break;
 
-    case LONG:
-    case INT:
-      {
-        final long missingValue;
-        if (sortField.getMissingValue() != null) {
-          missingValue = ((Number) sortField.getMissingValue()).longValue();
-        } else {
-          missingValue = 0L;
-        }
+                for (int readerIndex = 0; readerIndex < readers.size(); readerIndex++) {
+                    final SortedDocValues readerValues = values[readerIndex];
+                    final LongValues globalOrds = ordinalMap.getGlobalOrds(readerIndex);
+                    providers[readerIndex] = new ComparableProvider() {
+                        @Override
+                        public long getAsComparableLong(int docID) throws IOException {
+                            if (readerValues.advanceExact(docID)) {
+                                // translate segment's ord to global ord space:
+                                return globalOrds.get(readerValues.ordValue());
+                            } else {
+                                return missingOrd;
+                            }
+                        }
+                    };
+                }
+            }
+            break;
 
-        for(int readerIndex=0;readerIndex<readers.size();readerIndex++) {
-          final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
-
-          providers[readerIndex] = new ComparableProvider() {
-              @Override
-              public long getAsComparableLong(int docID) throws IOException {
-                if (values.advanceExact(docID)) {
-                  return values.longValue();
+            case LONG:
+            case INT: {
+                final long missingValue;
+                if (sortField.getMissingValue() != null) {
+                    missingValue = ((Number) sortField.getMissingValue()).longValue();
                 } else {
-                  return missingValue;
+                    missingValue = 0L;
                 }
-              }
-            };
-        }
-      }
-      break;
 
-    case DOUBLE:
-      {
-        final double missingValue;
-        if (sortField.getMissingValue() != null) {
-          missingValue = (Double) sortField.getMissingValue();
-        } else {
-          missingValue = 0.0;
-        }
+                for (int readerIndex = 0; readerIndex < readers.size(); readerIndex++) {
+                    final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
 
-        for(int readerIndex=0;readerIndex<readers.size();readerIndex++) {
-          final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
-
-          providers[readerIndex] = new ComparableProvider() {
-              @Override
-              public long getAsComparableLong(int docID) throws IOException {
-                double value = missingValue;
-                if (values.advanceExact(docID)) {
-                  value = Double.longBitsToDouble(values.longValue());
+                    providers[readerIndex] = new ComparableProvider() {
+                        @Override
+                        public long getAsComparableLong(int docID) throws IOException {
+                            if (values.advanceExact(docID)) {
+                                return values.longValue();
+                            } else {
+                                return missingValue;
+                            }
+                        }
+                    };
                 }
-                return NumericUtils.doubleToSortableLong(value);
-              }
-            };
-        }
-      }
-      break;
+            }
+            break;
 
-    case FLOAT:
-      {
-        final float missingValue;
-        if (sortField.getMissingValue() != null) {
-          missingValue = (Float) sortField.getMissingValue();
-        } else {
-          missingValue = 0.0f;
-        }
-
-        for(int readerIndex=0;readerIndex<readers.size();readerIndex++) {
-          final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
-
-          providers[readerIndex] = new ComparableProvider() {
-              @Override
-              public long getAsComparableLong(int docID) throws IOException {
-                float value = missingValue;
-                if (values.advanceExact(docID)) {
-                  value = Float.intBitsToFloat((int) values.longValue());
+            case DOUBLE: {
+                final double missingValue;
+                if (sortField.getMissingValue() != null) {
+                    missingValue = (Double) sortField.getMissingValue();
+                } else {
+                    missingValue = 0.0;
                 }
-                return NumericUtils.floatToSortableInt(value);
-              }
-            };
-        }
-      }
-      break;
 
-    default:
-      throw new IllegalArgumentException("unhandled SortField.getType()=" + sortField.getType());
+                for (int readerIndex = 0; readerIndex < readers.size(); readerIndex++) {
+                    final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
+
+                    providers[readerIndex] = new ComparableProvider() {
+                        @Override
+                        public long getAsComparableLong(int docID) throws IOException {
+                            double value = missingValue;
+                            if (values.advanceExact(docID)) {
+                                value = Double.longBitsToDouble(values.longValue());
+                            }
+                            return NumericUtils.doubleToSortableLong(value);
+                        }
+                    };
+                }
+            }
+            break;
+
+            case FLOAT: {
+                final float missingValue;
+                if (sortField.getMissingValue() != null) {
+                    missingValue = (Float) sortField.getMissingValue();
+                } else {
+                    missingValue = 0.0f;
+                }
+
+                for (int readerIndex = 0; readerIndex < readers.size(); readerIndex++) {
+                    final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
+
+                    providers[readerIndex] = new ComparableProvider() {
+                        @Override
+                        public long getAsComparableLong(int docID) throws IOException {
+                            float value = missingValue;
+                            if (values.advanceExact(docID)) {
+                                value = Float.intBitsToFloat((int) values.longValue());
+                            }
+                            return NumericUtils.floatToSortableInt(value);
+                        }
+                    };
+                }
+            }
+            break;
+
+            default:
+                throw new IllegalArgumentException("unhandled SortField.getType()=" + sortField.getType());
+        }
+
+        return providers;
     }
-
-    return providers;
-  }
 }

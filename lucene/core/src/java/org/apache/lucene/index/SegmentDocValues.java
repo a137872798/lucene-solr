@@ -43,10 +43,10 @@ final class SegmentDocValues {
   private final Map<Long,RefCount<DocValuesProducer>> genDVProducers = new HashMap<>();
 
   /**
-   * 初始化一个新的 生产源
+   * 通过指定对应的 gen 读取段文件
    * @param si
    * @param dir
-   * @param gen
+   * @param gen  指定的段文件年代
    * @param infos
    * @return
    * @throws IOException
@@ -62,8 +62,10 @@ final class SegmentDocValues {
     // set SegmentReadState to list only the fields that are relevant to that gen
     // 生成上下文对象
     SegmentReadState srs = new SegmentReadState(dvDir, si.info, infos, IOContext.READ, segmentSuffix);
+
     DocValuesFormat dvFormat = si.info.getCodec().docValuesFormat();
-    // 返回一个 以field为单位 读取 docValue 的 reader对象
+
+    // dvFormat.fieldsProducer(srs) 实际上就是 FieldsReader  该对象的特性是可以基于field读取 docValue
     return new RefCount<DocValuesProducer>(dvFormat.fieldsProducer(srs)) {
       @SuppressWarnings("synthetic-access")
       @Override
@@ -76,7 +78,10 @@ final class SegmentDocValues {
     };
   }
 
-  /** Returns the {@link DocValuesProducer} for the given generation. */
+  /**
+   * Returns the {@link DocValuesProducer} for the given generation.
+   * 该对象本身维护了 所有gen 对应docValue信息
+   * */
   synchronized DocValuesProducer getDocValuesProducer(long gen, SegmentCommitInfo si, Directory dir, FieldInfos infos) throws IOException {
     RefCount<DocValuesProducer> dvp = genDVProducers.get(gen);
     if (dvp == null) {

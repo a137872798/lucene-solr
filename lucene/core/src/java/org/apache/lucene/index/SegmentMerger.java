@@ -60,7 +60,16 @@ final class SegmentMerger {
   final MergeState mergeState;
   private final FieldInfos.Builder fieldInfosBuilder;
 
-  // note, just like in codec apis Directory 'dir' is NOT the same as segmentInfo.dir!!
+  /**
+   * note, just like in codec apis Directory 'dir' is NOT the same as segmentInfo.dir!!
+   * @param readers  本次参与merge的segment对应的reader
+   * @param segmentInfo   merge后将会写入到哪个段中
+   * @param infoStream
+   * @param dir  包装后的目录对象 追加了限流能力   就是在 writerXXX方法时 会阻塞
+   * @param fieldNumbers   维护全局的映射对象
+   * @param context
+   * @throws IOException
+   */
   SegmentMerger(List<CodecReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, Directory dir,
                 FieldInfos.FieldNumbers fieldNumbers, IOContext context) throws IOException {
     if (context.context != IOContext.Context.MERGE) {

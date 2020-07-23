@@ -120,6 +120,7 @@ public final class DocValues {
 
   /** 
    * An empty SortedDocValues which returns {@link BytesRef#EMPTY_BYTES} for every document
+   * 返回一个空对象
    */
   public static final SortedDocValues emptySorted() {
     final BytesRef empty = new BytesRef();
@@ -370,7 +371,9 @@ public final class DocValues {
    * @throws IOException if an I/O error occurs.
    */
   public static SortedDocValues getSorted(LeafReader reader, String field) throws IOException {
+    // 这个迭代器本身具备获取某个doc对应的 ord 的功能 也就是在存储的时候已经额外存储了一份顺序信息了 而不是现在才做排序
     SortedDocValues dv = reader.getSortedDocValues(field);
+    // 代表该 segment下并没有field相关的信息
     if (dv == null) {
       checkField(reader, field, DocValuesType.SORTED);
       return emptySorted();

@@ -24,6 +24,7 @@ import org.apache.lucene.util.BytesRefBuilder;
 
 /** Implements a {@link TermsEnum} wrapping a provided
  * {@link SortedDocValues}. */
+// 类似一层装饰器  实际数据获取都是通过内部的 values 对象
 
 class SortedDocValuesTermsEnum extends BaseTermsEnum {
   private final SortedDocValues values;

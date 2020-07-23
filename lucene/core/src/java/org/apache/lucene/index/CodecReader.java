@@ -186,10 +186,12 @@ public abstract class CodecReader extends LeafReader implements Accountable {
   @Override
   public final SortedDocValues getSortedDocValues(String field) throws IOException {
     ensureOpen();
+    // 检测该 field 对应的 docValueType 是否是 SORTED
     FieldInfo fi = getDVField(field, DocValuesType.SORTED);
     if (fi == null) {
       return null;
     }
+    // 获取排序结果
     return getDocValuesReader().getSorted(fi);
   }
   

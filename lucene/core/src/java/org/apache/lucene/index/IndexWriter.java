@@ -4705,8 +4705,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             Counter softDeleteCount = Counter.newCounter(false);
             for (int r = 0; r < merge.readers.size(); r++) {
                 SegmentReader reader = merge.readers.get(r);
+                // 这里使用 merge对象对原本的 reader对象进行加工  默认情况下直接返回reader  相当于对子类开放的钩子
                 CodecReader wrappedReader = merge.wrapForMerge(reader);
                 validateMergeReader(wrappedReader);
+
+                // 软删除的部分先忽略
                 if (softDeletesEnabled) {
                     if (reader != wrappedReader) { // if we don't have a wrapped reader we won't preserve any soft-deletes
                         Bits hardLiveDocs = merge.hardLiveDocs.get(r);
@@ -4738,6 +4741,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         }
                     }
                 }
+                // 保存包装后的结果
                 mergeReaders.add(wrappedReader);
             }
             final SegmentMerger merger = new SegmentMerger(mergeReaders,

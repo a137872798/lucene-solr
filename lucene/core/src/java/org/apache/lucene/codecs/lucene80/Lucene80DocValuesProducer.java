@@ -50,1678 +50,1894 @@ import org.apache.lucene.util.compress.LZ4;
 import org.apache.lucene.util.packed.DirectMonotonicReader;
 import org.apache.lucene.util.packed.DirectReader;
 
-/** reader for {@link Lucene80DocValuesFormat} */
+/**
+ * reader for {@link Lucene80DocValuesFormat}
+ */
 // 该对象存储了 docValue
 final class Lucene80DocValuesProducer extends DocValuesProducer implements Closeable {
 
-  // 下面这些容器存储的数据 是从元数据文件中提取出来的  key 对应的是fieldName
-  private final Map<String,NumericEntry> numerics = new HashMap<>();
-  private final Map<String,BinaryEntry> binaries = new HashMap<>();
-  private final Map<String,SortedEntry> sorted = new HashMap<>();
-  private final Map<String,SortedSetEntry> sortedSets = new HashMap<>();
-  private final Map<String,SortedNumericEntry> sortedNumerics = new HashMap<>();
-  private long ramBytesUsed;
-  private final IndexInput data;
-  private final int maxDoc;
-  private int version = -1;
-
-  /**
-   * expert: instantiates a new reader
-   * 负责读取某个field 下docValue 信息    存储两种格式文件  dvd  dvm
-   * @param state
-   * @param dataCodec
-   * @param dataExtension   dvd
-   * @param metaCodec
-   * @param metaExtension   dvm
-   * @throws IOException
-   */
-  Lucene80DocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
-    String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
-    // 对应这个段下 最大的 docId
-    this.maxDoc = state.segmentInfo.maxDoc();
-    ramBytesUsed = RamUsageEstimator.shallowSizeOfInstance(getClass());
-
-    // read in the entries from the metadata file.
-    try (ChecksumIndexInput in = state.directory.openChecksumInput(metaName, state.context)) {
-      Throwable priorE = null;
-      
-      try {
-        version = CodecUtil.checkIndexHeader(in, metaCodec,
-                                        Lucene80DocValuesFormat.VERSION_START,
-                                        Lucene80DocValuesFormat.VERSION_CURRENT,
-                                        state.segmentInfo.getId(),
-                                        state.segmentSuffix);
-        // 先读取元数据文件
-        readFields(in, state.fieldInfos);
-      } catch (Throwable exception) {
-        priorE = exception;
-      } finally {
-        CodecUtil.checkFooter(in, priorE);
-      }
-    }
-
-    // 这里只是打开句柄  还没有开始读取数据
-    String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
-    this.data = state.directory.openInput(dataName, state.context);
-    boolean success = false;
-    try {
-      final int version2 = CodecUtil.checkIndexHeader(data, dataCodec,
-                                                 Lucene80DocValuesFormat.VERSION_START,
-                                                 Lucene80DocValuesFormat.VERSION_CURRENT,
-                                                 state.segmentInfo.getId(),
-                                                 state.segmentSuffix);
-      if (version != version2) {
-        throw new CorruptIndexException("Format versions mismatch: meta=" + version + ", data=" + version2, data);
-      }
-
-      // NOTE: data file is too costly to verify checksum against all the bytes on open,
-      // but for now we at least verify proper structure of the checksum footer: which looks
-      // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
-      // such as file truncation.
-      CodecUtil.retrieveChecksum(data);
-
-      success = true;
-    } finally {
-      if (!success) {
-        IOUtils.closeWhileHandlingException(this.data);
-      }
-    }
-  }
-
-  /**
-   * 这里只是读取元数据
-   * @param meta
-   * @param infos
-   * @throws IOException
-   */
-  private void readFields(ChecksumIndexInput meta, FieldInfos infos) throws IOException {
-    // dvm  第一个数据记录了fieldInfo 的 num
-    for (int fieldNumber = meta.readInt(); fieldNumber != -1; fieldNumber = meta.readInt()) {
-      // 找到对应的info 对象
-      FieldInfo info = infos.fieldInfo(fieldNumber);
-      if (info == null) {
-        throw new CorruptIndexException("Invalid field number: " + fieldNumber, meta);
-      }
-      // 对应 docValue 的类型
-      byte type = meta.readByte();
-      // 根据类型读取不同的长度 并将结果存储到内存容器中
-      if (type == Lucene80DocValuesFormat.NUMERIC) {
-        numerics.put(info.name, readNumeric(meta));
-      } else if (type == Lucene80DocValuesFormat.BINARY) {
-        binaries.put(info.name, readBinary(meta));
-      } else if (type == Lucene80DocValuesFormat.SORTED) {
-        sorted.put(info.name, readSorted(meta));
-      } else if (type == Lucene80DocValuesFormat.SORTED_SET) {
-        sortedSets.put(info.name, readSortedSet(meta));
-      } else if (type == Lucene80DocValuesFormat.SORTED_NUMERIC) {
-        sortedNumerics.put(info.name, readSortedNumeric(meta));
-      } else {
-        throw new CorruptIndexException("invalid type: " + type, meta);
-      }
-    }
-  }
-
-  /**
-   * 从索引文件中读取 number 类型的数据
-   * @param meta
-   * @return
-   * @throws IOException
-   */
-  private NumericEntry readNumeric(ChecksumIndexInput meta) throws IOException {
-    NumericEntry entry = new NumericEntry();
-    readNumeric(meta, entry);
-    return entry;
-  }
-
-  /**
-   * 从元数据文件中读取数据 并填充到 entry中
-   * @param meta
-   * @param entry
-   * @throws IOException
-   */
-  private void readNumeric(ChecksumIndexInput meta, NumericEntry entry) throws IOException {
-    entry.docsWithFieldOffset = meta.readLong();
-    entry.docsWithFieldLength = meta.readLong();
-    entry.jumpTableEntryCount = meta.readShort();
-    entry.denseRankPower = meta.readByte();
-    entry.numValues = meta.readLong();
-    int tableSize = meta.readInt();
-    if (tableSize > 256) {
-      throw new CorruptIndexException("invalid table size: " + tableSize, meta);
-    }
-    if (tableSize >= 0) {
-      entry.table = new long[tableSize];
-      ramBytesUsed += RamUsageEstimator.sizeOf(entry.table);
-      for (int i = 0; i < tableSize; ++i) {
-        entry.table[i] = meta.readLong();
-      }
-    }
-    if (tableSize < -1) {
-      entry.blockShift = -2 - tableSize;
-    } else {
-      entry.blockShift = -1;
-    }
-    entry.bitsPerValue = meta.readByte();
-    entry.minValue = meta.readLong();
-    entry.gcd = meta.readLong();
-    entry.valuesOffset = meta.readLong();
-    entry.valuesLength = meta.readLong();
-    entry.valueJumpTableOffset = meta.readLong();
-  }
-
-  /**
-   * 读取二进制数据
-   * @param meta
-   * @return
-   * @throws IOException
-   */
-  private BinaryEntry readBinary(ChecksumIndexInput meta) throws IOException {
-    BinaryEntry entry = new BinaryEntry();
-    entry.dataOffset = meta.readLong();
-    entry.dataLength = meta.readLong();
-    entry.docsWithFieldOffset = meta.readLong();
-    entry.docsWithFieldLength = meta.readLong();
-    entry.jumpTableEntryCount = meta.readShort();
-    entry.denseRankPower = meta.readByte();
-    // 代表这个field 下有多少doc
-    entry.numDocsWithField = meta.readInt();
-    entry.minLength = meta.readInt();
-    entry.maxLength = meta.readInt();
-    // 当此时的版本号支持压缩时 或者  minLength和maxLength 不一致时 (因为压缩了 所以长度不一致)
-    if ((version >= Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED && entry.numDocsWithField > 0) ||  entry.minLength < entry.maxLength) {
-      // 写入地址偏移量
-      entry.addressesOffset = meta.readLong();
-
-      // numAddresses 代表  DirectMonotonicReader 对象一共写入了多少个值  每个block有一个blockSize  代表一个block可以写入多少long值  在存储时 采用差值存储的方式减少空间
-      // 通过 numAddresses >>> blockShift  可以计算出一共使用了多少block
-
-      // Old count of uncompressed addresses    旧版本 address数量是  doc + 1
-      long numAddresses = entry.numDocsWithField + 1L;
-      // New count of compressed addresses - the number of compresseed blocks
-      // 新版本数量是 numCompressedChunks
-      if (version >= Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
-        entry.numCompressedChunks = meta.readVInt();
-        entry.docsPerChunkShift = meta.readVInt();
-        entry.maxUncompressedChunkSize = meta.readVInt();
-        numAddresses = entry.numCompressedChunks;
-      }      
-      
-      final int blockShift = meta.readVInt();
-      // 接着会从meta 中连续读取几个用于还原单调容器数据的数据
-      entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, numAddresses, blockShift);
-      ramBytesUsed += entry.addressesMeta.ramBytesUsed();
-      entry.addressesLength = meta.readLong();
-    }
-    return entry;
-  }
-
-  private SortedEntry readSorted(ChecksumIndexInput meta) throws IOException {
-    SortedEntry entry = new SortedEntry();
-    entry.docsWithFieldOffset = meta.readLong();
-    entry.docsWithFieldLength = meta.readLong();
-    entry.jumpTableEntryCount = meta.readShort();
-    entry.denseRankPower = meta.readByte();
-    entry.numDocsWithField = meta.readInt();
-    entry.bitsPerValue = meta.readByte();
-    entry.ordsOffset = meta.readLong();
-    entry.ordsLength = meta.readLong();
-    readTermDict(meta, entry);
-    return entry;
-  }
-
-  private SortedSetEntry readSortedSet(ChecksumIndexInput meta) throws IOException {
-    SortedSetEntry entry = new SortedSetEntry();
-    byte multiValued = meta.readByte();
-    switch (multiValued) {
-      case 0: // singlevalued
-        entry.singleValueEntry = readSorted(meta);
-        return entry;
-      case 1: // multivalued
-        break;
-      default:
-        throw new CorruptIndexException("Invalid multiValued flag: " + multiValued, meta);
-    }
-    entry.docsWithFieldOffset = meta.readLong();
-    entry.docsWithFieldLength = meta.readLong();
-    entry.jumpTableEntryCount = meta.readShort();
-    entry.denseRankPower = meta.readByte();
-    entry.bitsPerValue = meta.readByte();
-    entry.ordsOffset = meta.readLong();
-    entry.ordsLength = meta.readLong();
-    entry.numDocsWithField = meta.readInt();
-    entry.addressesOffset = meta.readLong();
-    final int blockShift = meta.readVInt();
-    entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, entry.numDocsWithField + 1, blockShift);
-    ramBytesUsed += entry.addressesMeta.ramBytesUsed();
-    entry.addressesLength = meta.readLong();
-    readTermDict(meta, entry);
-    return entry;
-  }
-
-  private static void readTermDict(ChecksumIndexInput meta, TermsDictEntry entry) throws IOException {
-    entry.termsDictSize = meta.readVLong();
-    entry.termsDictBlockShift = meta.readInt();
-    final int blockShift = meta.readInt();
-    final long addressesSize = (entry.termsDictSize + (1L << entry.termsDictBlockShift) - 1) >>> entry.termsDictBlockShift;
-    entry.termsAddressesMeta = DirectMonotonicReader.loadMeta(meta, addressesSize, blockShift);
-    entry.maxTermLength = meta.readInt();
-    entry.termsDataOffset = meta.readLong();
-    entry.termsDataLength = meta.readLong();
-    entry.termsAddressesOffset = meta.readLong();
-    entry.termsAddressesLength = meta.readLong();
-    entry.termsDictIndexShift = meta.readInt();
-    final long indexSize = (entry.termsDictSize + (1L << entry.termsDictIndexShift) - 1) >>> entry.termsDictIndexShift;
-    entry.termsIndexAddressesMeta = DirectMonotonicReader.loadMeta(meta, 1 + indexSize, blockShift);
-    entry.termsIndexOffset = meta.readLong();
-    entry.termsIndexLength = meta.readLong();
-    entry.termsIndexAddressesOffset = meta.readLong();
-    entry.termsIndexAddressesLength = meta.readLong();
-  }
-
-  private SortedNumericEntry readSortedNumeric(ChecksumIndexInput meta) throws IOException {
-    SortedNumericEntry entry = new SortedNumericEntry();
-    readNumeric(meta, entry);
-    entry.numDocsWithField = meta.readInt();
-    if (entry.numDocsWithField != entry.numValues) {
-      entry.addressesOffset = meta.readLong();
-      final int blockShift = meta.readVInt();
-      entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, entry.numDocsWithField + 1, blockShift);
-      ramBytesUsed += entry.addressesMeta.ramBytesUsed();
-      entry.addressesLength = meta.readLong();
-    }
-    return entry;
-  }
-
-  @Override
-  public void close() throws IOException {
-    data.close();
-  }
-
-  /**
-   * 该对象存储了  Num 类型的  docValue 数据 相关的元数据
-   */
-  private static class NumericEntry {
-    long[] table;
-    int blockShift;
-    byte bitsPerValue;
-    long docsWithFieldOffset;
-    long docsWithFieldLength;
-    short jumpTableEntryCount;
-    byte denseRankPower;
-    long numValues;
-    long minValue;
-    long gcd;
-    long valuesOffset;
-    long valuesLength;
-    long valueJumpTableOffset; // -1 if no jump-table
-  }
-
-  private static class BinaryEntry {
-    long dataOffset;
-    long dataLength;
-    /**
-     * 该值为-2 代表没有docValue 数据
-     * 为-1 代表数据是密集的
-     */
-    long docsWithFieldOffset;
-    long docsWithFieldLength;
-    short jumpTableEntryCount;
-    byte denseRankPower;
-    int numDocsWithField;
-    int minLength;
-    int maxLength;
-    // 这2个应该是对应 data文件的偏移量
-    long addressesOffset;
-    long addressesLength;
-    DirectMonotonicReader.Meta addressesMeta;
-    int numCompressedChunks;
-    int docsPerChunkShift;
-    int maxUncompressedChunkSize;
-  }
-
-  private static class TermsDictEntry {
-    long termsDictSize;
-    int termsDictBlockShift;
-    DirectMonotonicReader.Meta termsAddressesMeta;
-    int maxTermLength;
-    long termsDataOffset;
-    long termsDataLength;
-    long termsAddressesOffset;
-    long termsAddressesLength;
-    int termsDictIndexShift;
-    DirectMonotonicReader.Meta termsIndexAddressesMeta;
-    long termsIndexOffset;
-    long termsIndexLength;
-    long termsIndexAddressesOffset;
-    long termsIndexAddressesLength;
-  }
-
-  private static class SortedEntry extends TermsDictEntry {
-    long docsWithFieldOffset;
-    long docsWithFieldLength;
-    short jumpTableEntryCount;
-    byte denseRankPower;
-    int numDocsWithField;
-    byte bitsPerValue;
-    long ordsOffset;
-    long ordsLength;
-  }
-
-  private static class SortedSetEntry extends TermsDictEntry {
-    SortedEntry singleValueEntry;
-    long docsWithFieldOffset;
-    long docsWithFieldLength;
-    short jumpTableEntryCount;
-    byte denseRankPower;
-    int numDocsWithField;
-    byte bitsPerValue;
-    long ordsOffset;
-    long ordsLength;
-    DirectMonotonicReader.Meta addressesMeta;
-    long addressesOffset;
-    long addressesLength;
-  }
-
-  private static class SortedNumericEntry extends NumericEntry {
-    int numDocsWithField;
-    DirectMonotonicReader.Meta addressesMeta;
-    long addressesOffset;
-    long addressesLength;
-  }
-
-  @Override
-  public long ramBytesUsed() {
-    return ramBytesUsed;
-  }
-
-  @Override
-  public NumericDocValues getNumeric(FieldInfo field) throws IOException {
-    NumericEntry entry = numerics.get(field.name);
-    return getNumeric(entry);
-  }
-
-  private static abstract class DenseNumericDocValues extends NumericDocValues {
-
-    final int maxDoc;
-    int doc = -1;
-
-    DenseNumericDocValues(int maxDoc) {
-      this.maxDoc = maxDoc;
-    }
-
-    @Override
-    public int docID() {
-      return doc;
-    }
-
-    @Override
-    public int nextDoc() throws IOException {
-      return advance(doc + 1);
-    }
-
-    @Override
-    public int advance(int target) throws IOException {
-      if (target >= maxDoc) {
-        return doc = NO_MORE_DOCS;
-      }
-      return doc = target;
-    }
-
-    @Override
-    public boolean advanceExact(int target) {
-      doc = target;
-      return true;
-    }
-
-    @Override
-    public long cost() {
-      return maxDoc;
-    }
-
-  }
-
-  private static abstract class SparseNumericDocValues extends NumericDocValues {
-
-    final IndexedDISI disi;
-
-    SparseNumericDocValues(IndexedDISI disi) {
-      this.disi = disi;
-    }
-
-    @Override
-    public int advance(int target) throws IOException {
-      return disi.advance(target);
-    }
-
-    @Override
-    public boolean advanceExact(int target) throws IOException {
-      return disi.advanceExact(target);
-    }
-
-    @Override
-    public int nextDoc() throws IOException {
-      return disi.nextDoc();
-    }
-
-    @Override
-    public int docID() {
-      return disi.docID();
-    }
-
-    @Override
-    public long cost() {
-      return disi.cost();
-    }
-  }
-
-  private NumericDocValues getNumeric(NumericEntry entry) throws IOException {
-    if (entry.docsWithFieldOffset == -2) {
-      // empty
-      return DocValues.emptyNumeric();
-    } else if (entry.docsWithFieldOffset == -1) {
-      // dense
-      if (entry.bitsPerValue == 0) {
-        return new DenseNumericDocValues(maxDoc) {
-          @Override
-          public long longValue() throws IOException {
-            return entry.minValue;
-          }
-        };
-      } else {
-        final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
-        if (entry.blockShift >= 0) {
-          // dense but split into blocks of different bits per value
-          return new DenseNumericDocValues(maxDoc) {
-            final VaryingBPVReader vBPVReader = new VaryingBPVReader(entry, slice);
-
-            @Override
-            public long longValue() throws IOException {
-              return vBPVReader.getLongValue(doc);
-            }
-          };
-        } else {
-          final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
-          if (entry.table != null) {
-            final long[] table = entry.table;
-            return new DenseNumericDocValues(maxDoc) {
-              @Override
-              public long longValue() throws IOException {
-                return table[(int) values.get(doc)];
-              }
-            };
-          } else {
-            final long mul = entry.gcd;
-            final long delta = entry.minValue;
-            return new DenseNumericDocValues(maxDoc) {
-              @Override
-              public long longValue() throws IOException {
-                return mul * values.get(doc) + delta;
-              }
-            };
-          }
-        }
-      }
-    } else {
-      // sparse
-      final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-          entry.jumpTableEntryCount, entry.denseRankPower, entry.numValues);
-      if (entry.bitsPerValue == 0) {
-        return new SparseNumericDocValues(disi) {
-          @Override
-          public long longValue() throws IOException {
-            return entry.minValue;
-          }
-        };
-      } else {
-        final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
-        if (entry.blockShift >= 0) {
-          // sparse and split into blocks of different bits per value
-          return new SparseNumericDocValues(disi) {
-            final VaryingBPVReader vBPVReader = new VaryingBPVReader(entry, slice);
-
-            @Override
-            public long longValue() throws IOException {
-              final int index = disi.index();
-              return vBPVReader.getLongValue(index);
-            }
-          };
-        } else {
-          final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
-          if (entry.table != null) {
-            final long[] table = entry.table;
-            return new SparseNumericDocValues(disi) {
-              @Override
-              public long longValue() throws IOException {
-                return table[(int) values.get(disi.index())];
-              }
-            };
-          } else {
-            final long mul = entry.gcd;
-            final long delta = entry.minValue;
-            return new SparseNumericDocValues(disi) {
-              @Override
-              public long longValue() throws IOException {
-                return mul * values.get(disi.index()) + delta;
-              }
-            };
-          }
-        }
-      }
-    }
-  }
-
-  private LongValues getNumericValues(NumericEntry entry) throws IOException {
-    if (entry.bitsPerValue == 0) {
-      return new LongValues() {
-        @Override
-        public long get(long index) {
-          return entry.minValue;
-        }
-      };
-    } else {
-      final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
-      if (entry.blockShift >= 0) {
-        return new LongValues() {
-          final VaryingBPVReader vBPVReader = new VaryingBPVReader(entry, slice);
-          @Override
-          public long get(long index) {
-            try {
-              return vBPVReader.getLongValue(index);
-            } catch (IOException e) {
-              throw new RuntimeException(e);
-            }
-          }
-        };
-      } else {
-        final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
-        if (entry.table != null) {
-          final long[] table = entry.table;
-          return new LongValues() {
-            @Override
-            public long get(long index) {
-              return table[(int) values.get(index)];
-            }
-          };
-        } else if (entry.gcd != 1) {
-          final long gcd = entry.gcd;
-          final long minValue = entry.minValue;
-          return new LongValues() {
-            @Override
-            public long get(long index) {
-              return values.get(index) * gcd + minValue;
-            }
-          };
-        } else if (entry.minValue != 0) {
-          final long minValue = entry.minValue;
-          return new LongValues() {
-            @Override
-            public long get(long index) {
-              return values.get(index) + minValue;
-            }
-          };
-        } else {
-          return values;
-        }
-      }
-    }
-  }
-
-  /**
-   * 该对象是一个通过密集算法(压缩)存储二进制 docValue数据的对象
-   */
-  private static abstract class DenseBinaryDocValues extends BinaryDocValues {
-
-    final int maxDoc;
-    int doc = -1;
-
-    DenseBinaryDocValues(int maxDoc) {
-      this.maxDoc = maxDoc;
-    }
+    // 下面这些容器存储的数据 是从元数据文件中提取出来的  key 对应的是fieldName
+    private final Map<String, NumericEntry> numerics = new HashMap<>();
+    private final Map<String, BinaryEntry> binaries = new HashMap<>();
+    private final Map<String, SortedEntry> sorted = new HashMap<>();
+    private final Map<String, SortedSetEntry> sortedSets = new HashMap<>();
+    private final Map<String, SortedNumericEntry> sortedNumerics = new HashMap<>();
+    private long ramBytesUsed;
+    private final IndexInput data;
+    private final int maxDoc;
+    private int version = -1;
 
     /**
-     * 每次调用 nextDoc 都是自动传入下一个docId  也就是认为doc 本身是连续存储的
-     * @return
-     * @throws IOException
-     */
-    @Override
-    public int nextDoc() throws IOException {
-      return advance(doc + 1);
-    }
-
-    @Override
-    public int docID() {
-      return doc;
-    }
-
-    @Override
-    public long cost() {
-      return maxDoc;
-    }
-
-    @Override
-    public int advance(int target) throws IOException {
-      if (target >= maxDoc) {
-        return doc = NO_MORE_DOCS;
-      }
-      return doc = target;
-    }
-
-    /**
-     * 直接定位到某个 docId  同时配合binaryValue() 读取此时doc对应的 docValue
-     * @param target
-     * @return
-     * @throws IOException
-     */
-    @Override
-    public boolean advanceExact(int target) throws IOException {
-      doc = target;
-      return true;
-    }
-  }
-
-  /**
-   * 因为该对象内部的 docId 不是连续的 所以nextDoc 无法直接将doc+1 而是通过disi对象获取下一个doc
-   */
-  private static abstract class SparseBinaryDocValues extends BinaryDocValues {
-
-    final IndexedDISI disi;
-
-    SparseBinaryDocValues(IndexedDISI disi) {
-      this.disi = disi;
-    }
-
-    /**
-     * 切换到下一个存在的docId
-     * @return
-     * @throws IOException
-     */
-    @Override
-    public int nextDoc() throws IOException {
-      return disi.nextDoc();
-    }
-
-    @Override
-    public int docID() {
-      return disi.docID();
-    }
-
-    @Override
-    public long cost() {
-      return disi.cost();
-    }
-
-    @Override
-    public int advance(int target) throws IOException {
-      return disi.advance(target);
-    }
-
-    @Override
-    public boolean advanceExact(int target) throws IOException {
-      return disi.advanceExact(target);
-    }
-  }
-  
-  // BWC - old binary format 
-  private BinaryDocValues getUncompressedBinary(FieldInfo field) throws IOException {
-    BinaryEntry entry = binaries.get(field.name);
-    if (entry.docsWithFieldOffset == -2) {
-      return DocValues.emptyBinary();
-    }
-
-    final IndexInput bytesSlice = data.slice("fixed-binary", entry.dataOffset, entry.dataLength);
-
-    if (entry.docsWithFieldOffset == -1) {
-      // dense
-      if (entry.minLength == entry.maxLength) {
-        // fixed length
-        final int length = entry.maxLength;
-        return new DenseBinaryDocValues(maxDoc) {
-          final BytesRef bytes = new BytesRef(new byte[length], 0, length);
-
-          @Override
-          public BytesRef binaryValue() throws IOException {
-            bytesSlice.seek((long) doc * length);
-            bytesSlice.readBytes(bytes.bytes, 0, length);
-            return bytes;
-          }
-        };
-      } else {
-        // variable length
-        final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-        final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
-        return new DenseBinaryDocValues(maxDoc) {
-          final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
-
-          @Override
-          public BytesRef binaryValue() throws IOException {
-            long startOffset = addresses.get(doc);
-            bytes.length = (int) (addresses.get(doc + 1L) - startOffset);
-            bytesSlice.seek(startOffset);
-            bytesSlice.readBytes(bytes.bytes, 0, bytes.length);
-            return bytes;
-          }
-        };
-      }
-    } else {
-      // sparse
-      final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-          entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
-      if (entry.minLength == entry.maxLength) {
-        // fixed length
-        final int length = entry.maxLength;
-        return new SparseBinaryDocValues(disi) {
-          final BytesRef bytes = new BytesRef(new byte[length], 0, length);
-
-          @Override
-          public BytesRef binaryValue() throws IOException {
-            bytesSlice.seek((long) disi.index() * length);
-            bytesSlice.readBytes(bytes.bytes, 0, length);
-            return bytes;
-          }
-        };
-      } else {
-        // variable length
-        final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-        final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
-        return new SparseBinaryDocValues(disi) {
-          final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
-
-          @Override
-          public BytesRef binaryValue() throws IOException {
-            final int index = disi.index();
-            long startOffset = addresses.get(index);
-            bytes.length = (int) (addresses.get(index + 1L) - startOffset);
-            bytesSlice.seek(startOffset);
-            bytesSlice.readBytes(bytes.bytes, 0, bytes.length);
-            return bytes;
-          }
-        };
-      }
-    }
-  }  
-  
-  // Decompresses blocks of binary values to retrieve content
-  // 该对象可以通过传入一个 docId 获取该doc的相关数据
-  class BinaryDecoder {
-
-    /**
-     * 内部存储了一系列值  每个值对应一个 block的起点 block内部才是真正存储了doc的
-     */
-    private final LongValues addresses;
-    /**
-     * 对应 dvd文件
-     */
-    private final IndexInput compressedData;
-    // Cache of last uncompressed block
-    // 会暂存上一个访问的block
-    private long lastBlockId = -1;
-
-    /**
-     * 对应当前读取的 chunk 下 每个doc的起始位置   下标从1开始   并且每次的值都会追加上上一个长度
-     */
-    private final int[] uncompressedDocStarts;
-
-    private int uncompressedBlockLength = 0;
-    /**
-     * 存储了 解压后的数据
-     */
-    private final byte[] uncompressedBlock;
-
-    /**
-     * 对应某个 docValue
-     */
-    private final BytesRef uncompressedBytesRef;
-    /**
-     * 一个chunk 中最多允许存放多少doc  address 就是用来定位 chunk的
-     */
-    private final int docsPerChunk;
-    /**
-     * 掩码  便于计算某个doc所在的chunk
-     */
-    private final int docsPerChunkShift;
-
-
-    /**
+     * expert: instantiates a new reader
+     * 负责读取某个field 下docValue 信息    存储两种格式文件  dvd  dvm
      *
-     * @param addresses
-     * @param compressedData  这里承载了数据 (对应dvd文件)
-     * @param biggestUncompressedBlockSize  当解压后最多允许存储多少数据   从 compressedData读取出来的数据长度是 未解压的版本
-     * @param docsPerChunkShift  每个chunk 存储多少文档
+     * @param state
+     * @param dataCodec
+     * @param dataExtension dvd
+     * @param metaCodec
+     * @param metaExtension dvm
+     * @throws IOException
      */
-    public BinaryDecoder(LongValues addresses, IndexInput compressedData, int biggestUncompressedBlockSize, int docsPerChunkShift) {
-      super();
-      this.addresses = addresses;
-      this.compressedData = compressedData;
-      // pre-allocate a byte array large enough for the biggest uncompressed block needed.
-      this.uncompressedBlock = new byte[biggestUncompressedBlockSize];
-      uncompressedBytesRef = new BytesRef(uncompressedBlock);
-      this.docsPerChunk = 1 << docsPerChunkShift;
-      this.docsPerChunkShift = docsPerChunkShift;
-      uncompressedDocStarts = new int[docsPerChunk + 1];
-      
+    Lucene80DocValuesProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
+        String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
+        // 对应这个段下 最大的 docId   每个段的doc都是从1开始
+        this.maxDoc = state.segmentInfo.maxDoc();
+        ramBytesUsed = RamUsageEstimator.shallowSizeOfInstance(getClass());
+
+        // read in the entries from the metadata file.
+        try (ChecksumIndexInput in = state.directory.openChecksumInput(metaName, state.context)) {
+            Throwable priorE = null;
+
+            try {
+                version = CodecUtil.checkIndexHeader(in, metaCodec,
+                        Lucene80DocValuesFormat.VERSION_START,
+                        Lucene80DocValuesFormat.VERSION_CURRENT,
+                        state.segmentInfo.getId(),
+                        state.segmentSuffix);
+                // 先读取元数据文件
+                readFields(in, state.fieldInfos);
+            } catch (Throwable exception) {
+                priorE = exception;
+            } finally {
+                CodecUtil.checkFooter(in, priorE);
+            }
+        }
+
+        // 这里只是打开句柄  还没有开始读取数据
+        String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
+        this.data = state.directory.openInput(dataName, state.context);
+        boolean success = false;
+        try {
+            final int version2 = CodecUtil.checkIndexHeader(data, dataCodec,
+                    Lucene80DocValuesFormat.VERSION_START,
+                    Lucene80DocValuesFormat.VERSION_CURRENT,
+                    state.segmentInfo.getId(),
+                    state.segmentSuffix);
+            if (version != version2) {
+                throw new CorruptIndexException("Format versions mismatch: meta=" + version + ", data=" + version2, data);
+            }
+
+            // NOTE: data file is too costly to verify checksum against all the bytes on open,
+            // but for now we at least verify proper structure of the checksum footer: which looks
+            // for FOOTER_MAGIC + algorithmID. This is cheap and can detect some forms of corruption
+            // such as file truncation.
+            CodecUtil.retrieveChecksum(data);
+
+            success = true;
+        } finally {
+            if (!success) {
+                IOUtils.closeWhileHandlingException(this.data);
+            }
+        }
     }
 
     /**
-     * 代表第几个doc
-     * 这里采用批量读取的原因就是  在压缩时就是尽可能将大块数据一起压缩 在解压的时候也会一次性解压很多数据 (单数据压缩就失去压缩的意义了)
-     * @param docNumber
+     * 这里只是读取元数据
+     *
+     * @param meta
+     * @param infos
+     * @throws IOException
+     */
+    private void readFields(ChecksumIndexInput meta, FieldInfos infos) throws IOException {
+        // dvm  第一个数据记录了fieldInfo 的 num
+        for (int fieldNumber = meta.readInt(); fieldNumber != -1; fieldNumber = meta.readInt()) {
+            // 找到对应的info 对象
+            FieldInfo info = infos.fieldInfo(fieldNumber);
+            if (info == null) {
+                throw new CorruptIndexException("Invalid field number: " + fieldNumber, meta);
+            }
+            // 对应 docValue 的类型
+            byte type = meta.readByte();
+            // 根据类型读取不同的长度 并将结果存储到内存容器中
+            if (type == Lucene80DocValuesFormat.NUMERIC) {
+                numerics.put(info.name, readNumeric(meta));
+            } else if (type == Lucene80DocValuesFormat.BINARY) {
+                binaries.put(info.name, readBinary(meta));
+            } else if (type == Lucene80DocValuesFormat.SORTED) {
+                sorted.put(info.name, readSorted(meta));
+            } else if (type == Lucene80DocValuesFormat.SORTED_SET) {
+                sortedSets.put(info.name, readSortedSet(meta));
+            } else if (type == Lucene80DocValuesFormat.SORTED_NUMERIC) {
+                sortedNumerics.put(info.name, readSortedNumeric(meta));
+            } else {
+                throw new CorruptIndexException("invalid type: " + type, meta);
+            }
+        }
+    }
+
+    /**
+     * 从索引文件中读取 number 类型的数据
+     *
+     * @param meta
      * @return
      * @throws IOException
      */
-    BytesRef decode(int docNumber) throws IOException {
-      // 先定位到某个 chunk
-      int blockId = docNumber >> docsPerChunkShift;
-      // 获取 某个chunk下存储的相对偏移量
-      int docInBlockId = docNumber % docsPerChunk;
-      assert docInBlockId < docsPerChunk;
-      
-      
-      // already read and uncompressed?
-      // 此时还没有数据读取到内存中   加载相关信息时 以block为单位  当发现blockId一致时 就按照之前读取的下标快速定位到docValue
-      if (blockId != lastBlockId) {
-        lastBlockId = blockId;
-        // 找到 block 的起点
-        long blockStartOffset = addresses.get(blockId);
-        // 将data索引文件定位到目标位置
-        compressedData.seek(blockStartOffset);
-        
-        uncompressedBlockLength = 0;        
+    private NumericEntry readNumeric(ChecksumIndexInput meta) throws IOException {
+        NumericEntry entry = new NumericEntry();
+        readNumeric(meta, entry);
+        return entry;
+    }
 
-        // 代表本block 下所有的 docValue 长度都是一样的
-        int onlyLength = -1;
-        for (int i = 0; i < docsPerChunk; i++) {
-          if (i == 0) {
-            // The first length value is special. It is shifted and has a bit to denote if
-            // all other values are the same length
-            // 检测所有docValue的值是否一样
-            int lengthPlusSameInd = compressedData.readVInt();
-            int sameIndicator = lengthPlusSameInd & 1;
-            int firstValLength = lengthPlusSameInd >>>1;
-            if (sameIndicator == 1) {
-              onlyLength = firstValLength;
+    /**
+     * 从元数据文件中读取数据 并填充到 entry中
+     *
+     * @param meta
+     * @param entry
+     * @throws IOException
+     */
+    private void readNumeric(ChecksumIndexInput meta, NumericEntry entry) throws IOException {
+        entry.docsWithFieldOffset = meta.readLong();
+        entry.docsWithFieldLength = meta.readLong();
+        entry.jumpTableEntryCount = meta.readShort();
+        entry.denseRankPower = meta.readByte();
+        entry.numValues = meta.readLong();
+        int tableSize = meta.readInt();
+        if (tableSize > 256) {
+            throw new CorruptIndexException("invalid table size: " + tableSize, meta);
+        }
+        if (tableSize >= 0) {
+            entry.table = new long[tableSize];
+            ramBytesUsed += RamUsageEstimator.sizeOf(entry.table);
+            for (int i = 0; i < tableSize; ++i) {
+                entry.table[i] = meta.readLong();
             }
-            uncompressedBlockLength += firstValLength;            
-          } else {
-            // 追加不同的长度
-            if (onlyLength == -1) {
-              // Various lengths are stored - read each from disk
-              uncompressedBlockLength += compressedData.readVInt();
-              // 代表长度一致
-            } else {
-              // Only one length 
-              uncompressedBlockLength += onlyLength;
+        }
+        if (tableSize < -1) {
+            entry.blockShift = -2 - tableSize;
+        } else {
+            entry.blockShift = -1;
+        }
+        entry.bitsPerValue = meta.readByte();
+        entry.minValue = meta.readLong();
+        entry.gcd = meta.readLong();
+        entry.valuesOffset = meta.readLong();
+        entry.valuesLength = meta.readLong();
+        entry.valueJumpTableOffset = meta.readLong();
+    }
+
+    /**
+     * 读取二进制数据
+     *
+     * @param meta
+     * @return
+     * @throws IOException
+     */
+    private BinaryEntry readBinary(ChecksumIndexInput meta) throws IOException {
+        BinaryEntry entry = new BinaryEntry();
+        entry.dataOffset = meta.readLong();
+        entry.dataLength = meta.readLong();
+        entry.docsWithFieldOffset = meta.readLong();
+        entry.docsWithFieldLength = meta.readLong();
+        entry.jumpTableEntryCount = meta.readShort();
+        entry.denseRankPower = meta.readByte();
+        // 代表这个field 下有多少doc
+        entry.numDocsWithField = meta.readInt();
+        entry.minLength = meta.readInt();
+        entry.maxLength = meta.readInt();
+        // 当此时的版本号支持压缩时 或者  minLength和maxLength 不一致时 (因为压缩了 所以长度不一致)
+        if ((version >= Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED && entry.numDocsWithField > 0) || entry.minLength < entry.maxLength) {
+            // 写入地址偏移量
+            entry.addressesOffset = meta.readLong();
+
+            // numAddresses 代表  DirectMonotonicReader 对象一共写入了多少个值  每个block有一个blockSize  代表一个block可以写入多少long值  在存储时 采用差值存储的方式减少空间
+            // 通过 numAddresses >>> blockShift  可以计算出一共使用了多少block
+
+            // Old count of uncompressed addresses    旧版本 address数量是  doc + 1
+            long numAddresses = entry.numDocsWithField + 1L;
+            // New count of compressed addresses - the number of compresseed blocks
+            // 新版本数量是 numCompressedChunks
+            if (version >= Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
+                entry.numCompressedChunks = meta.readVInt();
+                entry.docsPerChunkShift = meta.readVInt();
+                entry.maxUncompressedChunkSize = meta.readVInt();
+                numAddresses = entry.numCompressedChunks;
             }
-          }
-          uncompressedDocStarts[i+1] = uncompressedBlockLength;
+
+            final int blockShift = meta.readVInt();
+            // 接着会从meta 中连续读取几个用于还原单调容器数据的数据
+            entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, numAddresses, blockShift);
+            ramBytesUsed += entry.addressesMeta.ramBytesUsed();
+            entry.addressesLength = meta.readLong();
         }
-
-        // 代表doc下没有任何数据  返回空数据
-        if (uncompressedBlockLength == 0) {
-          uncompressedBytesRef.offset = 0;
-          uncompressedBytesRef.length = 0;
-          return uncompressedBytesRef;
-        }
-        
-        assert uncompressedBlockLength <= uncompressedBlock.length;
-        // 将数据解压并填充到byte[]中
-        LZ4.decompress(compressedData, uncompressedBlockLength, uncompressedBlock);
-      }
-
-      // 代表不需要切换block内的数据
-      uncompressedBytesRef.offset = uncompressedDocStarts[docInBlockId];        
-      uncompressedBytesRef.length = uncompressedDocStarts[docInBlockId +1] - uncompressedBytesRef.offset;
-      return uncompressedBytesRef;
-    }    
-  }
-
-  /**
-   * 获取某个field 下所有二进制形式存储的 docValue
-   * @param field
-   * @return
-   * @throws IOException
-   */
-  @Override
-  public BinaryDocValues getBinary(FieldInfo field) throws IOException {
-    if (version < Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
-      return getUncompressedBinary(field);
+        return entry;
     }
 
-    // entry 是从元数据文件读取出来的
-    BinaryEntry entry = binaries.get(field.name);
-    if (entry.docsWithFieldOffset == -2) {
-      return DocValues.emptyBinary();
+    /**
+     * 获取有关描述 排序信息的对象
+     *
+     * @param meta
+     * @return
+     * @throws IOException
+     */
+    private SortedEntry readSorted(ChecksumIndexInput meta) throws IOException {
+        SortedEntry entry = new SortedEntry();
+        // docValue 通过LZ4 压缩算法存储 并且多个数据块以链表形式连接
+        entry.docsWithFieldOffset = meta.readLong();
+        entry.docsWithFieldLength = meta.readLong();
+        entry.jumpTableEntryCount = meta.readShort();
+        entry.denseRankPower = meta.readByte();
+        entry.numDocsWithField = meta.readInt();
+        entry.bitsPerValue = meta.readByte();
+        entry.ordsOffset = meta.readLong();
+        entry.ordsLength = meta.readLong();
+        // 这里读取用于定位 term的相关信息
+        readTermDict(meta, entry);
+        return entry;
     }
-    // 为-1时 代表数据是密集的
-    if (entry.docsWithFieldOffset == -1) {
-      // dense
-      // 这里根据 address相关信息生成一个 随机读取输入流
-      final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-      // address 信息是采用 单调递增+位存储的形式保存的 现在对数据进行还原
-      final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
 
-      // 返回一个基于连续存储doc 的迭代器对象      因为本身doc就是连续存储的 BinaryDecoder 存放数据时是将docId 转换成blockId 也就是docId相近的会分配到一个block中 他们的数据是连续存储的
-      // 而如果docId 是分散的就不行  需要额外做一层转换 使得docId转换后的值相距不远
-      return new DenseBinaryDocValues(maxDoc) {
+    private SortedSetEntry readSortedSet(ChecksumIndexInput meta) throws IOException {
+        SortedSetEntry entry = new SortedSetEntry();
+        byte multiValued = meta.readByte();
+        switch (multiValued) {
+            case 0: // singlevalued
+                entry.singleValueEntry = readSorted(meta);
+                return entry;
+            case 1: // multivalued
+                break;
+            default:
+                throw new CorruptIndexException("Invalid multiValued flag: " + multiValued, meta);
+        }
+        entry.docsWithFieldOffset = meta.readLong();
+        entry.docsWithFieldLength = meta.readLong();
+        entry.jumpTableEntryCount = meta.readShort();
+        entry.denseRankPower = meta.readByte();
+        entry.bitsPerValue = meta.readByte();
+        entry.ordsOffset = meta.readLong();
+        entry.ordsLength = meta.readLong();
+        entry.numDocsWithField = meta.readInt();
+        entry.addressesOffset = meta.readLong();
+        final int blockShift = meta.readVInt();
+        entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, entry.numDocsWithField + 1, blockShift);
+        ramBytesUsed += entry.addressesMeta.ramBytesUsed();
+        entry.addressesLength = meta.readLong();
+        readTermDict(meta, entry);
+        return entry;
+    }
+
+    /**
+     * 读取能够定位到term的相关信息 就是各种address 该值是用来定位在大数据块中的 链表的起始位置的
+     *
+     * @param meta
+     * @param entry
+     * @throws IOException
+     */
+    private static void readTermDict(ChecksumIndexInput meta, TermsDictEntry entry) throws IOException {
+        entry.termsDictSize = meta.readVLong();
+        entry.termsDictBlockShift = meta.readInt();
+        final int blockShift = meta.readInt();
+        final long addressesSize = (entry.termsDictSize + (1L << entry.termsDictBlockShift) - 1) >>> entry.termsDictBlockShift;
+        entry.termsAddressesMeta = DirectMonotonicReader.loadMeta(meta, addressesSize, blockShift);
+        entry.maxTermLength = meta.readInt();
+        entry.termsDataOffset = meta.readLong();
+        entry.termsDataLength = meta.readLong();
+        entry.termsAddressesOffset = meta.readLong();
+        entry.termsAddressesLength = meta.readLong();
+        entry.termsDictIndexShift = meta.readInt();
+        final long indexSize = (entry.termsDictSize + (1L << entry.termsDictIndexShift) - 1) >>> entry.termsDictIndexShift;
+        entry.termsIndexAddressesMeta = DirectMonotonicReader.loadMeta(meta, 1 + indexSize, blockShift);
+        entry.termsIndexOffset = meta.readLong();
+        entry.termsIndexLength = meta.readLong();
+        entry.termsIndexAddressesOffset = meta.readLong();
+        entry.termsIndexAddressesLength = meta.readLong();
+    }
+
+    private SortedNumericEntry readSortedNumeric(ChecksumIndexInput meta) throws IOException {
+        SortedNumericEntry entry = new SortedNumericEntry();
+        readNumeric(meta, entry);
+        entry.numDocsWithField = meta.readInt();
+        if (entry.numDocsWithField != entry.numValues) {
+            entry.addressesOffset = meta.readLong();
+            final int blockShift = meta.readVInt();
+            entry.addressesMeta = DirectMonotonicReader.loadMeta(meta, entry.numDocsWithField + 1, blockShift);
+            ramBytesUsed += entry.addressesMeta.ramBytesUsed();
+            entry.addressesLength = meta.readLong();
+        }
+        return entry;
+    }
+
+    @Override
+    public void close() throws IOException {
+        data.close();
+    }
+
+    /**
+     * 该对象存储了  Num 类型的  docValue 数据 相关的元数据
+     */
+    private static class NumericEntry {
+        long[] table;
+        int blockShift;
+        byte bitsPerValue;
+        long docsWithFieldOffset;
+        long docsWithFieldLength;
+        short jumpTableEntryCount;
+        byte denseRankPower;
+        long numValues;
+        long minValue;
+        long gcd;
+        long valuesOffset;
+        long valuesLength;
+        long valueJumpTableOffset; // -1 if no jump-table
+    }
+
+    private static class BinaryEntry {
+        long dataOffset;
+        long dataLength;
         /**
-         * address 应该是用于定位每个doc存储的位置   (对应data文件的数据)
+         * 该值为-2 代表没有docValue 数据
+         * 为-1 代表数据是密集的
          */
-        BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
+        long docsWithFieldOffset;
+        long docsWithFieldLength;
+        short jumpTableEntryCount;
+        byte denseRankPower;
+        int numDocsWithField;
+        int minLength;
+        int maxLength;
+        // 这2个应该是对应 data文件的偏移量
+        long addressesOffset;
+        long addressesLength;
+        DirectMonotonicReader.Meta addressesMeta;
+        int numCompressedChunks;
+        int docsPerChunkShift;
+        int maxUncompressedChunkSize;
+    }
 
+    private static class TermsDictEntry {
         /**
-         * 找到使用 LZ4 压缩算法存储到 dvd中的数据
-         * @return
-         * @throws IOException
+         * 总计有多少 term
          */
-        @Override
-        public BytesRef binaryValue() throws IOException {          
-          return decoder.decode(doc);
-        }
-      };
-    } else {
-      // sparse   看来这个DISI 是按照某种特殊算法存储的
-      final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-          // 跳跃表内部的实体数量 每个占用8 byte
-          entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
-
-      // 同样要读取有关 doc-block 体系偏移量的元数据
-      final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-      // 对地址数据进行还原
-      final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
-      return new SparseBinaryDocValues(disi) {
-        BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
-
-        /**
-         * 这里唯一的区别就是 没有直接使用docId 而是通过  disi做了一层映射
-         * @return
-         * @throws IOException
-         */
-        @Override
-        public BytesRef binaryValue() throws IOException {
-          return decoder.decode(disi.index());
-        }
-      };
-    }
-  }
-
-  @Override
-  public SortedDocValues getSorted(FieldInfo field) throws IOException {
-    SortedEntry entry = sorted.get(field.name);
-    return getSorted(entry);
-  }
-
-  private SortedDocValues getSorted(SortedEntry entry) throws IOException {
-    if (entry.docsWithFieldOffset == -2) {
-      return DocValues.emptySorted();
+        long termsDictSize;
+        int termsDictBlockShift;
+        DirectMonotonicReader.Meta termsAddressesMeta;
+        int maxTermLength;
+        long termsDataOffset;
+        long termsDataLength;
+        long termsAddressesOffset;
+        long termsAddressesLength;
+        int termsDictIndexShift;
+        DirectMonotonicReader.Meta termsIndexAddressesMeta;
+        long termsIndexOffset;
+        long termsIndexLength;
+        long termsIndexAddressesOffset;
+        long termsIndexAddressesLength;
     }
 
-    final LongValues ords;
-    if (entry.bitsPerValue == 0) {
-      ords = new LongValues() {
-        @Override
-        public long get(long index) {
-          return 0L;
-        }
-      };
-    } else {
-      final RandomAccessInput slice = data.randomAccessSlice(entry.ordsOffset, entry.ordsLength);
-      ords = DirectReader.getInstance(slice, entry.bitsPerValue);
+    private static class SortedEntry extends TermsDictEntry {
+        long docsWithFieldOffset;
+        long docsWithFieldLength;
+        short jumpTableEntryCount;
+        byte denseRankPower;
+        int numDocsWithField;
+        byte bitsPerValue;
+        long ordsOffset;
+        long ordsLength;
     }
 
-    if (entry.docsWithFieldOffset == -1) {
-      // dense
-      return new BaseSortedDocValues(entry, data) {
+    private static class SortedSetEntry extends TermsDictEntry {
+        SortedEntry singleValueEntry;
+        long docsWithFieldOffset;
+        long docsWithFieldLength;
+        short jumpTableEntryCount;
+        byte denseRankPower;
+        int numDocsWithField;
+        byte bitsPerValue;
+        long ordsOffset;
+        long ordsLength;
+        DirectMonotonicReader.Meta addressesMeta;
+        long addressesOffset;
+        long addressesLength;
+    }
 
+    private static class SortedNumericEntry extends NumericEntry {
+        int numDocsWithField;
+        DirectMonotonicReader.Meta addressesMeta;
+        long addressesOffset;
+        long addressesLength;
+    }
+
+    @Override
+    public long ramBytesUsed() {
+        return ramBytesUsed;
+    }
+
+    @Override
+    public NumericDocValues getNumeric(FieldInfo field) throws IOException {
+        NumericEntry entry = numerics.get(field.name);
+        return getNumeric(entry);
+    }
+
+    private static abstract class DenseNumericDocValues extends NumericDocValues {
+
+        final int maxDoc;
         int doc = -1;
 
-        @Override
-        public int nextDoc() throws IOException {
-          return advance(doc + 1);
+        DenseNumericDocValues(int maxDoc) {
+            this.maxDoc = maxDoc;
         }
 
         @Override
         public int docID() {
-          return doc;
+            return doc;
         }
 
         @Override
-        public long cost() {
-          return maxDoc;
+        public int nextDoc() throws IOException {
+            return advance(doc + 1);
         }
 
         @Override
         public int advance(int target) throws IOException {
-          if (target >= maxDoc) {
-            return doc = NO_MORE_DOCS;
-          }
-          return doc = target;
+            if (target >= maxDoc) {
+                return doc = NO_MORE_DOCS;
+            }
+            return doc = target;
         }
 
         @Override
         public boolean advanceExact(int target) {
-          doc = target;
-          return true;
-        }
-
-        @Override
-        public int ordValue() {
-          return (int) ords.get(doc);
-        }
-      };
-    } else {
-      // sparse
-      final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-          entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
-      return new BaseSortedDocValues(entry, data) {
-
-        @Override
-        public int nextDoc() throws IOException {
-          return disi.nextDoc();
-        }
-
-        @Override
-        public int docID() {
-          return disi.docID();
+            doc = target;
+            return true;
         }
 
         @Override
         public long cost() {
-          return disi.cost();
+            return maxDoc;
+        }
+
+    }
+
+    private static abstract class SparseNumericDocValues extends NumericDocValues {
+
+        final IndexedDISI disi;
+
+        SparseNumericDocValues(IndexedDISI disi) {
+            this.disi = disi;
         }
 
         @Override
         public int advance(int target) throws IOException {
-          return disi.advance(target);
+            return disi.advance(target);
         }
 
         @Override
         public boolean advanceExact(int target) throws IOException {
-          return disi.advanceExact(target);
+            return disi.advanceExact(target);
         }
 
         @Override
-        public int ordValue() {
-          return (int) ords.get(disi.index());
+        public int nextDoc() throws IOException {
+            return disi.nextDoc();
         }
-      };
-    }
-  }
 
-  private static abstract class BaseSortedDocValues extends SortedDocValues {
-
-    final SortedEntry entry;
-    final IndexInput data;
-    final TermsEnum termsEnum;
-
-    BaseSortedDocValues(SortedEntry entry, IndexInput data) throws IOException {
-      this.entry = entry;
-      this.data = data;
-      this.termsEnum = termsEnum();
-    }
-
-    @Override
-    public int getValueCount() {
-      return Math.toIntExact(entry.termsDictSize);
-    }
-
-    @Override
-    public BytesRef lookupOrd(int ord) throws IOException {
-      termsEnum.seekExact(ord);
-      return termsEnum.term();
-    }
-
-    @Override
-    public int lookupTerm(BytesRef key) throws IOException {
-      SeekStatus status = termsEnum.seekCeil(key);
-      switch (status) {
-        case FOUND:
-          return Math.toIntExact(termsEnum.ord());
-        default:
-          return Math.toIntExact(-1L - termsEnum.ord());
-      }
-    }
-
-    @Override
-    public TermsEnum termsEnum() throws IOException {
-      return new TermsDict(entry, data);
-    }
-  }
-
-  private static abstract class BaseSortedSetDocValues extends SortedSetDocValues {
-
-    final SortedSetEntry entry;
-    final IndexInput data;
-    final TermsEnum termsEnum;
-
-    BaseSortedSetDocValues(SortedSetEntry entry, IndexInput data) throws IOException {
-      this.entry = entry;
-      this.data = data;
-      this.termsEnum = termsEnum();
-    }
-
-    @Override
-    public long getValueCount() {
-      return entry.termsDictSize;
-    }
-
-    @Override
-    public BytesRef lookupOrd(long ord) throws IOException {
-      termsEnum.seekExact(ord);
-      return termsEnum.term();
-    }
-
-    @Override
-    public long lookupTerm(BytesRef key) throws IOException {
-      SeekStatus status = termsEnum.seekCeil(key);
-      switch (status) {
-        case FOUND:
-          return termsEnum.ord();
-        default:
-          return -1L - termsEnum.ord();
-      }
-    }
-
-    @Override
-    public TermsEnum termsEnum() throws IOException {
-      return new TermsDict(entry, data);
-    }
-  }
-
-  private static class TermsDict extends BaseTermsEnum {
-
-    final TermsDictEntry entry;
-    final LongValues blockAddresses;
-    final IndexInput bytes;
-    final long blockMask;
-    final LongValues indexAddresses;
-    final IndexInput indexBytes;
-    final BytesRef term;
-    long ord = -1;
-
-    TermsDict(TermsDictEntry entry, IndexInput data) throws IOException {
-      this.entry = entry;
-      RandomAccessInput addressesSlice = data.randomAccessSlice(entry.termsAddressesOffset, entry.termsAddressesLength);
-      blockAddresses = DirectMonotonicReader.getInstance(entry.termsAddressesMeta, addressesSlice);
-      bytes = data.slice("terms", entry.termsDataOffset, entry.termsDataLength);
-      blockMask = (1L << entry.termsDictBlockShift) - 1;
-      RandomAccessInput indexAddressesSlice = data.randomAccessSlice(entry.termsIndexAddressesOffset, entry.termsIndexAddressesLength);
-      indexAddresses = DirectMonotonicReader.getInstance(entry.termsIndexAddressesMeta, indexAddressesSlice);
-      indexBytes = data.slice("terms-index", entry.termsIndexOffset, entry.termsIndexLength);
-      term = new BytesRef(entry.maxTermLength);
-    }
-
-    @Override
-    public BytesRef next() throws IOException {
-      if (++ord >= entry.termsDictSize) {
-        return null;
-      }
-      if ((ord & blockMask) == 0L) {
-        term.length = bytes.readVInt();
-        bytes.readBytes(term.bytes, 0, term.length);
-      } else {
-        final int token = Byte.toUnsignedInt(bytes.readByte());
-        int prefixLength = token & 0x0F;
-        int suffixLength = 1 + (token >>> 4);
-        if (prefixLength == 15) {
-          prefixLength += bytes.readVInt();
+        @Override
+        public int docID() {
+            return disi.docID();
         }
-        if (suffixLength == 16) {
-          suffixLength += bytes.readVInt();
+
+        @Override
+        public long cost() {
+            return disi.cost();
         }
-        term.length = prefixLength + suffixLength;
-        bytes.readBytes(term.bytes, prefixLength, suffixLength);
-      }
-      return term;
     }
 
-    @Override
-    public void seekExact(long ord) throws IOException {
-      if (ord < 0 || ord >= entry.termsDictSize) {
-        throw new IndexOutOfBoundsException();
-      }
-      final long blockIndex = ord >>> entry.termsDictBlockShift;
-      final long blockAddress = blockAddresses.get(blockIndex);
-      bytes.seek(blockAddress);
-      this.ord = (blockIndex << entry.termsDictBlockShift) - 1;
-      do {
-        next();
-      } while (this.ord < ord);
-    }
+    private NumericDocValues getNumeric(NumericEntry entry) throws IOException {
+        if (entry.docsWithFieldOffset == -2) {
+            // empty
+            return DocValues.emptyNumeric();
+        } else if (entry.docsWithFieldOffset == -1) {
+            // dense
+            if (entry.bitsPerValue == 0) {
+                return new DenseNumericDocValues(maxDoc) {
+                    @Override
+                    public long longValue() throws IOException {
+                        return entry.minValue;
+                    }
+                };
+            } else {
+                final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
+                if (entry.blockShift >= 0) {
+                    // dense but split into blocks of different bits per value
+                    return new DenseNumericDocValues(maxDoc) {
+                        final VaryingBPVReader vBPVReader = new VaryingBPVReader(entry, slice);
 
-    private BytesRef getTermFromIndex(long index) throws IOException {
-      assert index >= 0 && index <= (entry.termsDictSize - 1) >>> entry.termsDictIndexShift;
-      final long start = indexAddresses.get(index);
-      term.length = (int) (indexAddresses.get(index + 1) - start);
-      indexBytes.seek(start);
-      indexBytes.readBytes(term.bytes, 0, term.length);
-      return term;
-    }
-
-    private long seekTermsIndex(BytesRef text) throws IOException {
-      long lo = 0L;
-      long hi = (entry.termsDictSize - 1) >>> entry.termsDictIndexShift;
-      while (lo <= hi) {
-        final long mid = (lo + hi) >>> 1;
-        getTermFromIndex(mid);
-        final int cmp = term.compareTo(text);
-        if (cmp <= 0) {
-          lo = mid + 1;
+                        @Override
+                        public long longValue() throws IOException {
+                            return vBPVReader.getLongValue(doc);
+                        }
+                    };
+                } else {
+                    final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
+                    if (entry.table != null) {
+                        final long[] table = entry.table;
+                        return new DenseNumericDocValues(maxDoc) {
+                            @Override
+                            public long longValue() throws IOException {
+                                return table[(int) values.get(doc)];
+                            }
+                        };
+                    } else {
+                        final long mul = entry.gcd;
+                        final long delta = entry.minValue;
+                        return new DenseNumericDocValues(maxDoc) {
+                            @Override
+                            public long longValue() throws IOException {
+                                return mul * values.get(doc) + delta;
+                            }
+                        };
+                    }
+                }
+            }
         } else {
-          hi = mid - 1;
+            // sparse
+            final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount, entry.denseRankPower, entry.numValues);
+            if (entry.bitsPerValue == 0) {
+                return new SparseNumericDocValues(disi) {
+                    @Override
+                    public long longValue() throws IOException {
+                        return entry.minValue;
+                    }
+                };
+            } else {
+                final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
+                if (entry.blockShift >= 0) {
+                    // sparse and split into blocks of different bits per value
+                    return new SparseNumericDocValues(disi) {
+                        final VaryingBPVReader vBPVReader = new VaryingBPVReader(entry, slice);
+
+                        @Override
+                        public long longValue() throws IOException {
+                            final int index = disi.index();
+                            return vBPVReader.getLongValue(index);
+                        }
+                    };
+                } else {
+                    final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
+                    if (entry.table != null) {
+                        final long[] table = entry.table;
+                        return new SparseNumericDocValues(disi) {
+                            @Override
+                            public long longValue() throws IOException {
+                                return table[(int) values.get(disi.index())];
+                            }
+                        };
+                    } else {
+                        final long mul = entry.gcd;
+                        final long delta = entry.minValue;
+                        return new SparseNumericDocValues(disi) {
+                            @Override
+                            public long longValue() throws IOException {
+                                return mul * values.get(disi.index()) + delta;
+                            }
+                        };
+                    }
+                }
+            }
         }
-      }
-
-      assert hi < 0 || getTermFromIndex(hi).compareTo(text) <= 0;
-      assert hi == ((entry.termsDictSize - 1) >>> entry.termsDictIndexShift) || getTermFromIndex(hi + 1).compareTo(text) > 0;
-
-      return hi;
     }
 
-    private BytesRef getFirstTermFromBlock(long block) throws IOException {
-      assert block >= 0 && block <= (entry.termsDictSize - 1) >>> entry.termsDictBlockShift;
-      final long blockAddress = blockAddresses.get(block);
-      bytes.seek(blockAddress);
-      term.length = bytes.readVInt();
-      bytes.readBytes(term.bytes, 0, term.length);
-      return term;
-    }
-
-    private long seekBlock(BytesRef text) throws IOException {
-      long index = seekTermsIndex(text);
-      if (index == -1L) {
-        return -1L;
-      }
-
-      long ordLo = index << entry.termsDictIndexShift;
-      long ordHi = Math.min(entry.termsDictSize, ordLo + (1L << entry.termsDictIndexShift)) - 1L;
-
-      long blockLo = ordLo >>> entry.termsDictBlockShift;
-      long blockHi = ordHi >>> entry.termsDictBlockShift;
-
-      while (blockLo <= blockHi) {
-        final long blockMid = (blockLo + blockHi) >>> 1;
-        getFirstTermFromBlock(blockMid);
-        final int cmp = term.compareTo(text);
-        if (cmp <= 0) {
-          blockLo = blockMid + 1;
+    private LongValues getNumericValues(NumericEntry entry) throws IOException {
+        if (entry.bitsPerValue == 0) {
+            return new LongValues() {
+                @Override
+                public long get(long index) {
+                    return entry.minValue;
+                }
+            };
         } else {
-          blockHi = blockMid - 1;
+            final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
+            if (entry.blockShift >= 0) {
+                return new LongValues() {
+                    final VaryingBPVReader vBPVReader = new VaryingBPVReader(entry, slice);
+
+                    @Override
+                    public long get(long index) {
+                        try {
+                            return vBPVReader.getLongValue(index);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                };
+            } else {
+                final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
+                if (entry.table != null) {
+                    final long[] table = entry.table;
+                    return new LongValues() {
+                        @Override
+                        public long get(long index) {
+                            return table[(int) values.get(index)];
+                        }
+                    };
+                } else if (entry.gcd != 1) {
+                    final long gcd = entry.gcd;
+                    final long minValue = entry.minValue;
+                    return new LongValues() {
+                        @Override
+                        public long get(long index) {
+                            return values.get(index) * gcd + minValue;
+                        }
+                    };
+                } else if (entry.minValue != 0) {
+                    final long minValue = entry.minValue;
+                    return new LongValues() {
+                        @Override
+                        public long get(long index) {
+                            return values.get(index) + minValue;
+                        }
+                    };
+                } else {
+                    return values;
+                }
+            }
         }
-      }
-
-      assert blockHi < 0 || getFirstTermFromBlock(blockHi).compareTo(text) <= 0;
-      assert blockHi == ((entry.termsDictSize - 1) >>> entry.termsDictBlockShift) || getFirstTermFromBlock(blockHi + 1).compareTo(text) > 0;
-
-      return blockHi;
     }
 
-    @Override
-    public SeekStatus seekCeil(BytesRef text) throws IOException {
-      final long block = seekBlock(text);
-      if (block == -1) {
-        // before the first term
-        seekExact(0L);
-        return SeekStatus.NOT_FOUND;
-      }
-      final long blockAddress = blockAddresses.get(block);
-      this.ord = block << entry.termsDictBlockShift;
-      bytes.seek(blockAddress);
-      term.length = bytes.readVInt();
-      bytes.readBytes(term.bytes, 0, term.length);
-      while (true) {
-        int cmp = term.compareTo(text);
-        if (cmp == 0) {
-          return SeekStatus.FOUND;
-        } else if (cmp > 0) {
-          return SeekStatus.NOT_FOUND;
-        }
-        if (next() == null) {
-          return SeekStatus.END;
-        }
-      }
-    }
+    /**
+     * 该对象是一个通过密集算法(压缩)存储二进制 docValue数据的对象
+     */
+    private static abstract class DenseBinaryDocValues extends BinaryDocValues {
 
-    @Override
-    public BytesRef term() throws IOException {
-      return term;
-    }
-
-    @Override
-    public long ord() throws IOException {
-      return ord;
-    }
-
-    @Override
-    public long totalTermFreq() throws IOException {
-      return -1L;
-    }
-
-    @Override
-    public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public ImpactsEnum impacts(int flags) throws IOException {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int docFreq() throws IOException {
-      throw new UnsupportedOperationException();
-    }
-  }
-
-  @Override
-  public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
-    SortedNumericEntry entry = sortedNumerics.get(field.name);
-    if (entry.numValues == entry.numDocsWithField) {
-      return DocValues.singleton(getNumeric(entry));
-    }
-
-    final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-    final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesInput);
-
-    final LongValues values = getNumericValues(entry);
-
-    if (entry.docsWithFieldOffset == -1) {
-      // dense
-      return new SortedNumericDocValues() {
-
+        final int maxDoc;
         int doc = -1;
-        long start, end;
-        int count;
 
+        DenseBinaryDocValues(int maxDoc) {
+            this.maxDoc = maxDoc;
+        }
+
+        /**
+         * 每次调用 nextDoc 都是自动传入下一个docId  也就是认为doc 本身是连续存储的
+         *
+         * @return
+         * @throws IOException
+         */
         @Override
         public int nextDoc() throws IOException {
-          return advance(doc + 1);
+            return advance(doc + 1);
         }
 
         @Override
         public int docID() {
-          return doc;
+            return doc;
         }
 
         @Override
         public long cost() {
-          return maxDoc;
+            return maxDoc;
         }
 
         @Override
         public int advance(int target) throws IOException {
-          if (target >= maxDoc) {
-            return doc = NO_MORE_DOCS;
-          }
-          start = addresses.get(target);
-          end = addresses.get(target + 1L);
-          count = (int) (end - start);
-          return doc = target;
+            if (target >= maxDoc) {
+                return doc = NO_MORE_DOCS;
+            }
+            return doc = target;
         }
 
+        /**
+         * 直接定位到某个 docId  同时配合binaryValue() 读取此时doc对应的 docValue
+         *
+         * @param target
+         * @return
+         * @throws IOException
+         */
         @Override
         public boolean advanceExact(int target) throws IOException {
-          start = addresses.get(target);
-          end = addresses.get(target + 1L);
-          count = (int) (end - start);
-          doc = target;
-          return true;
+            doc = target;
+            return true;
+        }
+    }
+
+    /**
+     * 因为该对象内部的 docId 不是连续的 所以nextDoc 无法直接将doc+1 而是通过disi对象获取下一个doc
+     */
+    private static abstract class SparseBinaryDocValues extends BinaryDocValues {
+
+        final IndexedDISI disi;
+
+        SparseBinaryDocValues(IndexedDISI disi) {
+            this.disi = disi;
         }
 
-        @Override
-        public long nextValue() throws IOException {
-          return values.get(start++);
-        }
-
-        @Override
-        public int docValueCount() {
-          return count;
-        }
-      };
-    } else {
-      // sparse
-      final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-          entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
-      return new SortedNumericDocValues() {
-
-        boolean set;
-        long start, end;
-        int count;
-
+        /**
+         * 切换到下一个存在的docId
+         *
+         * @return
+         * @throws IOException
+         */
         @Override
         public int nextDoc() throws IOException {
-          set = false;
-          return disi.nextDoc();
+            return disi.nextDoc();
         }
 
         @Override
         public int docID() {
-          return disi.docID();
+            return disi.docID();
         }
 
         @Override
         public long cost() {
-          return disi.cost();
+            return disi.cost();
         }
 
         @Override
         public int advance(int target) throws IOException {
-          set = false;
-          return disi.advance(target);
+            return disi.advance(target);
         }
 
         @Override
         public boolean advanceExact(int target) throws IOException {
-          set = false;
-          return disi.advanceExact(target);
+            return disi.advanceExact(target);
         }
-
-        @Override
-        public long nextValue() throws IOException {
-          set();
-          return values.get(start++);
-        }
-
-        @Override
-        public int docValueCount() {
-          set();
-          return count;
-        }
-
-        private void set() {
-          if (set == false) {
-            final int index = disi.index();
-            start = addresses.get(index);
-            end = addresses.get(index + 1L);
-            count = (int) (end - start);
-            set = true;
-          }
-        }
-
-      };
-    }
-  }
-
-  @Override
-  public SortedSetDocValues getSortedSet(FieldInfo field) throws IOException {
-    SortedSetEntry entry = sortedSets.get(field.name);
-    if (entry.singleValueEntry != null) {
-      return DocValues.singleton(getSorted(entry.singleValueEntry));
     }
 
-    final RandomAccessInput slice = data.randomAccessSlice(entry.ordsOffset, entry.ordsLength);
-    final LongValues ords = DirectReader.getInstance(slice, entry.bitsPerValue);
-
-    final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
-    final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesInput);
-
-    if (entry.docsWithFieldOffset == -1) {
-      // dense
-      return new BaseSortedSetDocValues(entry, data) {
-
-        int doc = -1;
-        long start;
-        long end;
-
-        @Override
-        public int nextDoc() throws IOException {
-          return advance(doc + 1);
+    // BWC - old binary format
+    private BinaryDocValues getUncompressedBinary(FieldInfo field) throws IOException {
+        BinaryEntry entry = binaries.get(field.name);
+        if (entry.docsWithFieldOffset == -2) {
+            return DocValues.emptyBinary();
         }
 
-        @Override
-        public int docID() {
-          return doc;
+        final IndexInput bytesSlice = data.slice("fixed-binary", entry.dataOffset, entry.dataLength);
+
+        if (entry.docsWithFieldOffset == -1) {
+            // dense
+            if (entry.minLength == entry.maxLength) {
+                // fixed length
+                final int length = entry.maxLength;
+                return new DenseBinaryDocValues(maxDoc) {
+                    final BytesRef bytes = new BytesRef(new byte[length], 0, length);
+
+                    @Override
+                    public BytesRef binaryValue() throws IOException {
+                        bytesSlice.seek((long) doc * length);
+                        bytesSlice.readBytes(bytes.bytes, 0, length);
+                        return bytes;
+                    }
+                };
+            } else {
+                // variable length
+                final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+                final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+                return new DenseBinaryDocValues(maxDoc) {
+                    final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
+
+                    @Override
+                    public BytesRef binaryValue() throws IOException {
+                        long startOffset = addresses.get(doc);
+                        bytes.length = (int) (addresses.get(doc + 1L) - startOffset);
+                        bytesSlice.seek(startOffset);
+                        bytesSlice.readBytes(bytes.bytes, 0, bytes.length);
+                        return bytes;
+                    }
+                };
+            }
+        } else {
+            // sparse
+            final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
+            if (entry.minLength == entry.maxLength) {
+                // fixed length
+                final int length = entry.maxLength;
+                return new SparseBinaryDocValues(disi) {
+                    final BytesRef bytes = new BytesRef(new byte[length], 0, length);
+
+                    @Override
+                    public BytesRef binaryValue() throws IOException {
+                        bytesSlice.seek((long) disi.index() * length);
+                        bytesSlice.readBytes(bytes.bytes, 0, length);
+                        return bytes;
+                    }
+                };
+            } else {
+                // variable length
+                final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+                final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+                return new SparseBinaryDocValues(disi) {
+                    final BytesRef bytes = new BytesRef(new byte[entry.maxLength], 0, entry.maxLength);
+
+                    @Override
+                    public BytesRef binaryValue() throws IOException {
+                        final int index = disi.index();
+                        long startOffset = addresses.get(index);
+                        bytes.length = (int) (addresses.get(index + 1L) - startOffset);
+                        bytesSlice.seek(startOffset);
+                        bytesSlice.readBytes(bytes.bytes, 0, bytes.length);
+                        return bytes;
+                    }
+                };
+            }
         }
-
-        @Override
-        public long cost() {
-          return maxDoc;
-        }
-
-        @Override
-        public int advance(int target) throws IOException {
-          if (target >= maxDoc) {
-            return doc = NO_MORE_DOCS;
-          }
-          start = addresses.get(target);
-          end = addresses.get(target + 1L);
-          return doc = target;
-        }
-
-        @Override
-        public boolean advanceExact(int target) throws IOException {
-          start = addresses.get(target);
-          end = addresses.get(target + 1L);
-          doc = target;
-          return true;
-        }
-
-        @Override
-        public long nextOrd() throws IOException {
-          if (start == end) {
-            return NO_MORE_ORDS;
-          }
-          return ords.get(start++);
-        }
-
-      };
-    } else {
-      // sparse
-      final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-          entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
-      return new BaseSortedSetDocValues(entry, data) {
-
-        boolean set;
-        long start;
-        long end = 0;
-
-        @Override
-        public int nextDoc() throws IOException {
-          set = false;
-          return disi.nextDoc();
-        }
-
-        @Override
-        public int docID() {
-          return disi.docID();
-        }
-
-        @Override
-        public long cost() {
-          return disi.cost();
-        }
-
-        @Override
-        public int advance(int target) throws IOException {
-          set = false;
-          return disi.advance(target);
-        }
-
-        @Override
-        public boolean advanceExact(int target) throws IOException {
-          set = false;
-          return disi.advanceExact(target);
-        }
-
-        @Override
-        public long nextOrd() throws IOException {
-          if (set == false) {
-            final int index = disi.index();
-            final long start = addresses.get(index);
-            this.start = start + 1;
-            end = addresses.get(index + 1L);
-            set = true;
-            return ords.get(start);
-          } else if (start == end) {
-            return NO_MORE_ORDS;
-          } else {
-            return ords.get(start++);
-          }
-        }
-
-      };
-    }
-  }
-
-  @Override
-  public void checkIntegrity() throws IOException {
-    CodecUtil.checksumEntireFile(data);
-  }
-
-  /**
-   * Reader for longs split into blocks of different bits per values.
-   * The longs are requested by index and must be accessed in monotonically increasing order.
-   */
-  // Note: The order requirement could be removed as the jump-tables allow for backwards iteration
-  // Note 2: The rankSlice is only used if an advance of > 1 block is called. Its construction could be lazy
-  private class VaryingBPVReader {
-    final RandomAccessInput slice; // 2 slices to avoid cache thrashing when using rank
-    final RandomAccessInput rankSlice;
-    final NumericEntry entry;
-    final int shift;
-    final long mul;
-    final int mask;
-
-    long block = -1;
-    long delta;
-    long offset;
-    long blockEndOffset;
-    LongValues values;
-
-    VaryingBPVReader(NumericEntry entry, RandomAccessInput slice) throws IOException {
-      this.entry = entry;
-      this.slice = slice;
-      this.rankSlice = entry.valueJumpTableOffset == -1 ? null :
-          data.randomAccessSlice(entry.valueJumpTableOffset, data.length()-entry.valueJumpTableOffset);
-      shift = entry.blockShift;
-      mul = entry.gcd;
-      mask = (1 << shift) - 1;
     }
 
-    long getLongValue(long index) throws IOException {
-      final long block = index >>> shift;
-      if (this.block != block) {
-        int bitsPerValue;
-        do {
-          // If the needed block is the one directly following the current block, it is cheaper to avoid the cache
-          if (rankSlice != null && block != this.block+1) {
-            blockEndOffset = rankSlice.readLong(block*Long.BYTES)-entry.valuesOffset;
-            this.block = block-1;
-          }
-          offset = blockEndOffset;
-          bitsPerValue = slice.readByte(offset++);
-          delta = slice.readLong(offset);
-          offset += Long.BYTES;
-          if (bitsPerValue == 0) {
-            blockEndOffset = offset;
-          } else {
-            final int length = slice.readInt(offset);
-            offset += Integer.BYTES;
-            blockEndOffset = offset + length;
-          }
-          this.block++;
-        } while (this.block != block);
-        values = bitsPerValue == 0 ? LongValues.ZEROES : DirectReader.getInstance(slice, bitsPerValue, offset);
-      }
-      return mul * values.get(index & mask) + delta;
+    // Decompresses blocks of binary values to retrieve content
+    // 该对象可以通过传入一个 docId 获取该doc的相关数据
+    class BinaryDecoder {
+
+        /**
+         * 内部存储了一系列值  每个值对应一个 block的起点 block内部才是真正存储了doc的
+         */
+        private final LongValues addresses;
+        /**
+         * 对应 dvd文件
+         */
+        private final IndexInput compressedData;
+        // Cache of last uncompressed block
+        // 会暂存上一个访问的block
+        private long lastBlockId = -1;
+
+        /**
+         * 对应当前读取的 chunk 下 每个doc的起始位置   下标从1开始   并且每次的值都会追加上上一个长度
+         */
+        private final int[] uncompressedDocStarts;
+
+        private int uncompressedBlockLength = 0;
+        /**
+         * 存储了 解压后的数据
+         */
+        private final byte[] uncompressedBlock;
+
+        /**
+         * 对应某个 docValue
+         */
+        private final BytesRef uncompressedBytesRef;
+        /**
+         * 一个chunk 中最多允许存放多少doc  address 就是用来定位 chunk的
+         */
+        private final int docsPerChunk;
+        /**
+         * 掩码  便于计算某个doc所在的chunk
+         */
+        private final int docsPerChunkShift;
+
+
+        /**
+         * @param addresses
+         * @param compressedData               这里承载了数据 (对应dvd文件)
+         * @param biggestUncompressedBlockSize 当解压后最多允许存储多少数据   从 compressedData读取出来的数据长度是 未解压的版本
+         * @param docsPerChunkShift            每个chunk 存储多少文档
+         */
+        public BinaryDecoder(LongValues addresses, IndexInput compressedData, int biggestUncompressedBlockSize, int docsPerChunkShift) {
+            super();
+            this.addresses = addresses;
+            this.compressedData = compressedData;
+            // pre-allocate a byte array large enough for the biggest uncompressed block needed.
+            this.uncompressedBlock = new byte[biggestUncompressedBlockSize];
+            uncompressedBytesRef = new BytesRef(uncompressedBlock);
+            this.docsPerChunk = 1 << docsPerChunkShift;
+            this.docsPerChunkShift = docsPerChunkShift;
+            uncompressedDocStarts = new int[docsPerChunk + 1];
+
+        }
+
+        /**
+         * 代表第几个doc
+         * 这里采用批量读取的原因就是  在压缩时就是尽可能将大块数据一起压缩 在解压的时候也会一次性解压很多数据 (单数据压缩就失去压缩的意义了)
+         *
+         * @param docNumber
+         * @return
+         * @throws IOException
+         */
+        BytesRef decode(int docNumber) throws IOException {
+            // 先定位到某个 chunk
+            int blockId = docNumber >> docsPerChunkShift;
+            // 获取 某个chunk下存储的相对偏移量
+            int docInBlockId = docNumber % docsPerChunk;
+            assert docInBlockId < docsPerChunk;
+
+
+            // already read and uncompressed?
+            // 此时还没有数据读取到内存中   加载相关信息时 以block为单位  当发现blockId一致时 就按照之前读取的下标快速定位到docValue
+            if (blockId != lastBlockId) {
+                lastBlockId = blockId;
+                // 找到 block 的起点
+                long blockStartOffset = addresses.get(blockId);
+                // 将data索引文件定位到目标位置
+                compressedData.seek(blockStartOffset);
+
+                uncompressedBlockLength = 0;
+
+                // 代表本block 下所有的 docValue 长度都是一样的
+                int onlyLength = -1;
+                for (int i = 0; i < docsPerChunk; i++) {
+                    if (i == 0) {
+                        // The first length value is special. It is shifted and has a bit to denote if
+                        // all other values are the same length
+                        // 检测所有docValue的值是否一样
+                        int lengthPlusSameInd = compressedData.readVInt();
+                        int sameIndicator = lengthPlusSameInd & 1;
+                        int firstValLength = lengthPlusSameInd >>> 1;
+                        if (sameIndicator == 1) {
+                            onlyLength = firstValLength;
+                        }
+                        uncompressedBlockLength += firstValLength;
+                    } else {
+                        // 追加不同的长度
+                        if (onlyLength == -1) {
+                            // Various lengths are stored - read each from disk
+                            uncompressedBlockLength += compressedData.readVInt();
+                            // 代表长度一致
+                        } else {
+                            // Only one length
+                            uncompressedBlockLength += onlyLength;
+                        }
+                    }
+                    uncompressedDocStarts[i + 1] = uncompressedBlockLength;
+                }
+
+                // 代表doc下没有任何数据  返回空数据
+                if (uncompressedBlockLength == 0) {
+                    uncompressedBytesRef.offset = 0;
+                    uncompressedBytesRef.length = 0;
+                    return uncompressedBytesRef;
+                }
+
+                assert uncompressedBlockLength <= uncompressedBlock.length;
+                // 将数据解压并填充到byte[]中
+                LZ4.decompress(compressedData, uncompressedBlockLength, uncompressedBlock);
+            }
+
+            // 代表不需要切换block内的数据
+            uncompressedBytesRef.offset = uncompressedDocStarts[docInBlockId];
+            uncompressedBytesRef.length = uncompressedDocStarts[docInBlockId + 1] - uncompressedBytesRef.offset;
+            return uncompressedBytesRef;
+        }
     }
-  }
+
+    /**
+     * 获取某个field 下所有二进制形式存储的 docValue
+     *
+     * @param field
+     * @return
+     * @throws IOException
+     */
+    @Override
+    public BinaryDocValues getBinary(FieldInfo field) throws IOException {
+        if (version < Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
+            return getUncompressedBinary(field);
+        }
+
+        // entry 是从元数据文件读取出来的
+        BinaryEntry entry = binaries.get(field.name);
+        if (entry.docsWithFieldOffset == -2) {
+            return DocValues.emptyBinary();
+        }
+        // 为-1时 代表数据是密集的
+        if (entry.docsWithFieldOffset == -1) {
+            // dense
+            // 这里根据 address相关信息生成一个 随机读取输入流
+            final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+            // address 信息是采用 单调递增+位存储的形式保存的 现在对数据进行还原
+            final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+
+            // 返回一个基于连续存储doc 的迭代器对象      因为本身doc就是连续存储的 BinaryDecoder 存放数据时是将docId 转换成blockId 也就是docId相近的会分配到一个block中 他们的数据是连续存储的
+            // 而如果docId 是分散的就不行  需要额外做一层转换 使得docId转换后的值相距不远
+            return new DenseBinaryDocValues(maxDoc) {
+                /**
+                 * address 应该是用于定位每个doc存储的位置   (对应data文件的数据)
+                 */
+                BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
+
+                /**
+                 * 找到使用 LZ4 压缩算法存储到 dvd中的数据
+                 * @return
+                 * @throws IOException
+                 */
+                @Override
+                public BytesRef binaryValue() throws IOException {
+                    return decoder.decode(doc);
+                }
+            };
+        } else {
+            // sparse   看来这个DISI 是按照某种特殊算法存储的
+            final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+                    // 跳跃表内部的实体数量 每个占用8 byte
+                    entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
+
+            // 同样要读取有关 doc-block 体系偏移量的元数据
+            final RandomAccessInput addressesData = this.data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+            // 对地址数据进行还原
+            final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesData);
+            return new SparseBinaryDocValues(disi) {
+                BinaryDecoder decoder = new BinaryDecoder(addresses, data.clone(), entry.maxUncompressedChunkSize, entry.docsPerChunkShift);
+
+                /**
+                 * 这里唯一的区别就是 没有直接使用docId 而是通过  disi做了一层映射
+                 * @return
+                 * @throws IOException
+                 */
+                @Override
+                public BytesRef binaryValue() throws IOException {
+                    return decoder.decode(disi.index());
+                }
+            };
+        }
+    }
+
+    /**
+     * 获取对应域 排序后的数据
+     *
+     * @param field
+     * @return
+     * @throws IOException
+     */
+    @Override
+    public SortedDocValues getSorted(FieldInfo field) throws IOException {
+        // 获取该field 对应的排序描述信息
+        SortedEntry entry = sorted.get(field.name);
+        return getSorted(entry);
+    }
+
+    /**
+     * 从这里可以看出 在存储的时候数据已经做好排序了
+     *
+     * @param entry
+     * @return
+     * @throws IOException
+     */
+    private SortedDocValues getSorted(SortedEntry entry) throws IOException {
+
+        // -2 代表没有数据
+        if (entry.docsWithFieldOffset == -2) {
+            return DocValues.emptySorted();
+        }
+
+        final LongValues ords;
+        // 这个应该是代表没有顺序 所有值都一样吧
+        if (entry.bitsPerValue == 0) {
+            ords = new LongValues() {
+                @Override
+                public long get(long index) {
+                    return 0L;
+                }
+            };
+        } else {
+            // 获取内部数据的顺序描述信息
+            final RandomAccessInput slice = data.randomAccessSlice(entry.ordsOffset, entry.ordsLength);
+            // 该对象通过定位 index 读取 bitsPerValue位的数据 并还原成 long值
+            ords = DirectReader.getInstance(slice, entry.bitsPerValue);
+        }
+
+        if (entry.docsWithFieldOffset == -1) {
+            // dense
+            // 因为doc 紧密相连
+            return new BaseSortedDocValues(entry, data) {
+
+                int doc = -1;
+
+                /**
+                 * 查询下一个doc的数据
+                 * @return
+                 * @throws IOException
+                 */
+                @Override
+                public int nextDoc() throws IOException {
+                    return advance(doc + 1);
+                }
+
+                @Override
+                public int docID() {
+                    return doc;
+                }
+
+                @Override
+                public long cost() {
+                    return maxDoc;
+                }
+
+                /**
+                 * 定位到某个docId 对应的数据
+                 * @param target
+                 * @return
+                 * @throws IOException
+                 */
+                @Override
+                public int advance(int target) throws IOException {
+                    if (target >= maxDoc) {
+                        return doc = NO_MORE_DOCS;
+                    }
+                    return doc = target;
+                }
+
+                @Override
+                public boolean advanceExact(int target) {
+                    doc = target;
+                    return true;
+                }
+
+                /**
+                 * 返回 doc对应的顺序信息
+                 * @return
+                 */
+                @Override
+                public int ordValue() {
+                    return (int) ords.get(doc);
+                }
+            };
+        } else {
+            // 在doc相对比较稀疏的情况 借助一种数据结果作为索引
+            // sparse
+            final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
+            return new BaseSortedDocValues(entry, data) {
+
+                @Override
+                public int nextDoc() throws IOException {
+                    return disi.nextDoc();
+                }
+
+                @Override
+                public int docID() {
+                    return disi.docID();
+                }
+
+                @Override
+                public long cost() {
+                    return disi.cost();
+                }
+
+                @Override
+                public int advance(int target) throws IOException {
+                    return disi.advance(target);
+                }
+
+                @Override
+                public boolean advanceExact(int target) throws IOException {
+                    return disi.advanceExact(target);
+                }
+
+                @Override
+                public int ordValue() {
+                    return (int) ords.get(disi.index());
+                }
+            };
+        }
+    }
+
+    /**
+     * 这里定义了一个基础模板
+     */
+    private static abstract class BaseSortedDocValues extends SortedDocValues {
+
+        /**
+         * 描述排序信息的 entry 对象
+         */
+        final SortedEntry entry;
+        /**
+         * 存储数据流的对象
+         */
+        final IndexInput data;
+        /**
+         * 这个对象内部存储了所有的 term 并且可以通过 seekExact 等方法定位到某个term
+         */
+        final TermsEnum termsEnum;
+
+        BaseSortedDocValues(SortedEntry entry, IndexInput data) throws IOException {
+            this.entry = entry;
+            this.data = data;
+            this.termsEnum = termsEnum();
+        }
+
+        /**
+         * 返回总计有多少term   也就是每个 term 代表一个 docValue
+         *
+         * @return
+         */
+        @Override
+        public int getValueCount() {
+            return Math.toIntExact(entry.termsDictSize);
+        }
+
+        /**
+         * 根据 序号查找对应term信息
+         *
+         * @param ord ordinal to lookup (must be &gt;= 0 and &lt; {@link #getValueCount()})
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public BytesRef lookupOrd(int ord) throws IOException {
+            termsEnum.seekExact(ord);
+            return termsEnum.term();
+        }
+
+        /**
+         * 通过 文本信息 反向查找term
+         *
+         * @param key Key to look up
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public int lookupTerm(BytesRef key) throws IOException {
+            SeekStatus status = termsEnum.seekCeil(key);
+            switch (status) {
+                case FOUND:
+                    return Math.toIntExact(termsEnum.ord());
+                // 没有找到的情况返回一个 负数
+                default:
+                    return Math.toIntExact(-1L - termsEnum.ord());
+            }
+        }
+
+        /**
+         * 生成term词典对象
+         *
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public TermsEnum termsEnum() throws IOException {
+            return new TermsDict(entry, data);
+        }
+    }
+
+    private static abstract class BaseSortedSetDocValues extends SortedSetDocValues {
+
+        final SortedSetEntry entry;
+        final IndexInput data;
+        final TermsEnum termsEnum;
+
+        BaseSortedSetDocValues(SortedSetEntry entry, IndexInput data) throws IOException {
+            this.entry = entry;
+            this.data = data;
+            this.termsEnum = termsEnum();
+        }
+
+        @Override
+        public long getValueCount() {
+            return entry.termsDictSize;
+        }
+
+        @Override
+        public BytesRef lookupOrd(long ord) throws IOException {
+            termsEnum.seekExact(ord);
+            return termsEnum.term();
+        }
+
+        @Override
+        public long lookupTerm(BytesRef key) throws IOException {
+            SeekStatus status = termsEnum.seekCeil(key);
+            switch (status) {
+                case FOUND:
+                    return termsEnum.ord();
+                default:
+                    return -1L - termsEnum.ord();
+            }
+        }
+
+        @Override
+        public TermsEnum termsEnum() throws IOException {
+            return new TermsDict(entry, data);
+        }
+    }
+
+    /**
+     * term词典  该对象能够使用二分查找读取数据 也就是内部的term都是有序的
+     */
+    private static class TermsDict extends BaseTermsEnum {
+
+        final TermsDictEntry entry;
+        /**
+         * 可以认为是一个索引对象  可以快速定位到某个编号对应的term所在的block起始位置 比起不断遍历bytes所有的term 会快很多
+         */
+        final LongValues blockAddresses;
+        /**
+         * 整块核心数据都在这里 包含某个term的长度 以及 term的实体数据
+         */
+        final IndexInput bytes;
+        /**
+         * 用于定位块
+         */
+        final long blockMask;
+
+        /**
+         * 跳跃表的思路 使用一层额外的 term作为索引  也就是少量的term作为index 通过比较大小关系可以直到某个term在的区间范围
+         */
+        final LongValues indexAddresses;
+        /**
+         * 存储了跳跃表内所有term数据
+         */
+        final IndexInput indexBytes;
+        /**
+         * 看来这个对象应该是临时对象 每当读取到一个新的term时 就要清除之前的数据
+         */
+        final BytesRef term;
+
+        /**
+         * 相当于 doc 的 docId  这个值是 term的序号
+         */
+        long ord = -1;
+
+        TermsDict(TermsDictEntry entry, IndexInput data) throws IOException {
+            this.entry = entry;
+            RandomAccessInput addressesSlice = data.randomAccessSlice(entry.termsAddressesOffset, entry.termsAddressesLength);
+            blockAddresses = DirectMonotonicReader.getInstance(entry.termsAddressesMeta, addressesSlice);
+            bytes = data.slice("terms", entry.termsDataOffset, entry.termsDataLength);
+            blockMask = (1L << entry.termsDictBlockShift) - 1;
+            RandomAccessInput indexAddressesSlice = data.randomAccessSlice(entry.termsIndexAddressesOffset, entry.termsIndexAddressesLength);
+            indexAddresses = DirectMonotonicReader.getInstance(entry.termsIndexAddressesMeta, indexAddressesSlice);
+            indexBytes = data.slice("terms-index", entry.termsIndexOffset, entry.termsIndexLength);
+            term = new BytesRef(entry.maxTermLength);
+        }
+
+        /**
+         * 读取下一个term
+         *
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public BytesRef next() throws IOException {
+            if (++ord >= entry.termsDictSize) {
+                return null;
+            }
+            // 代表需要读取一个新block
+            if ((ord & blockMask) == 0L) {
+                term.length = bytes.readVInt();
+                bytes.readBytes(term.bytes, 0, term.length);
+            } else {
+                // 代表还处在刚才那个块内 那么读取的方式要变化    这个采用后缀存储的方式 也就是每个block的首个 term肯定是全量读取 但是后面的就要看是否有相同前缀
+                final int token = Byte.toUnsignedInt(bytes.readByte());
+
+                // 首先byte本身就是8位 拆分成2个4位分别存储 前缀长度和后缀长度
+                // 低4位表示相同前缀的长度
+                int prefixLength = token & 0x0F;
+                // 高位代表后缀的长度
+                int suffixLength = 1 + (token >>> 4);
+                // 如果前缀长度为15 那么代表实际长度超过了15
+                if (prefixLength == 15) {
+                    prefixLength += bytes.readVInt();
+                }
+                // 后缀长度为16代表 实际长度超过了16
+                if (suffixLength == 16) {
+                    suffixLength += bytes.readVInt();
+                }
+                term.length = prefixLength + suffixLength;
+                bytes.readBytes(term.bytes, prefixLength, suffixLength);
+            }
+            return term;
+        }
+
+        /**
+         * 定位到某个序列的term
+         *
+         * @param ord
+         * @throws IOException
+         */
+        @Override
+        public void seekExact(long ord) throws IOException {
+            if (ord < 0 || ord >= entry.termsDictSize) {
+                throw new IndexOutOfBoundsException();
+            }
+            // 先定位到数据所在的 block
+            final long blockIndex = ord >>> entry.termsDictBlockShift;
+            // 找到起始位置
+            final long blockAddress = blockAddresses.get(blockIndex);
+            bytes.seek(blockAddress);
+            // 因为next 加载的是 ++ord 对应的值
+            this.ord = (blockIndex << entry.termsDictBlockShift) - 1;
+            do {
+                next();
+            } while (this.ord < ord);
+        }
+
+        /**
+         * 将index内的数据读取到 bytes 中 这样方便比较查询的 text
+         *
+         * @param index
+         * @return
+         * @throws IOException
+         */
+        private BytesRef getTermFromIndex(long index) throws IOException {
+            assert index >= 0 && index <= (entry.termsDictSize - 1) >>> entry.termsDictIndexShift;
+            // 读取index 对应的term
+            final long start = indexAddresses.get(index);
+            // 获取该term的长度
+            term.length = (int) (indexAddresses.get(index + 1) - start);
+            indexBytes.seek(start);
+            indexBytes.readBytes(term.bytes, 0, term.length);
+            return term;
+        }
+
+        /**
+         * 找到text对应term的下标
+         *
+         * @param text
+         * @return
+         * @throws IOException
+         */
+        private long seekTermsIndex(BytesRef text) throws IOException {
+            long lo = 0L;
+            // 先确定一共有多少个 index
+            long hi = (entry.termsDictSize - 1) >>> entry.termsDictIndexShift;
+            while (lo <= hi) {
+                final long mid = (lo + hi) >>> 1;
+                // 将index 对应的数据读取到 bytes中
+                getTermFromIndex(mid);
+                // 通过比较大小 最接近text的term对应的index值
+                final int cmp = term.compareTo(text);
+                if (cmp <= 0) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+
+            assert hi < 0 || getTermFromIndex(hi).compareTo(text) <= 0;
+            assert hi == ((entry.termsDictSize - 1) >>> entry.termsDictIndexShift) || getTermFromIndex(hi + 1).compareTo(text) > 0;
+
+            return hi;
+        }
+
+        private BytesRef getFirstTermFromBlock(long block) throws IOException {
+            assert block >= 0 && block <= (entry.termsDictSize - 1) >>> entry.termsDictBlockShift;
+            final long blockAddress = blockAddresses.get(block);
+            bytes.seek(blockAddress);
+            term.length = bytes.readVInt();
+            bytes.readBytes(term.bytes, 0, term.length);
+            return term;
+        }
+
+        /**
+         * 定位 内容为 text的term 所在的block
+         *
+         * @param text
+         * @return
+         * @throws IOException
+         */
+        private long seekBlock(BytesRef text) throws IOException {
+            long index = seekTermsIndex(text);
+            // 代表传入的 text 比所有的term 都要小
+            if (index == -1L) {
+                return -1L;
+            }
+
+            // 还原成 ord 也就变成了 ord的 左区间
+            long ordLo = index << entry.termsDictIndexShift;
+            // 选最大的ord 或者 下一个index对应的ord 作为右区间
+            long ordHi = Math.min(entry.termsDictSize, ordLo + (1L << entry.termsDictIndexShift)) - 1L;
+
+            // 切换成 block
+            long blockLo = ordLo >>> entry.termsDictBlockShift;
+            long blockHi = ordHi >>> entry.termsDictBlockShift;
+
+            // 这里是基于 block的二分查找
+            while (blockLo <= blockHi) {
+                final long blockMid = (blockLo + blockHi) >>> 1;
+                // 将block首个term的数据读取出来
+                getFirstTermFromBlock(blockMid);
+                final int cmp = term.compareTo(text);
+                if (cmp <= 0) {
+                    blockLo = blockMid + 1;
+                } else {
+                    blockHi = blockMid - 1;
+                }
+            }
+
+            assert blockHi < 0 || getFirstTermFromBlock(blockHi).compareTo(text) <= 0;
+            assert blockHi == ((entry.termsDictSize - 1) >>> entry.termsDictBlockShift) || getFirstTermFromBlock(blockHi + 1).compareTo(text) > 0;
+
+            return blockHi;
+        }
+
+        /**
+         * 尝试找到匹配的term
+         *
+         * @param text
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public SeekStatus seekCeil(BytesRef text) throws IOException {
+            // 定位 text所在的 block
+            final long block = seekBlock(text);
+            // 代表没有找到 同时将内部的bytes 变成首个term的数据
+            if (block == -1) {
+                // before the first term
+                seekExact(0L);
+                return SeekStatus.NOT_FOUND;
+            }
+
+            // 下面就是简单的查找了
+            final long blockAddress = blockAddresses.get(block);
+            this.ord = block << entry.termsDictBlockShift;
+            bytes.seek(blockAddress);
+            term.length = bytes.readVInt();
+            bytes.readBytes(term.bytes, 0, term.length);
+            while (true) {
+                int cmp = term.compareTo(text);
+                if (cmp == 0) {
+                    return SeekStatus.FOUND;
+                } else if (cmp > 0) {
+                    return SeekStatus.NOT_FOUND;
+                }
+                if (next() == null) {
+                    return SeekStatus.END;
+                }
+            }
+        }
+
+        /**
+         * 返回当前读取到的term
+         *
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public BytesRef term() throws IOException {
+            return term;
+        }
+
+        /**
+         * 返回当前term对应序号 就类似于 docId 于 doc
+         *
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public long ord() throws IOException {
+            return ord;
+        }
+
+        /**
+         * term的频率总是返回-1 是为什么
+         *
+         * @return
+         * @throws IOException
+         */
+        @Override
+        public long totalTermFreq() throws IOException {
+            return -1L;
+        }
+
+        @Override
+        public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public ImpactsEnum impacts(int flags) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int docFreq() throws IOException {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    @Override
+    public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
+        SortedNumericEntry entry = sortedNumerics.get(field.name);
+        if (entry.numValues == entry.numDocsWithField) {
+            return DocValues.singleton(getNumeric(entry));
+        }
+
+        final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+        final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesInput);
+
+        final LongValues values = getNumericValues(entry);
+
+        if (entry.docsWithFieldOffset == -1) {
+            // dense
+            return new SortedNumericDocValues() {
+
+                int doc = -1;
+                long start, end;
+                int count;
+
+                @Override
+                public int nextDoc() throws IOException {
+                    return advance(doc + 1);
+                }
+
+                @Override
+                public int docID() {
+                    return doc;
+                }
+
+                @Override
+                public long cost() {
+                    return maxDoc;
+                }
+
+                @Override
+                public int advance(int target) throws IOException {
+                    if (target >= maxDoc) {
+                        return doc = NO_MORE_DOCS;
+                    }
+                    start = addresses.get(target);
+                    end = addresses.get(target + 1L);
+                    count = (int) (end - start);
+                    return doc = target;
+                }
+
+                @Override
+                public boolean advanceExact(int target) throws IOException {
+                    start = addresses.get(target);
+                    end = addresses.get(target + 1L);
+                    count = (int) (end - start);
+                    doc = target;
+                    return true;
+                }
+
+                @Override
+                public long nextValue() throws IOException {
+                    return values.get(start++);
+                }
+
+                @Override
+                public int docValueCount() {
+                    return count;
+                }
+            };
+        } else {
+            // sparse
+            final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
+            return new SortedNumericDocValues() {
+
+                boolean set;
+                long start, end;
+                int count;
+
+                @Override
+                public int nextDoc() throws IOException {
+                    set = false;
+                    return disi.nextDoc();
+                }
+
+                @Override
+                public int docID() {
+                    return disi.docID();
+                }
+
+                @Override
+                public long cost() {
+                    return disi.cost();
+                }
+
+                @Override
+                public int advance(int target) throws IOException {
+                    set = false;
+                    return disi.advance(target);
+                }
+
+                @Override
+                public boolean advanceExact(int target) throws IOException {
+                    set = false;
+                    return disi.advanceExact(target);
+                }
+
+                @Override
+                public long nextValue() throws IOException {
+                    set();
+                    return values.get(start++);
+                }
+
+                @Override
+                public int docValueCount() {
+                    set();
+                    return count;
+                }
+
+                private void set() {
+                    if (set == false) {
+                        final int index = disi.index();
+                        start = addresses.get(index);
+                        end = addresses.get(index + 1L);
+                        count = (int) (end - start);
+                        set = true;
+                    }
+                }
+
+            };
+        }
+    }
+
+    @Override
+    public SortedSetDocValues getSortedSet(FieldInfo field) throws IOException {
+        SortedSetEntry entry = sortedSets.get(field.name);
+        if (entry.singleValueEntry != null) {
+            return DocValues.singleton(getSorted(entry.singleValueEntry));
+        }
+
+        final RandomAccessInput slice = data.randomAccessSlice(entry.ordsOffset, entry.ordsLength);
+        final LongValues ords = DirectReader.getInstance(slice, entry.bitsPerValue);
+
+        final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
+        final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesInput);
+
+        if (entry.docsWithFieldOffset == -1) {
+            // dense
+            return new BaseSortedSetDocValues(entry, data) {
+
+                int doc = -1;
+                long start;
+                long end;
+
+                @Override
+                public int nextDoc() throws IOException {
+                    return advance(doc + 1);
+                }
+
+                @Override
+                public int docID() {
+                    return doc;
+                }
+
+                @Override
+                public long cost() {
+                    return maxDoc;
+                }
+
+                @Override
+                public int advance(int target) throws IOException {
+                    if (target >= maxDoc) {
+                        return doc = NO_MORE_DOCS;
+                    }
+                    start = addresses.get(target);
+                    end = addresses.get(target + 1L);
+                    return doc = target;
+                }
+
+                @Override
+                public boolean advanceExact(int target) throws IOException {
+                    start = addresses.get(target);
+                    end = addresses.get(target + 1L);
+                    doc = target;
+                    return true;
+                }
+
+                @Override
+                public long nextOrd() throws IOException {
+                    if (start == end) {
+                        return NO_MORE_ORDS;
+                    }
+                    return ords.get(start++);
+                }
+
+            };
+        } else {
+            // sparse
+            final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
+                    entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
+            return new BaseSortedSetDocValues(entry, data) {
+
+                boolean set;
+                long start;
+                long end = 0;
+
+                @Override
+                public int nextDoc() throws IOException {
+                    set = false;
+                    return disi.nextDoc();
+                }
+
+                @Override
+                public int docID() {
+                    return disi.docID();
+                }
+
+                @Override
+                public long cost() {
+                    return disi.cost();
+                }
+
+                @Override
+                public int advance(int target) throws IOException {
+                    set = false;
+                    return disi.advance(target);
+                }
+
+                @Override
+                public boolean advanceExact(int target) throws IOException {
+                    set = false;
+                    return disi.advanceExact(target);
+                }
+
+                @Override
+                public long nextOrd() throws IOException {
+                    if (set == false) {
+                        final int index = disi.index();
+                        final long start = addresses.get(index);
+                        this.start = start + 1;
+                        end = addresses.get(index + 1L);
+                        set = true;
+                        return ords.get(start);
+                    } else if (start == end) {
+                        return NO_MORE_ORDS;
+                    } else {
+                        return ords.get(start++);
+                    }
+                }
+
+            };
+        }
+    }
+
+    @Override
+    public void checkIntegrity() throws IOException {
+        CodecUtil.checksumEntireFile(data);
+    }
+
+    /**
+     * Reader for longs split into blocks of different bits per values.
+     * The longs are requested by index and must be accessed in monotonically increasing order.
+     */
+    // Note: The order requirement could be removed as the jump-tables allow for backwards iteration
+    // Note 2: The rankSlice is only used if an advance of > 1 block is called. Its construction could be lazy
+    private class VaryingBPVReader {
+        final RandomAccessInput slice; // 2 slices to avoid cache thrashing when using rank
+        final RandomAccessInput rankSlice;
+        final NumericEntry entry;
+        final int shift;
+        final long mul;
+        final int mask;
+
+        long block = -1;
+        long delta;
+        long offset;
+        long blockEndOffset;
+        LongValues values;
+
+        VaryingBPVReader(NumericEntry entry, RandomAccessInput slice) throws IOException {
+            this.entry = entry;
+            this.slice = slice;
+            this.rankSlice = entry.valueJumpTableOffset == -1 ? null :
+                    data.randomAccessSlice(entry.valueJumpTableOffset, data.length() - entry.valueJumpTableOffset);
+            shift = entry.blockShift;
+            mul = entry.gcd;
+            mask = (1 << shift) - 1;
+        }
+
+        long getLongValue(long index) throws IOException {
+            final long block = index >>> shift;
+            if (this.block != block) {
+                int bitsPerValue;
+                do {
+                    // If the needed block is the one directly following the current block, it is cheaper to avoid the cache
+                    if (rankSlice != null && block != this.block + 1) {
+                        blockEndOffset = rankSlice.readLong(block * Long.BYTES) - entry.valuesOffset;
+                        this.block = block - 1;
+                    }
+                    offset = blockEndOffset;
+                    bitsPerValue = slice.readByte(offset++);
+                    delta = slice.readLong(offset);
+                    offset += Long.BYTES;
+                    if (bitsPerValue == 0) {
+                        blockEndOffset = offset;
+                    } else {
+                        final int length = slice.readInt(offset);
+                        offset += Integer.BYTES;
+                        blockEndOffset = offset + length;
+                    }
+                    this.block++;
+                } while (this.block != block);
+                values = bitsPerValue == 0 ? LongValues.ZEROES : DirectReader.getInstance(slice, bitsPerValue, offset);
+            }
+            return mul * values.get(index & mask) + delta;
+        }
+    }
 }

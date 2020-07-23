@@ -31,7 +31,6 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * and sorted into a dictionary of unique values. A pointer to the
  * dictionary value (ordinal) can be retrieved for each document. Ordinals
  * are dense and in increasing sorted order.
- * 这个对象会对相同域名的域值进行排序 类似 SortedNumericDocValues   区别就是该对象不要求字段的类型
  */
 
 public abstract class SortedDocValues extends BinaryDocValues {
@@ -46,7 +45,7 @@ public abstract class SortedDocValues extends BinaryDocValues {
    * returned {@code false}.
    * @return ordinal for the document: this is dense, starts at 0, then
    *         increments by 1 for the next value in sorted order.
-   *         返回当前id的序号
+   *         返回当前doc 对应的docValue的排序 结果
    */
   public abstract int ordValue() throws IOException;
 

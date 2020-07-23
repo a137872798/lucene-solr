@@ -33,10 +33,13 @@ import org.apache.lucene.util.BytesRef;
  *
  * In some cases, the default implementation may be slow and consume huge memory, so subclass SHOULD have its own
  * implementation if possible.
- * 一个基础的 term迭代器模板
+ * 一个term迭代器模板
  */
 public abstract class BaseTermsEnum extends TermsEnum {
 
+  /**
+   * 每个 term 有一个携带的属性 这个就要依赖 Tokenizer解析了
+   */
   private AttributeSource atts = null;
   
   /** Sole constructor. (For invocation by subclass

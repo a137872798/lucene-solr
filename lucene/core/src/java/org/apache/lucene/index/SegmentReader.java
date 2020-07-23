@@ -184,6 +184,7 @@ public final class SegmentReader extends CodecReader {
 
   /**
    * init most recent DocValues for the current commit
+   * 实际上 DocValuesProducer 就是 Lucene80DocValuesProducer
    */
   private DocValuesProducer initDocValuesProducer() throws IOException {
 

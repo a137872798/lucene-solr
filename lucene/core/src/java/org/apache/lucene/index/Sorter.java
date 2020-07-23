@@ -273,6 +273,7 @@ final class Sorter {
       SortedSetSortField sf = (SortedSetSortField) sortField;
       return SortedSetSelector.wrap(DocValues.getSortedSet(reader, sf.getField()), sf.getSelector());
     } else {
+      // 先看普通情况
       return DocValues.getSorted(reader, sortField.getField());
     }
   }

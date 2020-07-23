@@ -31,7 +31,7 @@ import org.apache.lucene.util.BytesRef;
  *
  * @since   lucene 1.4
  * @see Sort
- * 存储用于描述 如何为doc按照term进行排序的信息
+ * 描述了在某个field中 doc按照什么规则排序
  */
 public class SortField {
 
@@ -98,10 +98,6 @@ public class SortField {
   // 按照 docId 进行排序
   public static final SortField FIELD_DOC = new SortField(null, Type.DOC);
 
-
-  /**
-   * 描述当前域名
-   */
   private String field;
   /**
    * 目标域按照什么规则进行排序

@@ -298,7 +298,13 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
      */
     private class FieldsReader extends DocValuesProducer {
 
+        /**
+         * 通过 field 读取相关的 docValue
+         */
         private final Map<String, DocValuesProducer> fields = new TreeMap<>();
+        /**
+         * 以索引文件名为key 存储对应的 docValue
+         */
         private final Map<String, DocValuesProducer> formats = new HashMap<>();
 
         // clone for merge
@@ -319,6 +325,11 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             }
         }
 
+        /**
+         * 通过 描述段信息的上下文对象 初始化
+         * @param readState
+         * @throws IOException
+         */
         public FieldsReader(final SegmentReadState readState) throws IOException {
 
             // Init each unique format:
@@ -327,8 +338,10 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
                 // Read field name -> format name
                 // 根据本次 包含的所有field  添加映射关系
                 for (FieldInfo fi : readState.fieldInfos) {
+                    // 首先要确定这个 field 内部存储了数据
                     if (fi.getDocValuesType() != DocValuesType.NONE) {
                         final String fieldName = fi.name;
+                        // TODO 先记一下 应该是在哪里有set的
                         final String formatName = fi.getAttribute(PER_FIELD_FORMAT_KEY);
                         if (formatName != null) {
                             // null formatName means the field is in fieldInfos, but has no docvalues!

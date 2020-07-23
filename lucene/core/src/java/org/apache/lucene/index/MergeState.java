@@ -47,6 +47,7 @@ public class MergeState {
   public final DocMap[] docMaps;
 
   // Only used by IW when it must remap deletes that arrived against the merging segments while a merge was running:
+  // 这意味着 每个segment下的数据都会被排序
   final DocMap[] leafDocMaps;
 
   /** {@link SegmentInfo} of the newly merged segment. */
@@ -81,6 +82,7 @@ public class MergeState {
   public final PointsReader[] pointsReaders;
 
   /** Max docs per reader */
+  // 存储每个segment 对应的 maxDoc
   public final int[] maxDocs;
 
   /** InfoStream for debugging messages. */
@@ -89,16 +91,25 @@ public class MergeState {
   /** Indicates if the index needs to be sorted **/
   public boolean needsIndexSort;
 
-  /** Sole constructor. */
+  /**
+   *
+   * @param originalReaders  参与merge的所有segment对应的 reader
+   * @param segmentInfo   写入的目标segment
+   * @param infoStream
+   * @throws IOException
+   */
   MergeState(List<CodecReader> originalReaders, SegmentInfo segmentInfo, InfoStream infoStream) throws IOException {
 
     this.infoStream = infoStream;
 
+    // 这个属性是从 IndexWriter.IndexSort 获取的
     final Sort indexSort = segmentInfo.getIndexSort();
     int numReaders = originalReaders.size();
     leafDocMaps = new DocMap[numReaders];
+    // 检测每个reader的排序方式是否与目标segment匹配 否则抛出异常
     List<CodecReader> readers = maybeSortReaders(originalReaders, segmentInfo);
 
+    // 生成存储各个segment关键信息的数组对象
     maxDocs = new int[numReaders];
     fieldsProducers = new FieldsProducer[numReaders];
     normsProducers = new NormsProducer[numReaders];
@@ -117,6 +128,7 @@ public class MergeState {
       liveDocs[i] = reader.getLiveDocs();
       fieldInfos[i] = reader.getFieldInfos();
 
+      // 如果reader对象存在 返回一个merge专用的实例对象
       normsProducers[i] = reader.getNormsReader();
       if (normsProducers[i] != null) {
         normsProducers[i] = normsProducers[i].getMergeInstance();
@@ -142,16 +154,19 @@ public class MergeState {
       if (pointsReaders[i] != null) {
         pointsReaders[i] = pointsReaders[i].getMergeInstance();
       }
+      // 这里已经将之前的del刷盘了 所以确保此时得到的就是准确的doc数量
       numDocs += reader.numDocs();
     }
 
     segmentInfo.setMaxDoc(numDocs);
 
     this.segmentInfo = segmentInfo;
+    // 根据最新的排序对象 对每个待merge的段数据进行排序
     this.docMaps = buildDocMaps(readers, indexSort);
   }
 
   // Remap docIDs around deletions
+  // 如果不存在 sort 对象  那么只针对deletion进行整理
   private DocMap[] buildDeletionDocMaps(List<CodecReader> readers) {
 
     int totalDocs = 0;
@@ -160,20 +175,26 @@ public class MergeState {
 
     for (int i = 0; i < numReaders; i++) {
       LeafReader reader = readers.get(i);
+      // 获取此时最新的 live位图
       Bits liveDocs = reader.getLiveDocs();
 
       final PackedLongValues delDocMap;
       if (liveDocs != null) {
+        // 将doc编号前移  避免已经被删除的doc占用无效的位置
         delDocMap = removeDeletes(reader.maxDoc(), liveDocs);
       } else {
+        // 这样应该是代表所有doc 都存活
         delDocMap = null;
       }
 
+      // 段与段之间的 docId 被连接了起来
       final int docBase = totalDocs;
       docMaps[i] = new DocMap() {
         @Override
         public int get(int docID) {
+          // liveDocs 为null 代表所有doc都存活 直接采用累加的方式计算docId就好
           if (liveDocs == null) {
+            // docBase 是上一个段的 最后一个docId
             return docBase + docID;
           } else if (liveDocs.get(docID)) {
             return docBase + (int) delDocMap.get(docID);
@@ -188,14 +209,23 @@ public class MergeState {
     return docMaps;
   }
 
+  /**
+   * 将每个reader内部的数据 按照sort 进行排序
+   * @param readers
+   * @param indexSort   一个sort记录了所有影响排序的 field信息 这些field 被称为 sortField
+   * @return
+   * @throws IOException
+   */
   private DocMap[] buildDocMaps(List<CodecReader> readers, Sort indexSort) throws IOException {
 
     if (indexSort == null) {
       // no index sort ... we only must map around deletions, and rebase to the merged segment's docID space
+      // 避免 被删除的doc占用空间 这里做了整理工作
       return buildDeletionDocMaps(readers);
     } else {
       // do a merge sort of the incoming leaves:
       long t0 = System.nanoTime();
+      // 对内部的数据进行排序
       DocMap[] result = MultiSorter.sort(indexSort, readers);
       if (result == null) {
         // already sorted so we can switch back to map around deletions
@@ -211,10 +241,18 @@ public class MergeState {
     }
   }
 
+  /**
+   * 检测reader的 sort属性是否合法
+   * @param originalReaders
+   * @param segmentInfo
+   * @return
+   * @throws IOException
+   */
   private List<CodecReader> maybeSortReaders(List<CodecReader> originalReaders, SegmentInfo segmentInfo) throws IOException {
 
     // Default to identity:
     for(int i=0;i<originalReaders.size();i++) {
+      // 默认情况下保持原顺序返回
       leafDocMaps[i] = new DocMap() {
           @Override
           public int get(int docID) {
@@ -223,6 +261,7 @@ public class MergeState {
         };
     }
 
+    // 如果写入的目标 segment没有排序要求 那么就按照这个顺序进行merge就好
     Sort indexSort = segmentInfo.getIndexSort();
     if (indexSort == null) {
       return originalReaders;
@@ -230,8 +269,10 @@ public class MergeState {
 
     List<CodecReader> readers = new ArrayList<>(originalReaders.size());
 
+    // 此时每个segment 设置了排序规则的情况下  要求 reader的段排序必须是 目标段排序的子集 (或者完全相同)
     for (CodecReader leaf : originalReaders) {
       Sort segmentSort = leaf.getMetaData().getSort();
+      // TODO 这里要求排序的field 是子集 也就代表每个reader对象本身的排序信息是一致的  标识需要排序的field 必须写入到segment中吗???
       if (segmentSort == null || isCongruentSort(indexSort, segmentSort) == false) {
         throw new IllegalArgumentException("index sort mismatch: merged segment has sort=" + indexSort +
             " but to-be-merged segment has sort=" + (segmentSort == null ? "null" : segmentSort));
@@ -243,7 +284,7 @@ public class MergeState {
   }
 
   /** A map of doc IDs. */
-  // 代表 doc 的映射对象  可以通过id 快捷的检索到某个 doc
+  // 通过原有的顺序 可以映射到排序后的doc
   public static abstract class DocMap {
     /** Sole constructor */
     public DocMap() {
@@ -253,11 +294,19 @@ public class MergeState {
     public abstract int get(int docID);
   }
 
+  /**
+   * 将还存活的 doc 写入到 压缩结构中
+   * @param maxDoc
+   * @param liveDocs
+   * @return
+   */
   static PackedLongValues removeDeletes(final int maxDoc, final Bits liveDocs) {
+    // 该结构支持每次写入一个long值 并在build时 检测写入的所有 long值 最多占用多少位 之后按位存储数据
     final PackedLongValues.Builder docMapBuilder = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
     int del = 0;
     for (int i = 0; i < maxDoc; ++i) {
       docMapBuilder.add(i - del);
+      // 这里是在往前移吧 比如 2，3，4，5 此时3被删除了 4就变成了新的3  5变成了新的4
       if (liveDocs.get(i) == false) {
         ++del;
       }

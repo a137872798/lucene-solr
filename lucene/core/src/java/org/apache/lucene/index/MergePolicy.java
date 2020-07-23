@@ -263,7 +263,7 @@ public abstract class MergePolicy {
          */
         List<SegmentReader> readers;        // used by IndexWriter
         /**
-         * 代表此时 liveDoc 位图对象
+         * 存储本次涉及到的所有 segment此时的 liveDoc 位图
          */
         List<Bits> hardLiveDocs;        // used by IndexWriter
 
