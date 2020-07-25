@@ -34,8 +34,12 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
   /** Represents one sub-reader being merged */
   public static abstract class Sub {
     /** Mapped doc ID */
+    // 此时映射到的 globalDocId
     public int mappedDocID;
 
+    /**
+     * 作用是将当前reader下的doc 映射到merge后的doc  当传入已经被del的doc时 返回-1
+     */
     final MergeState.DocMap docMap;
 
     /** Sole constructor */
@@ -47,16 +51,22 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
     public abstract int nextDoc() throws IOException;
   }
 
-  /** Construct this from the provided subs, specifying the maximum sub count */
+  /** Construct this from the provided subs, specifying the maximum sub count
+   * @param maxCount 默认就是 sub.size()
+   * 将多个Sub对象组合
+   * */
   public static <T extends DocIDMerger.Sub> DocIDMerger<T> of(List<T> subs, int maxCount, boolean indexIsSorted) throws IOException {
     if (indexIsSorted && maxCount > 1) {
+      // 代表需要排序
       return new SortedDocIDMerger<>(subs, maxCount);
     } else {
+      // 代表不需要做排序吧 挨个数据所有元素即可
       return new SequentialDocIDMerger<>(subs);
     }
   }
 
   /** Construct this from the provided subs */
+  // 将多个 Sub对象合并
   public static <T extends DocIDMerger.Sub> DocIDMerger<T> of(List<T> subs, boolean indexIsSorted) throws IOException {
     return of(subs, subs.size(), indexIsSorted);
   }
@@ -71,10 +81,21 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
 
   private DocIDMerger() {}
 
+  /**
+   * 挨个输出所有元素 不需要做额外处理
+   * @param <T>
+   */
   private static class SequentialDocIDMerger<T extends DocIDMerger.Sub> extends DocIDMerger<T> {
 
     private final List<T> subs;
+    /**
+     * 当前正被引用的reader
+     */
     private T current;
+
+    /**
+     * 对应 subs 的下标
+     */
     private int nextIndex;
 
     private SequentialDocIDMerger(List<T> subs) throws IOException {
@@ -85,6 +106,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
     @Override
     public void reset() throws IOException {
       if (subs.size() > 0) {
+        // 每次重置的时候 都会切换成某个reader对象
         current = subs.get(0);
         nextIndex = 1;
       } else {
@@ -97,6 +119,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
     public T next() throws IOException {
       while (true) {
         int docID = current.nextDoc();
+        // 代表此时reader已经读取完了  切换到下一个reader
         if (docID == NO_MORE_DOCS) {
           if (nextIndex == subs.size()) {
             current = null;
@@ -107,6 +130,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
           continue;
         }
 
+        // 这里会转换成 merge后的 globalDocId
         int mappedDocID = current.docMap.get(docID);
         if (mappedDocID != -1) {
           current.mappedDocID = mappedDocID;
@@ -117,6 +141,10 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
 
   }
 
+  /**
+   * 通过优先队列确保每次读取出来的数据是整个readerList中的最小值
+   * @param <T>
+   */
   private static class SortedDocIDMerger<T extends DocIDMerger.Sub> extends DocIDMerger<T> {
 
     private final List<T> subs;
@@ -134,6 +162,10 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
       reset();
     }
 
+    /**
+     * 将数据填充到queue中
+     * @throws IOException
+     */
     @Override
     public void reset() throws IOException {
       // caller may not have fully consumed the queue:
@@ -147,6 +179,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
           first = false;
         } else {
           int mappedDocID;
+          // 取出每个 reader的首个 globalDocId
           while (true) {
             int docID = sub.nextDoc();
             if (docID == NO_MORE_DOCS) {
@@ -168,6 +201,11 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
       }
     }
 
+    /**
+     * 弹出所有reader中的下一个值  同时更新top
+     * @return
+     * @throws IOException
+     */
     @Override
     public T next() throws IOException {
       T top = queue.top();
@@ -180,6 +218,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
           break;
         }
         int mappedDocID = top.docMap.get(docID);
+        // -1 代表该 doc 已经被删除
         if (mappedDocID == -1) {
           // doc was deleted
           continue;

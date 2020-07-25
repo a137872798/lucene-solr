@@ -4112,6 +4112,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * @param merge
+     * @param mergeState
+     * @return
+     * @throws IOException
+     */
     @SuppressWarnings("try")
     private synchronized boolean commitMerge(MergePolicy.OneMerge merge, MergeState mergeState) throws IOException {
 
@@ -4749,12 +4755,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     globalFieldNumberMap,
                     context);
             merge.info.setSoftDelCount(Math.toIntExact(softDeleteCount.get()));
+
+            // 检测merge是否被终止
             merge.checkAborted();
 
             merge.mergeStartNS = System.nanoTime();
 
             // This is where all the work happens:
             if (merger.shouldMerge()) {
+                // 执行真正的merge操作
                 merger.merge();
             }
 
@@ -4762,6 +4771,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             assert mergeState.segmentInfo == merge.info.info;
             merge.info.info.setFiles(new HashSet<>(dirWrapper.getCreatedFiles()));
             Codec codec = config.getCodec();
+            // ignore
             if (infoStream.isEnabled("IW")) {
                 if (merger.shouldMerge()) {
                     String pauseInfo = merge.getMergeProgress().getPauseTimes().entrySet()

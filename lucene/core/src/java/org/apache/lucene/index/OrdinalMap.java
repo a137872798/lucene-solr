@@ -47,11 +47,11 @@ public class OrdinalMap implements Accountable {
     // TODO: use more efficient packed ints structures?
 
 
-    /**
-     * 存储某个 term块与 排序前的 顺序
-     */
     private static class TermsEnumIndex {
         public final static TermsEnumIndex[] EMPTY_ARRAY = new TermsEnumIndex[0];
+        /**
+         * 按照 term 数量从大到小的序号排列 比如subIndex=0 代表该对象对应的termsEnum 是本批数据中 term最多的
+         */
         final int subIndex;
         final TermsEnum termsEnum;
         BytesRef currentTerm;
@@ -201,7 +201,7 @@ public class OrdinalMap implements Accountable {
     final PackedLongValues globalOrdDeltas;
     // globalOrd -> first segment container
     final PackedLongValues firstSegments;
-    // for every segment, segmentOrd -> globalOrd   维护了每个segment 与globalSegment的关系
+    // for every segment, segmentOrd -> globalOrd   使用段ord 定位到某个全局相同term的顺序 （必然能够找到 因为所有段的term最终都会写入到 globalOrd）
     final LongValues segmentToGlobalOrds[];
     // the map from/to segment ids
     final SegmentMap segmentMap;
@@ -246,9 +246,8 @@ public class OrdinalMap implements Accountable {
             }
         };
 
-        //
         for (int i = 0; i < subs.length; i++) {
-            // subs[segmentMap.newToOld(i)] 会转换成 term不断变少的 TermsEnum 对象
+            // 在这里顺序已经被打乱了 i 变成了以term数量倒序排序
             TermsEnumIndex sub = new TermsEnumIndex(subs[segmentMap.newToOld(i)], i);
             if (sub.next() != null) {
                 // 这里先将 第一个term加入到队列中进行排序
@@ -293,7 +292,7 @@ public class OrdinalMap implements Accountable {
                     firstSegmentIndex = segmentIndex;
                     globalOrdDelta = delta;
                 }
-                // 这个数组的作用是???
+                // 因为 bits 只是用来评估表示这个值 最多要多少位 所以计算结果本身无意义
                 ordDeltaBits[segmentIndex] |= delta;
 
                 // for each per-segment ord, map it back to the global term; the while loop is needed
@@ -303,7 +302,7 @@ public class OrdinalMap implements Accountable {
 
                 // TODO: we could specialize this case (the while loop is not needed when the ords are compact)   这个注释说明了while非必须 你大爷
                 do {
-                    // delta 可以理解为差了几级  每当term增加到下一个值时 globalOrd+1
+                    // delta 可以理解为差了几级  每当term增加到下一个值时 globalOrd+1 这个遵循单调递增
                     ordDeltas[segmentIndex].add(delta);
                     segmentOrds[segmentIndex]++;
                     // 照理说这里只会执行一次  因为 termEnum 本身就是单调递增的 所以当某个term变成top时 它前面的term 肯定已经处理过了
@@ -354,24 +353,34 @@ public class OrdinalMap implements Accountable {
             if (ordDeltaBits[i] == 0L) {
                 // segment ords perfectly match global ordinals
                 // likely in case of low cardinalities and large segments
+                // 所以这里 传入全局ord 和返回的 segmentOrd 是一样的
                 segmentToGlobalOrds[i] = LongValues.IDENTITY;
             } else {
+                // 预估最大的增量数据最多需要多少bit来表示
                 final int bitsRequired = ordDeltaBits[i] < 0 ? 64 : PackedInts.bitsRequired(ordDeltaBits[i]);
+                // deltas.ramBytesUsed() 内部 bit的计算是做过特殊处理的 也就是不存储原数据 只存储差值 所以实际消耗的bit 很小
                 final long monotonicBits = deltas.ramBytesUsed() * 8;
+                // 这里计算出来会比上面大 (一般来说)
                 final long packedBits = bitsRequired * deltas.size();
+
                 if (deltas.size() <= Integer.MAX_VALUE
+                        // 这里代表只要使用的额外内存在允许的范围内 就可以采用直接存储的方式(省略min 和期望值的计算 以便简化逻辑)
                         && packedBits <= monotonicBits * (1 + acceptableOverheadRatio)) {
                     // monotonic compression mostly adds overhead, let's keep the mapping in plain packed ints
                     final int size = (int) deltas.size();
                     final PackedInts.Mutable newDeltas = PackedInts.getMutable(size, bitsRequired, acceptableOverheadRatio);
+
+                    // 将之前采用单调递增存储的数据 按照普通方法转存一次
                     final PackedLongValues.Iterator it = deltas.iterator();
                     for (int ord = 0; ord < size; ++ord) {
+                        // 在next的时候已经还原数据了
                         newDeltas.set(ord, it.next());
                     }
                     assert it.hasNext() == false;
                     segmentToGlobalOrds[i] = new LongValues() {
                         @Override
                         public long get(long ord) {
+                            // newDeltas.get((int) ord) 就是一个偏差值
                             return ord + newDeltas.get((int) ord);
                         }
                     };

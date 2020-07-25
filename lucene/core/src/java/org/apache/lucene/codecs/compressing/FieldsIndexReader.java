@@ -160,7 +160,7 @@ final class FieldsIndexReader extends FieldsIndex {
   }
 
   /**
-   * 获取某个doc 在索引文件中的 起点   TODO 存储的数据 不是 每次flush写入几个doc吗 数据好像对不上???
+   * 获取某个doc 在索引文件中的 起点
    * @param docID
    * @return
    */

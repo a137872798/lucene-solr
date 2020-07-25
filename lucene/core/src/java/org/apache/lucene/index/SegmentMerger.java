@@ -56,7 +56,10 @@ final class SegmentMerger {
    * 记录一些上下文信息
    */
   private final IOContext context;
-  
+
+  /**
+   * 记录了一些merge需要的信息
+   */
   final MergeState mergeState;
   private final FieldInfos.Builder fieldInfosBuilder;
 
@@ -75,12 +78,17 @@ final class SegmentMerger {
     if (context.context != IOContext.Context.MERGE) {
       throw new IllegalArgumentException("IOContext.context should be MERGE; got: " + context.context);
     }
+
+    // 根据reader内部的信息 生成state对象
     mergeState = new MergeState(readers, segmentInfo, infoStream);
     directory = dir;
     this.codec = segmentInfo.getCodec();
     this.context = context;
+    // 这样通过该对象创建的 field 会在 全局 Num对象中分配数字
     this.fieldInfosBuilder = new FieldInfos.Builder(fieldNumbers);
     Version minVersion = Version.LATEST;
+
+    // 考虑兼容性 返回了 他们之中最小的版本号
     for (CodecReader reader : readers) {
       Version leafMinVersion = reader.getMetaData().getMinVersion();
       if (leafMinVersion == null) {
@@ -101,7 +109,10 @@ final class SegmentMerger {
     }
   }
   
-  /** True if any merging should happen */
+  /**
+   * True if any merging should happen
+   * 是否有必要进行merge 在生成 state对象时 已经计算并设置过一次 maxDoc了
+   */
   boolean shouldMerge() {
     return mergeState.segmentInfo.maxDoc() > 0;
   }
@@ -111,6 +122,7 @@ final class SegmentMerger {
    * @return The number of documents that were merged
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
+   * 将所有相关数据merge后写入到文件
    */
   MergeState merge() throws IOException {
     if (!shouldMerge()) {
@@ -121,6 +133,7 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
+    // 将每个 segment的doc数据 写入到新的段中   写入到doc内的数据都是已经排好序的吗  在哪里处理的 以及为什么要这么做???
     int numMerged = mergeFields();
     if (mergeState.infoStream.isEnabled("SM")) {
       long t1 = System.nanoTime();
@@ -128,11 +141,13 @@ final class SegmentMerger {
     }
     assert numMerged == mergeState.segmentInfo.maxDoc(): "numMerged=" + numMerged + " vs mergeState.segmentInfo.maxDoc()=" + mergeState.segmentInfo.maxDoc();
 
+    // 这里创建2个记录状态信息的对象
     final SegmentWriteState segmentWriteState = new SegmentWriteState(mergeState.infoStream, directory, mergeState.segmentInfo,
                                                                       mergeState.mergeFieldInfos, null, context);
     final SegmentReadState segmentReadState = new SegmentReadState(directory, mergeState.segmentInfo, mergeState.mergeFieldInfos,
         IOContext.READ, segmentWriteState.segmentSuffix);
 
+    // fieldInfos 由参与merge的所有segment携带的 fieldInfo 合并成  只要有一个fieldInfo 携带标准因子 该标识就为true
     if (mergeState.mergeFieldInfos.hasNorms()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
@@ -221,18 +236,27 @@ final class SegmentMerger {
     }
   }
 
+  /**
+   * 合并标准因子信息
+   * @param segmentWriteState
+   * @throws IOException
+   */
   private void mergeNorms(SegmentWriteState segmentWriteState) throws IOException {
     try (NormsConsumer consumer = codec.normsFormat().normsConsumer(segmentWriteState)) {
       consumer.merge(mergeState);
     }
   }
-  
+
+  /**
+   * 将 fieldInfo 信息merge   这里会对fieldInfo 去重  (这里认为相同指的是 fieldInfo.name 一致 与num无关)
+   */
   public void mergeFieldInfos() {
     for (FieldInfos readerFieldInfos : mergeState.fieldInfos) {
       for (FieldInfo fi : readerFieldInfos) {
         fieldInfosBuilder.add(fi);
       }
     }
+    // 在这里为 merge对象设置 合并后相关的fieldInfo信息
     mergeState.mergeFieldInfos = fieldInfosBuilder.finish();
   }
 
@@ -243,6 +267,7 @@ final class SegmentMerger {
    * @throws IOException if there is a low-level IO error
    */
   private int mergeFields() throws IOException {
+    // 打开输出流 将merge数据写入到文件中
     try (StoredFieldsWriter fieldsWriter = codec.storedFieldsFormat().fieldsWriter(directory, mergeState.segmentInfo, context)) {
       return fieldsWriter.merge(mergeState);
     }

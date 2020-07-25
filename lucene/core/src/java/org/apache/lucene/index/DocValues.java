@@ -332,6 +332,8 @@ public final class DocValues {
    * @throws IllegalStateException if {@code field} exists, but was not indexed with docvalues.
    * @throws IllegalStateException if {@code field} has docvalues, but the type is not {@link DocValuesType#NUMERIC}.
    * @throws IOException if an I/O error occurs.
+   * 每个段对应的 reader对象都叫做 leaf 也就是说可以同时打开多个segment 一起读取吗  开启这么多句柄是否会占用太多资源 还有近实时查询是怎么实现的 ???
+   * 对一个文件同时写入和读取 能看到写入的最新值吗
    */
   public static NumericDocValues getNumeric(LeafReader reader, String field) throws IOException {
     NumericDocValues dv = reader.getNumericDocValues(field);
@@ -389,6 +391,7 @@ public final class DocValues {
    * @throws IllegalStateException if {@code field} has docvalues, but the type is not {@link DocValuesType#SORTED_NUMERIC}
    *                               or {@link DocValuesType#NUMERIC}.
    * @throws IOException if an I/O error occurs.
+   * 获取已经排序过的 NumDocValue  基于什么来排序的 num的值吗???
    */
   public static SortedNumericDocValues getSortedNumeric(LeafReader reader, String field) throws IOException {
     SortedNumericDocValues dv = reader.getSortedNumericDocValues(field);

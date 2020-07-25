@@ -466,8 +466,14 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         return getNumeric(entry);
     }
 
+    /**
+     * 存储连续的 doc 对应的 docValue
+     */
     private static abstract class DenseNumericDocValues extends NumericDocValues {
 
+        /**
+         * 总计存储了多少doc
+         */
         final int maxDoc;
         int doc = -1;
 
@@ -540,12 +546,20 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
     }
 
+    /**
+     * 根据描述的元数据 读取 Num类型的docValue
+     * @param entry
+     * @return
+     * @throws IOException
+     */
     private NumericDocValues getNumeric(NumericEntry entry) throws IOException {
+        // 代表内部没有任何数据
         if (entry.docsWithFieldOffset == -2) {
             // empty
             return DocValues.emptyNumeric();
+            // -1 代表是密集存储吧
         } else if (entry.docsWithFieldOffset == -1) {
-            // dense
+            // dense  这里利用差值存储 如果差值都是0 代表所有值都是一样的 所以直接返回min就好
             if (entry.bitsPerValue == 0) {
                 return new DenseNumericDocValues(maxDoc) {
                     @Override
@@ -554,7 +568,10 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                     }
                 };
             } else {
+                // 通过偏移量 找到对应的分片数据
                 final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
+
+                // 代表数据是分块存储的吧
                 if (entry.blockShift >= 0) {
                     // dense but split into blocks of different bits per value
                     return new DenseNumericDocValues(maxDoc) {
@@ -562,20 +579,24 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
 
                         @Override
                         public long longValue() throws IOException {
+                            // 也是类似的套路 doc的数据会落在某个 block上 通过从 slice中读取数据还原成long
                             return vBPVReader.getLongValue(doc);
                         }
                     };
                 } else {
+                    // 代表数据是连续存放的 应该就是 数据量小于那个啥 Array的长度 (在DISI中有  这种划分级别的算法是基于某个稀疏位图算法实现)
                     final LongValues values = DirectReader.getInstance(slice, entry.bitsPerValue);
                     if (entry.table != null) {
                         final long[] table = entry.table;
                         return new DenseNumericDocValues(maxDoc) {
                             @Override
                             public long longValue() throws IOException {
+                                // doc 先换算成某个值 之后从table中读取真正的值   要明白这里还是要知道数据是怎么存的
                                 return table[(int) values.get(doc)];
                             }
                         };
                     } else {
+                        // 从values 得到基础值后 通过这些特殊值进行换算
                         final long mul = entry.gcd;
                         final long delta = entry.minValue;
                         return new DenseNumericDocValues(maxDoc) {
@@ -588,9 +609,11 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                 }
             }
         } else {
-            // sparse
+            // sparse  根据相关还原 DISI 对象
             final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
                     entry.jumpTableEntryCount, entry.denseRankPower, entry.numValues);
+
+            // 同样的情况 代表所有值都一样
             if (entry.bitsPerValue == 0) {
                 return new SparseNumericDocValues(disi) {
                     @Override
@@ -599,6 +622,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                     }
                 };
             } else {
+                // 其他操作都一样 只是获取index 变成基于 disi获取
                 final RandomAccessInput slice = data.randomAccessSlice(entry.valuesOffset, entry.valuesLength);
                 if (entry.blockShift >= 0) {
                     // sparse and split into blocks of different bits per value
@@ -636,6 +660,12 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
     }
 
+    /**
+     * 这里读取数据的套路 与 获取 NumDocValue的一致
+     * @param entry
+     * @return
+     * @throws IOException
+     */
     private LongValues getNumericValues(NumericEntry entry) throws IOException {
         if (entry.bitsPerValue == 0) {
             return new LongValues() {
@@ -1166,7 +1196,8 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                 }
 
                 /**
-                 * 返回 doc对应的顺序信息
+                 * 返回 doc对应的顺序信息  这个 ord 应该就是可以找到对应term   可以看到nextDoc本身不会影响到 termEnum 由此可以推断 一般的使用方式是先遍历doc
+                 * 然后将doc 换成ord  然后用ord去查找term
                  * @return
                  */
                 @Override
@@ -1627,16 +1658,27 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
     }
 
+    /**
+     * 获取已经完成排序的 docValue类型为 num 的迭代器对象
+     * 这里体现排序的地方就是传入doc 能返回一个ord
+     * @param field
+     * @return
+     * @throws IOException
+     */
     @Override
     public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
+        // 找到描述排序信息的 entry
         SortedNumericEntry entry = sortedNumerics.get(field.name);
+        // 这个field 关联的doc数量与 num数量一致  返回一个SingSortedNumericDocValues 对象   也就是说SortedNumericDocValues 内部照理说应该有多个NumDocValue对象
         if (entry.numValues == entry.numDocsWithField) {
             return DocValues.singleton(getNumeric(entry));
         }
 
+        // 这里每个address 对应一个block的起点
         final RandomAccessInput addressesInput = data.randomAccessSlice(entry.addressesOffset, entry.addressesLength);
         final LongValues addresses = DirectMonotonicReader.getInstance(entry.addressesMeta, addressesInput);
 
+        // 从entry中读取数据
         final LongValues values = getNumericValues(entry);
 
         if (entry.docsWithFieldOffset == -1) {
@@ -1662,6 +1704,12 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                     return maxDoc;
                 }
 
+                /**
+                 * 看来每个doc 内部都有一组数据
+                 * @param target
+                 * @return
+                 * @throws IOException
+                 */
                 @Override
                 public int advance(int target) throws IOException {
                     if (target >= maxDoc) {
@@ -1682,6 +1730,11 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                     return true;
                 }
 
+                /**
+                 * 读取当前文档下的一个新值  这里没有什么限制吗 比如 start 不能超过end 啥的
+                 * @return
+                 * @throws IOException
+                 */
                 @Override
                 public long nextValue() throws IOException {
                     return values.get(start++);
@@ -1898,45 +1951,77 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
 
         long block = -1;
         long delta;
+
+        /**
+         * 全局偏移量
+         */
         long offset;
+
+        /**
+         * 标记上一次使用的block的尾偏移量
+         */
         long blockEndOffset;
         LongValues values;
 
+        /**
+         *
+         * @param entry  描述元数据的实体
+         * @param slice  数据所在的分片
+         * @throws IOException
+         */
         VaryingBPVReader(NumericEntry entry, RandomAccessInput slice) throws IOException {
             this.entry = entry;
             this.slice = slice;
+            // 从数据块中 剥离出有关 jumpTable的
             this.rankSlice = entry.valueJumpTableOffset == -1 ? null :
                     data.randomAccessSlice(entry.valueJumpTableOffset, data.length() - entry.valueJumpTableOffset);
+            // 1<<shift 可以计算块的大小
             shift = entry.blockShift;
             mul = entry.gcd;
             mask = (1 << shift) - 1;
         }
 
+        /**
+         * 通过下标定位到具体数据
+         * @param index
+         * @return
+         * @throws IOException
+         */
         long getLongValue(long index) throws IOException {
+            // 先找到块
             final long block = index >>> shift;
+            // 代表需要读取新的块数据
             if (this.block != block) {
                 int bitsPerValue;
                 do {
                     // If the needed block is the one directly following the current block, it is cheaper to avoid the cache
+                    // 代表使用jumpTable 作为索引快速读取数据  注意如果要读取的block是下一个 直接读取就好 很像那个 DISI 什么至少为2的那段逻辑
                     if (rankSlice != null && block != this.block + 1) {
+                        // 通过处理后直接找到 上一个block结尾的偏移量
                         blockEndOffset = rankSlice.readLong(block * Long.BYTES) - entry.valuesOffset;
                         this.block = block - 1;
                     }
                     offset = blockEndOffset;
+                    // 每个数据块的开头都是先显示 数据体要占用多少bit
                     bitsPerValue = slice.readByte(offset++);
+                    // 下一个long值 记录了 差值
                     delta = slice.readLong(offset);
                     offset += Long.BYTES;
+                    // 代表所有值都是一样的 此时数据已经足够还原这个block了 所以设置 blockEndOffset
                     if (bitsPerValue == 0) {
                         blockEndOffset = offset;
                     } else {
+                        // 获取用于计算 block基础数据的总长度
                         final int length = slice.readInt(offset);
                         offset += Integer.BYTES;
                         blockEndOffset = offset + length;
                     }
                     this.block++;
                 } while (this.block != block);
+                // values 存储了一组基础数  配合上其他数据 可以计算出index在block上对应的值
                 values = bitsPerValue == 0 ? LongValues.ZEROES : DirectReader.getInstance(slice, bitsPerValue, offset);
             }
+            // 这里利用公式还原数据
             return mul * values.get(index & mask) + delta;
         }
     }

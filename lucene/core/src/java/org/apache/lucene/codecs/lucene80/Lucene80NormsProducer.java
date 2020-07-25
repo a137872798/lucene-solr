@@ -46,6 +46,9 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   private final Map<Integer,NormsEntry> norms = new HashMap<>();
   private final int maxDoc;
   private IndexInput data;
+  /**
+   * 该对象是为了merge而创建的副本对象
+   */
   private boolean merging;
   private Map<Integer, IndexInput> disiInputs;
   private Map<Integer, RandomAccessInput> disiJumpTables;
@@ -61,6 +64,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
       Throwable priorE = null;
       try {
         version = CodecUtil.checkIndexHeader(in, metaCodec, VERSION_START, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+        // 读取元数据信息  并生成entry
         readFields(in, state.fieldInfos);
       } catch (Throwable exception) {
         priorE = exception;
@@ -92,6 +96,10 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
     }
   }
 
+  /**
+   * 在merge过程中 生成一个reader对象的副本
+   * @return
+   */
   @Override
   public NormsProducer getMergeInstance() {
     Lucene80NormsProducer clone;
@@ -116,9 +124,15 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
     long docsWithFieldLength;
     short jumpTableEntryCount;
     int numDocsWithField;
+    /**
+     * 记录某个field对应的标准因子存储的起始偏移量
+     */
     long normsOffset;
   }
 
+  /**
+   * 代表doc连续存储
+   */
   static abstract class DenseNormsIterator extends NumericDocValues {
 
     final int maxDoc;
@@ -159,6 +173,9 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
 
   }
 
+  /**
+   * 稀疏对象 唯一的区别就是 获取docId 和 迭代docId 委托给 disi对象
+   */
   static abstract class SparseNormsIterator extends NumericDocValues {
 
     final IndexedDISI disi;
@@ -219,12 +236,21 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
     }
   }
 
+  /**
+   * 为某个field 的标准因子创建数据分片
+   * @param field
+   * @param entry
+   * @return
+   * @throws IOException
+   */
   private RandomAccessInput getDataInput(FieldInfo field, NormsEntry entry) throws IOException {
     RandomAccessInput slice = null;
+    // 代表本次获取的数据是为了 merge使用
     if (merging) {
       slice = dataInputs.get(field.number);
     }
     if (slice == null) {
+      // normsOffset 对应该field下记录的标准因子起始偏移量   每个doc都有一个标准因子值 numDocsWithField 代表该field下有多少doc
       slice = data.randomAccessSlice(entry.normsOffset, entry.numDocsWithField * (long) entry.bytesPerNorm);
       if (merging) {
         dataInputs.put(field.number, slice);
@@ -325,14 +351,23 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
  }
 
 
+  /**
+   * 获取某个field 对应的标准因子
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public NumericDocValues getNorms(FieldInfo field) throws IOException {
+    // 先找到记录相关信息的元数据对象
     final NormsEntry entry = norms.get(field.number);
+    // 同样存在3种情况 此时代表没有数据
     if (entry.docsWithFieldOffset == -2) {
       // empty
       return DocValues.emptyNumeric();
     } else if (entry.docsWithFieldOffset == -1) {
       // dense
+      // 代表所有docId 对应的标准因子是一样的
       if (entry.bytesPerNorm == 0) {
         return new DenseNormsIterator(maxDoc) {
           @Override
@@ -341,7 +376,9 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
           }
         };
       }
+      // 将该field 对应的所有doc 的标准因子取出来组成一个 NumDocValue
       final RandomAccessInput slice = getDataInput(field, entry);
+      // 从下面的逻辑可以看出标准因子的值是连续存储的
       switch (entry.bytesPerNorm) {
         case 1:
           return new DenseNormsIterator(maxDoc) {
@@ -354,6 +391,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
           return new DenseNormsIterator(maxDoc) {
             @Override
             public long longValue() throws IOException {
+              // 因为每2个byte存储一个值 所以每次 pos也是移动2byte
               return slice.readShort(((long) doc) << 1);
             }
           };
@@ -376,6 +414,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
           throw new AssertionError();
       }
     } else {
+      // 唯一的区别就是迭代docId委托给 disi 对象
       // sparse
       final IndexInput disiInput = getDisiInput(field, entry);
       final RandomAccessInput disiJumpTable = getDisiJumpTable(field, entry);

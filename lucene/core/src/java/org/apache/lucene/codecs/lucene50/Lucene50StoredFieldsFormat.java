@@ -104,7 +104,7 @@ import org.apache.lucene.util.packed.DirectMonotonicWriter;
 public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
   
   /** Configuration option for stored fields. */
-  // 这里有2种写入模式 一种是追求速度 一种追求压缩率
+  // 这里有2种写入模式 一种是追求速度 一种追求压缩率  对应 LZ4 的2种存储容器实现
   public static enum Mode {
     /** Trade compression ratio for retrieval speed. */
     BEST_SPEED,
@@ -147,7 +147,7 @@ public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
    */
   @Override
   public StoredFieldsWriter fieldsWriter(Directory directory, SegmentInfo si, IOContext context) throws IOException {
-    // 这里将模式信息 写入到 segment 中
+    // 这里将压缩模式信息 写入到 segment 中
     String previous = si.putAttribute(MODE_KEY, mode.name());
     if (previous != null && previous.equals(mode.name()) == false) {
       throw new IllegalStateException("found existing value for " + MODE_KEY + " for segment: " + si.name +

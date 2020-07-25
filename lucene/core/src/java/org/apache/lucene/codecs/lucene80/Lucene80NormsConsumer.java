@@ -100,14 +100,15 @@ final class Lucene80NormsConsumer extends NormsConsumer {
   /**
    *
    * @param field field information  代表该标准因子是属于哪个 field的
-   * @param normsProducer NormsProducer of the numeric norm values  该对象可以获取到某个docId 绑定的标准因子的值
+   * @param normsProducer NormsProducer of the numeric norm values  该field绑定的所有包含标准因子的 doc
    * @throws IOException
    */
   @Override
   public void addNormsField(FieldInfo field, NormsProducer normsProducer) throws IOException {
     NumericDocValues values = normsProducer.getNorms(field);
-    // 代表当前已经为多少doc写入标准因子
+    // 记录总计有多少doc 包含标准因子
     int numDocsWithValue = 0;
+    // 这里维护了标准因子的 min max
     long min = Long.MAX_VALUE;
     long max = Long.MIN_VALUE;
     for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
@@ -121,20 +122,21 @@ final class Lucene80NormsConsumer extends NormsConsumer {
     // 标明之后的数据是针对 fieldNum 为多少的  field
     meta.writeInt(field.number);
 
-    // 当该field 不包含任何doc时
+    // 不存在标准因子
     if (numDocsWithValue == 0) {
       // 写入特殊值
       meta.writeLong(-2); // docsWithFieldOffset
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
+    // -1 代表doc是紧凑存储的 并且没有doc被删除 这样直接写入数据就好
     } else if (numDocsWithValue == maxDoc) {
-      // 写入特殊值
       meta.writeLong(-1); // docsWithFieldOffset
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
     } else {
+      // 需要借助 disi 迭代docId
       // 获取当前的文件偏移量
       long offset = data.getFilePointer();
       // 写入文件偏移量

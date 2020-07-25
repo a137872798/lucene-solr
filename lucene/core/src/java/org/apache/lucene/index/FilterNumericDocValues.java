@@ -22,6 +22,7 @@ import java.util.Objects;
 
 /**
  * Delegates all methods to a wrapped {@link NumericDocValues}.
+ * 增加一层拦截能力 由子类进行拓展
  */
 public abstract class FilterNumericDocValues extends NumericDocValues {
 

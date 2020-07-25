@@ -112,6 +112,7 @@ public final class SegmentInfo {
   // flush segments, that is the version that wrote it. For merged segments,
   // this is the minimum minVersion of all the segments that have been merged
   // into this segment
+  // 代表该对象支持的最小版本
   Version minVersion;
 
   void setDiagnostics(Map<String, String> diagnostics) {

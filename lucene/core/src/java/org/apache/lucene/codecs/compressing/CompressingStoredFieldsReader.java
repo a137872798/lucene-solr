@@ -92,10 +92,17 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
   private final boolean merging;
   private final BlockState state;
   private final long numChunks; // number of compressed blocks written
+  /**
+   * TODO 这个属性是在什么场景被设置的???
+   */
   private final long numDirtyChunks; // number of incomplete compressed blocks written
   private boolean closed;
 
-  // used by clone
+  /**
+   * 调用 mergeInstance时 返回一个副本对象
+   * @param reader
+   * @param merging
+   */
   private CompressingStoredFieldsReader(CompressingStoredFieldsReader reader, boolean merging) {
     this.version = reader.version;
     this.fieldInfos = reader.fieldInfos;
@@ -376,16 +383,18 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
   /**
    * A serialized document, you need to decode its input in order to get an actual
    * {@link Document}.
+   * 单个 doc对象
    */
   static class SerializedDocument {
 
-    // the serialized data
+    // the serialized data  doc内部的数据存储在该输入流中
     final DataInput in;
 
     // the number of bytes on which the document is encoded
     final int length;
 
     // the number of stored fields
+    // 记录这个doc内部有多少 具备排序能力的 field
     final int numStoredFields;
 
     private SerializedDocument(DataInput in, int length, int numStoredFields) {
@@ -398,9 +407,14 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
   /**
    * Keeps state about the current block of documents.
+   * 该数据也是以 多个 block为单位存储数据
    */
   private class BlockState {
 
+    /**
+     * docBase 代表某个block的起点
+     * chunkDocs 代表该block的大小
+     */
     private int docBase, chunkDocs;
 
     // whether the block has been sliced, this happens for large documents
@@ -547,6 +561,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     /**
      * Get the serialized representation of the given docID. This docID has
      * to be contained in the current block.
+     * 通过传入的 docId 定位到 doc对象 并返回
      */
     SerializedDocument document(int docID) throws IOException {
       if (contains(docID) == false) {
@@ -671,6 +686,10 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     return new CompressingStoredFieldsReader(this, false);
   }
 
+  /**
+   * 获取用于merge的定制化对象
+   * @return
+   */
   @Override
   public StoredFieldsReader getMergeInstance() {
     ensureOpen();

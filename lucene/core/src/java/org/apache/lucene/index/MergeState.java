@@ -43,11 +43,11 @@ import static org.apache.lucene.index.IndexWriter.isCongruentSort;
 public class MergeState {
 
   /** Maps document IDs from old segments to document IDs in the new segment */
-  // DocMap 就是可以通过 docId 映射到某个 doc
+  // 每个 segment doc 与 合并后新的 segmentdoc 的映射关系
   public final DocMap[] docMaps;
 
   // Only used by IW when it must remap deletes that arrived against the merging segments while a merge was running:
-  // 这意味着 每个segment下的数据都会被排序
+  // 该对象在未处理的情况下  docId -> docId 也就是不做处理
   final DocMap[] leafDocMaps;
 
   /** {@link SegmentInfo} of the newly merged segment. */
@@ -55,6 +55,7 @@ public class MergeState {
   public final SegmentInfo segmentInfo;
 
   /** {@link FieldInfos} of the newly merged segment. */
+  // fieldInfos merge后的结果  内部针对相同的 fieldInfo 已经去重
   public FieldInfos mergeFieldInfos;
 
   /** Stored field producers being merged */
@@ -161,7 +162,7 @@ public class MergeState {
     segmentInfo.setMaxDoc(numDocs);
 
     this.segmentInfo = segmentInfo;
-    // 根据最新的排序对象 对每个待merge的段数据进行排序
+
     this.docMaps = buildDocMaps(readers, indexSort);
   }
 
@@ -225,9 +226,10 @@ public class MergeState {
     } else {
       // do a merge sort of the incoming leaves:
       long t0 = System.nanoTime();
-      // 对内部的数据进行排序
+      // 这里生成了一组映射对象 作用就是 每个reader 可以通过现有的 doc 映射成 merge后的全局doc (在内部已经排除了 被del的doc)
       DocMap[] result = MultiSorter.sort(indexSort, readers);
       if (result == null) {
+        // 这里代表reader内的数据一开始就是有序的 就不会处理del了 所以需要单独做一次排除操作
         // already sorted so we can switch back to map around deletions
         return buildDeletionDocMaps(readers);
       } else {

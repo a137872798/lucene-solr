@@ -67,8 +67,10 @@ public abstract class NormsConsumer implements Closeable {
    *  filling segments with missing norms for the field with zeros. 
    *  Implementations can override this method 
    *  for more sophisticated merging (bulk-byte copying, etc). */
+  // 将参与merge的多个 segment相关的标准因子信息合并后写入到 新的segment对应的标准因子文件
   public void merge(MergeState mergeState) throws IOException {
     for(NormsProducer normsProducer : mergeState.normsProducers) {
+      // 如果某个 segment对应的 field下没有标准因子信息 那么返回的 producer为null
       if (normsProducer != null) {
         normsProducer.checkIntegrity();
       }
@@ -81,8 +83,12 @@ public abstract class NormsConsumer implements Closeable {
   }
   
   /** Tracks state of one numeric sub-reader that we are merging */
+  // 代表进行有关标准因子合并的最小单位
   private static class NumericDocValuesSub extends DocIDMerger.Sub {
 
+    /**
+     * 标准因子 就是一个 NumDocValue
+     */
     private final NumericDocValues values;
     
     public NumericDocValuesSub(MergeState.DocMap docMap, NumericDocValues values) {
@@ -102,11 +108,13 @@ public abstract class NormsConsumer implements Closeable {
    * <p>
    * The default implementation calls {@link #addNormsField}, passing
    * an Iterable that merges and filters deleted documents on the fly.
+   * 将某个携带 标准因子信息的field写入到索引文件中
    */
   public void mergeNormsField(final FieldInfo mergeFieldInfo, final MergeState mergeState) throws IOException {
 
     // TODO: try to share code with default merge of DVConsumer by passing MatchAllBits ?
     addNormsField(mergeFieldInfo,
+                  // 该对象根据 field 返回对应的标准因子数据
                   new NormsProducer() {
                     @Override
                     public NumericDocValues getNorms(FieldInfo fieldInfo) throws IOException {
@@ -116,8 +124,10 @@ public abstract class NormsConsumer implements Closeable {
 
                         List<NumericDocValuesSub> subs = new ArrayList<>();
                         assert mergeState.docMaps.length == mergeState.docValuesProducers.length;
+                        // 这里是所有参与merge的段   从每个段下找到 同一fieldInfo 对应的标准因子
                         for (int i=0;i<mergeState.docValuesProducers.length;i++) {
                           NumericDocValues norms = null;
+                          // 获取段对应的 标准因子读取对象
                           NormsProducer normsProducer = mergeState.normsProducers[i];
                           if (normsProducer != null) {
                             FieldInfo readerFieldInfo = mergeState.fieldInfos[i].fieldInfo(mergeFieldInfo.name);
@@ -126,6 +136,8 @@ public abstract class NormsConsumer implements Closeable {
                             }
                           }
 
+                          // 将多个 reader对应的标准因子合并成一个对象
+                          // mergeState.docMaps 负责将每个reader对象 docId 映射到merge docId
                           if (norms != null) {
                             subs.add(new NumericDocValuesSub(mergeState.docMaps[i], norms));
                           }
@@ -133,6 +145,7 @@ public abstract class NormsConsumer implements Closeable {
 
                         final DocIDMerger<NumericDocValuesSub> docIDMerger = DocIDMerger.of(subs, mergeState.needsIndexSort);
 
+                        // 该对象是将多个段 整合后  按照globalDocId 顺序 获取对应的标准因子  (标准因子是以field为维度创建 doc为单位存储的)
                         return new NumericDocValues() {
                           private int docID = -1;
                           private NumericDocValuesSub current;
@@ -148,6 +161,7 @@ public abstract class NormsConsumer implements Closeable {
                             if (current == null) {
                               docID = NO_MORE_DOCS;
                             } else {
+                              // 这个值是 merge后的 globalDocId
                               docID = current.mappedDocID;
                             }
                             return docID;
@@ -170,6 +184,7 @@ public abstract class NormsConsumer implements Closeable {
 
                           @Override
                           public long longValue() throws IOException {
+                            // 返回对应段的标准因子
                             return current.values.longValue();
                           }
                         };

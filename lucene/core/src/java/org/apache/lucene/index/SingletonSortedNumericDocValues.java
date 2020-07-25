@@ -24,11 +24,13 @@ import java.io.IOException;
  * <p>
  * This can be used if you want to have one multi-valued implementation
  * that works for single or multi-valued types.
+ * 看来 sortedNumDocValue 应该是认为内部存在很多 NumDocValue
  */
 final class SingletonSortedNumericDocValues extends SortedNumericDocValues {
   private final NumericDocValues in;
   
   public SingletonSortedNumericDocValues(NumericDocValues in) {
+    // 必须确保此对象还未被使用
     if (in.docID() != -1) {
       throw new IllegalStateException("iterator has already been used: docID=" + in.docID());
     }

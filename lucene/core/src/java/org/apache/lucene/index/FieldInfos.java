@@ -529,7 +529,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
     }
 
     /**
-     * 该对象用于构建 一组 域信息对象
+     * 每个builder 单独维护一份 fieldInfo  加入的fieldInfo 可以是之前已经加入到global中的
      */
     static final class Builder {
         /**
@@ -588,6 +588,23 @@ public class FieldInfos implements Iterable<FieldInfo> {
             return fi;
         }
 
+        /**
+         * 检测该field在全局范围是否已经存在 存在则更新 否则 新增
+         * @param name
+         * @param preferredFieldNumber 用户指定的num
+         * @param storeTermVector
+         * @param omitNorms
+         * @param storePayloads
+         * @param indexOptions
+         * @param docValues
+         * @param dvGen
+         * @param attributes
+         * @param dataDimensionCount
+         * @param indexDimensionCount
+         * @param dimensionNumBytes
+         * @param isSoftDeletesField
+         * @return
+         */
         private FieldInfo addOrUpdateInternal(String name, int preferredFieldNumber,
                                               boolean storeTermVector,
                                               boolean omitNorms, boolean storePayloads, IndexOptions indexOptions,
@@ -617,10 +634,12 @@ public class FieldInfos implements Iterable<FieldInfo> {
                 globalFieldNumbers.verifyConsistent(Integer.valueOf(fi.number), fi.name, fi.getDocValuesType());
                 byName.put(fi.name, fi);
             } else {
+                // builder对象内部已经存在这个 fieldInfo了  选择更新属性
                 fi.update(storeTermVector, omitNorms, storePayloads, indexOptions, attributes, dataDimensionCount, indexDimensionCount, dimensionNumBytes);
 
                 if (docValues != DocValuesType.NONE) {
                     // Only pay the synchronization cost if fi does not already have a DVType
+                    // 如果设置了 docValue Type 是会影响到全局的
                     boolean updateGlobal = fi.getDocValuesType() == DocValuesType.NONE;
                     if (updateGlobal) {
                         // Must also update docValuesType map so it's
@@ -636,6 +655,11 @@ public class FieldInfos implements Iterable<FieldInfo> {
             return fi;
         }
 
+        /**
+         * 此时写入某个field
+         * @param fi
+         * @return
+         */
         public FieldInfo add(FieldInfo fi) {
             return add(fi, -1);
         }
