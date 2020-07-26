@@ -30,6 +30,7 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * sub-segments.
  *
  * @lucene.experimental
+ * 多个terms的组合对象
  */
 public final class MultiTerms extends Terms {
   private final Terms[] subs;
@@ -52,6 +53,8 @@ public final class MultiTerms extends Terms {
     this.subSlices = subSlices;
     
     assert subs.length > 0 : "inefficient: don't use MultiTerms over one sub";
+
+    // 必须所有term 都满足 才设置为 true 与 field相关信息相反 为什么???
     boolean _hasFreqs = true;
     boolean _hasOffsets = true;
     boolean _hasPositions = true;
@@ -176,11 +179,17 @@ public final class MultiTerms extends Terms {
     return maxTerm;
   }
 
+  /**
+   * 迭代合并后的term信息
+   * @return
+   * @throws IOException
+   */
   @Override
   public TermsEnum iterator() throws IOException {
 
     final List<MultiTermsEnum.TermsEnumIndex> termsEnums = new ArrayList<>();
     for(int i=0;i<subs.length;i++) {
+      // 先获取每个 term的迭代器 之后进行整合
       final TermsEnum termsEnum = subs[i].iterator();
       if (termsEnum != null) {
         termsEnums.add(new MultiTermsEnum.TermsEnumIndex(termsEnum, i));
@@ -188,6 +197,7 @@ public final class MultiTerms extends Terms {
     }
 
     if (termsEnums.size() > 0) {
+      // 初始化
       return new MultiTermsEnum(subSlices).reset(termsEnums.toArray(MultiTermsEnum.TermsEnumIndex.EMPTY_ARRAY));
     } else {
       return TermsEnum.EMPTY;

@@ -367,7 +367,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
       return DocValues.emptyNumeric();
     } else if (entry.docsWithFieldOffset == -1) {
       // dense
-      // 代表所有docId 对应的标准因子是一样的
+      // 代表所有docId 对应的标准因子是一样的  这时normsOffset 本身就是标准因子 (对应 producer的存储逻辑)
       if (entry.bytesPerNorm == 0) {
         return new DenseNormsIterator(maxDoc) {
           @Override

@@ -214,6 +214,10 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
   private final IndexOutput termsOut;
   private final IndexOutput indexOut;
+
+  /**
+   * 写入的目标段此时有多少doc
+   */
   final int maxDoc;
   final int minItemsInBlock;
   final int maxItemsInBlock;
@@ -224,14 +228,26 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
   final PostingsWriterBase postingsWriter;
   final FieldInfos fieldInfos;
 
+  /**
+   * field 相关的元数据信息
+   */
   private static class FieldMetaData {
+
+    /**
+     * 该field的描述信息
+     */
     public final FieldInfo fieldInfo;
     public final BytesRef rootCode;
     public final long numTerms;
     public final long indexStartFP;
     public final long sumTotalTermFreq;
     public final long sumDocFreq;
+    /**
+     *
+     */
     public final int docCount;
+
+    // 这个field下最大的 term 和 最小的 term
     public final BytesRef minTerm;
     public final BytesRef maxTerm;
 
@@ -256,9 +272,11 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
   /** Create a new writer.  The number of items (terms or
    *  sub-blocks) per block will aim to be between
    *  minItemsPerBlock and maxItemsPerBlock, though in some
-   *  cases the blocks may be smaller than the min. */
+   *  cases the blocks may be smaller than the min.
+   * 初始化 term写入对象
+   */
   public BlockTreeTermsWriter(SegmentWriteState state,
-                              PostingsWriterBase postingsWriter,   // 该对象会使用基于跳跃表的结构存储数据
+                              PostingsWriterBase postingsWriter,   // 对应 Lucene84PostingsWriter
                               int minItemsInBlock,
                               int maxItemsInBlock)
     throws IOException
@@ -283,13 +301,14 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
       CodecUtil.writeIndexHeader(termsOut, BlockTreeTermsReader.TERMS_CODEC_NAME, BlockTreeTermsReader.VERSION_CURRENT,
                                  state.segmentInfo.getId(), state.segmentSuffix);
 
+      // 创建 tim 对应的索引文件 tip
       final String indexName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, BlockTreeTermsReader.TERMS_INDEX_EXTENSION);
       indexOut = state.directory.createOutput(indexName, state.context);
       CodecUtil.writeIndexHeader(indexOut, BlockTreeTermsReader.TERMS_INDEX_CODEC_NAME, BlockTreeTermsReader.VERSION_CURRENT,
                                  state.segmentInfo.getId(), state.segmentSuffix);
       //segment = state.segmentInfo.name;
 
-      // 这里只是写入 索引格式等信息
+      // 为termsOut 写入文件头
       postingsWriter.init(termsOut, state);                          // have consumer write its format/header
       
       this.indexOut = indexOut;
@@ -336,6 +355,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     //if (DEBUG) System.out.println("\nBTTW.write seg=" + segment);
 
     String lastField = null;
+    // 遍历本次涉及到的所有 field
     for(String field : fields) {
       // 确保 field是 递增的
       assert lastField == null || lastField.compareTo(field) < 0;
@@ -349,7 +369,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
       }
 
       TermsEnum termsEnum = terms.iterator();
-      // 当创建该对象时   PostingsWriterBase中的数据都会被修改成该 field相关的
+      // term 通过该对象写入
       TermsWriter termsWriter = new TermsWriter(fieldInfos.fieldInfo(field));
       while (true) {
         BytesRef term = termsEnum.next();
@@ -563,10 +583,12 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
    * 该对象专门负责写入 terms
    */
   class TermsWriter {
+
+
     private final FieldInfo fieldInfo;
     private long numTerms;
     /**
-     * 这个位图对象是存放 该term所在的所有doc的
+     * 根据 segment.maxDoc 进行初始化
      */
     final FixedBitSet docsSeen;
     long sumTotalTermFreq;
@@ -948,8 +970,11 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
       postingsWriter.setField(fieldInfo);
     }
     
-    /** Writes one term's worth of postings. */
-    // 将某个term的数据写入到索引文件中
+    /**
+     * Writes one term's worth of postings.
+     * @param norms 标准因子
+     * 将该field下 某个term 写入到该对象中
+     */
     public void write(BytesRef text, TermsEnum termsEnum, NormsProducer norms) throws IOException {
       /*
       if (DEBUG) {

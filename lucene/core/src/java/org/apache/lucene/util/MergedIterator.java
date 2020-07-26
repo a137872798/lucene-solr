@@ -41,11 +41,17 @@ import java.util.NoSuchElementException;
  *       are returned isn't defined.
  * </ul>
  * @lucene.internal
+ * 该对象将多个迭代器整合起来
  */
 public final class MergedIterator<T extends Comparable<T>> implements Iterator<T> {
+
   private T current;
   private final TermMergeQueue<T> queue; 
   private final SubIterator<T>[] top;
+
+  /**
+   * 遇到相同的数据时是否需要移除 默认为true
+   */
   private final boolean removeDuplicates;
   private int numTop;
 
@@ -61,6 +67,7 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
     top = new SubIterator[iterators.length];
     int index = 0;
     for (Iterator<T> iterator : iterators) {
+      // 初始化首元素后 插入到优先队列中
       if (iterator.hasNext()) {
         SubIterator<T> sub = new SubIterator<>();
         sub.current = iterator.next();
@@ -84,18 +91,24 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
     }
     return false;
   }
-  
+
+  /**
+   * 获取下一个元素
+   * @return
+   */
   @Override
   public T next() {
     // restore queue
     pushTop();
     
     // gather equal top elements
+    // 此时队列中有数据 从top拉取数据
     if (queue.size() > 0) {
       pullTop();
     } else {
       current = null;
     }
+    // 代表此时已经没有数据了
     if (current == null) {
       throw new NoSuchElementException();
     }
@@ -106,12 +119,17 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
   public void remove() {
     throw new UnsupportedOperationException();
   }
-  
+
+  /**
+   * 初始化时 将数据存入优先队列 在 next() 时 从优先队列中取出已经排序过的top元素
+   */
   private void pullTop() {
     assert numTop == 0;
+    // 在调用了 pop之后 会自动重组堆 确保此时 top还是最小元素
     top[numTop++] = queue.pop();
     if (removeDuplicates) {
       // extract all subs from the queue that have the same top element
+      // 这里取出所有相同的元素    因为在单个迭代器内 field是不会重复的所以可以确保 最坏情况 field重复的数量刚好就是 迭代器的数量
       while (queue.size() != 0
              && queue.top().current.equals(top[0].current)) {
         top[numTop++] = queue.pop();
@@ -119,7 +137,10 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
     }
     current = top[0].current;
   }
-  
+
+  /**
+   * 将之前取出的迭代器 回填到队列中
+   */
   private void pushTop() {
     // call next() on each top, and put back into queue
     for (int i = 0; i < numTop; i++) {
@@ -139,7 +160,11 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
     I current;
     int index;
   }
-  
+
+  /**
+   * 该对象定义了 比较大小的规则
+   * @param <C>
+   */
   private static class TermMergeQueue<C extends Comparable<C>> extends PriorityQueue<SubIterator<C>> {
     TermMergeQueue(int size) {
       super(size);
@@ -147,6 +172,7 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
     
     @Override
     protected boolean lessThan(SubIterator<C> a, SubIterator<C> b) {
+      // 先比较field的大小 如果相同再比较 index
       final int cmp = a.current.compareTo(b.current);
       if (cmp != 0) {
         return cmp < 0;

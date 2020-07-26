@@ -171,7 +171,6 @@ public abstract class TermsEnum implements BytesRefIterator {
    * @param reuse pass a prior PostingsEnum for possible reuse
    * @param flags specifies which optional per-document values
    *        you require; see {@link PostingsEnum#FREQS}
-   *              首先 TermsEnum 是 term 的迭代器对象 然后每个 term 应该是包含了一组 position 通过该api 可以返回该term 对应的position迭代器 用于获取position 的信息
    */
   public abstract PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException;
 

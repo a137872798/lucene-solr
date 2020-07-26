@@ -129,7 +129,6 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
   // away the previous pointers, and lazy-init only if we need to buffer skip data for the term.
   private boolean initialized;
 
-  // 分别记录3个输出流对应文件的 filePointer
   long lastDocFP;
   long lastPosFP;
   long lastPayFP;
@@ -139,6 +138,7 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
    */
   @Override
   public void resetSkip() {
+    // 根据此时正在处理的 field     记录相关偏移量
     lastDocFP = docOut.getFilePointer();
     if (fieldHasPositions) {
       lastPosFP = posOut.getFilePointer();
@@ -147,6 +147,7 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
       }
     }
     if (initialized) {
+
       for (CompetitiveImpactAccumulator acc : curCompetitiveFreqNorms) {
         acc.clear();
       }

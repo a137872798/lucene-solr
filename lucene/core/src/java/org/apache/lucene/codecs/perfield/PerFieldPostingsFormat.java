@@ -86,6 +86,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
   }
 
   /** Group of fields written by one PostingsFormat */
+  // 代表一个 field 组对象  同一个组内的 field 会使用同一种格式写入到索引文件
   static class FieldsGroup {
     final List<String> fields;
     final int suffix;
@@ -100,9 +101,15 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       this.state = state;
     }
 
+    /**
+     * 基于建造器模式创建
+     */
     static class Builder {
       final Set<String> fields;
       final int suffix;
+      /**
+       * 代表这个field 属于哪个段
+       */
       final SegmentWriteState state;
 
       Builder(int suffix, SegmentWriteState state) {
@@ -146,7 +153,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     final SegmentWriteState writeState;
 
     /**
-     * 该对象统一管理多个 consumer
+     * 管理多个关闭钩子
      */
     final List<Closeable> toClose = new ArrayList<Closeable>();
 
@@ -156,7 +163,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
     /**
      * 在FreqProxTermsWriter中会调用该方法
-     * @param fields
+     * @param fields  这里传入的本身就是一个迭代器对象  而在merge的时候将多个参与merge的segment数据通过MergedIterator进行包装后 也变成了一个迭代器
      * @param norms
      * @throws IOException
      */
@@ -193,23 +200,36 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       }
     }
 
+    /**
+     * @param mergeState
+     * @param norms   合并后的标准因子
+     * @throws IOException
+     */
     @Override
     public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
+
+      // FieldsProducer::iterator 就是获取该 segment下所有的 field    这里为所有参与段的 field 进行排序
       @SuppressWarnings("unchecked") Iterable<String> indexedFieldNames = () ->
           new MergedIterator<>(true,
               Arrays.stream(mergeState.fieldsProducers).map(FieldsProducer::iterator).toArray(Iterator[]::new));
+
+      // 将 field 按照写入的格式进行分组
       Map<PostingsFormat, FieldsGroup> formatToGroups = buildFieldsGroupMapping(indexedFieldNames);
 
       // Merge postings
       PerFieldMergeState pfMergeState = new PerFieldMergeState(mergeState);
       boolean success = false;
       try {
+        // 一般情况下 应该只使用一个format吧
         for (Map.Entry<PostingsFormat, FieldsGroup> ent : formatToGroups.entrySet()) {
           PostingsFormat format = ent.getKey();
           final FieldsGroup group = ent.getValue();
 
+          // 最简单的情况 所有field使用同一种格式写入 并且此时格式是Lucene84PostingsFormat
           FieldsConsumer consumer = format.fieldsConsumer(group.state);
+          // 存储到钩子队列中 以便该对象关闭时  触发所有钩子
           toClose.add(consumer);
+          // 实际是consumer是 BlockTreeTermsWriter
           consumer.merge(pfMergeState.apply(group.fields), norms);
         }
         success = true;
@@ -222,17 +242,16 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
 
     /**
-     * 以field 为单位构建映射关系
+     * 将field分组
      * @param indexedFieldNames
      * @return
      */
     private Map<PostingsFormat, FieldsGroup> buildFieldsGroupMapping(Iterable<String> indexedFieldNames) {
       // Maps a PostingsFormat instance to the suffix it should use
-      // 使用相同索引格式存储field信息的 会被转存到同一个 fieldsGroup 中
+      // 每个 field 可以单独定义 format 所以这里按照写入格式进行分组
       Map<PostingsFormat,FieldsGroup.Builder> formatToGroupBuilders = new HashMap<>();
 
       // Holds last suffix of each PostingFormat name
-      // 当formatName发生碰撞时  增大后缀值
       Map<String,Integer> suffixes = new HashMap<>();
 
       // Assign field -> PostingsFormat
@@ -250,10 +269,13 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
         String formatName = format.getName();
 
         FieldsGroup.Builder groupBuilder = formatToGroupBuilders.get(format);
+        // 这是首次构建 group的情况
         if (groupBuilder == null) {
           // First time we are seeing this format; create a new instance
 
           // bump the suffix
+          // 一般情况下 format 与 formatName 是一一对应的  那么 suffix 肯定是0
+          // 当某些format具备不同的 formatName时 这个suffix才会出现不同的情况   正常情况应该不会出现  忽略吧
           Integer suffix = suffixes.get(formatName);
           if (suffix == null) {
             suffix = 0;
@@ -263,9 +285,9 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           // 用新的后缀覆盖原来的值
           suffixes.put(formatName, suffix);
 
-          // 这个方法 在   writeState.segmentSuffix  长度不为0的时候抛出异常 不知道啥意思
           String segmentSuffix = getFullSegmentSuffix(field,
                                                       writeState.segmentSuffix,
+                                                      // 生成后缀名
                                                       getSuffix(formatName, Integer.toString(suffix)));
           // 这里创建一个 builder对象  该对象内部存储了 suffix state  以及一个fieldName列表
           groupBuilder = new FieldsGroup.Builder(suffix, new SegmentWriteState(writeState, segmentSuffix));
@@ -277,7 +299,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           }
         }
 
-        // 将field 转存到 builder 中
+        // 将field 添加到相同 format的组中
         groupBuilder.addField(field);
 
         // 在map中追加2个属性
@@ -291,7 +313,6 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
 
     /**
-     * 以field为单位存储数据的对象 由 FieldsWriter 进行统一管理
      * @throws IOException
      */
     @Override

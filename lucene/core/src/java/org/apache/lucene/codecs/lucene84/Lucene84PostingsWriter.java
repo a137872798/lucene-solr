@@ -73,6 +73,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
   IntBlockTermState lastState;
 
   // Holds starting file pointers for current term:
+  // 每当尝试写入某个term时 相关标识要更新
   private long docStartFP;
   private long posStartFP;
   private long payStartFP;
@@ -107,7 +108,14 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
   private final Lucene84SkipWriter skipWriter;
 
   private boolean fieldHasNorms;
+  /**
+   * 每当处理某个term时 会刷新正在使用的标准因子
+   */
   private NumericDocValues norms;
+
+  /**
+   * 该对象会在处理过程中 记录标准因子和 freq等影响打分的参数
+   */
   private final CompetitiveImpactAccumulator competitiveFreqNormAccumulator = new CompetitiveImpactAccumulator();
 
   /** Creates a postings writer */
@@ -132,7 +140,6 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
       } else {
         throw new Error();
       }
-      // 便于差值存储
       final ForUtil forUtil = new ForUtil();
       forDeltaUtil = new ForDeltaUtil(forUtil);
       pforUtil = new PForUtil(forUtil);
@@ -225,12 +232,18 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
   public void setField(FieldInfo fieldInfo) {
     super.setField(fieldInfo);
     skipWriter.setField(writePositions, writeOffsets, writePayloads);
+    // 重置状态
     lastState = emptyState;
     fieldHasNorms = fieldInfo.hasNorms();
   }
 
+  /**
+   * 开始处理某个term
+   * @param norms  同时需要处理的标准因子
+   */
   @Override
   public void startTerm(NumericDocValues norms) {
+    // 根据当前field是否记录了某些信息   更新相关偏移量
     docStartFP = docOut.getFilePointer();
     if (writePositions) {
       posStartFP = posOut.getFilePointer();
@@ -240,6 +253,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     }
     lastDocID = 0;
     lastBlockDocID = -1;
+    // 将跳跃表内相关信息也进行更新
     skipWriter.resetSkip();
     this.norms = norms;
     competitiveFreqNormAccumulator.clear();

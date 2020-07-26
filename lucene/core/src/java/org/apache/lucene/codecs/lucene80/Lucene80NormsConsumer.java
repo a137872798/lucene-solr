@@ -136,16 +136,14 @@ final class Lucene80NormsConsumer extends NormsConsumer {
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
     } else {
-      // 需要借助 disi 迭代docId
+      // 需要借助 disi 迭代docId  下面写入的都是元数据信息 还没有涉及到data数据
       // 获取当前的文件偏移量
       long offset = data.getFilePointer();
       // 写入文件偏移量
       meta.writeLong(offset); // docsWithFieldOffset
-      // 某个域对应的 标准因子 实际上是关联多个doc的
+      // 某个域对应的 标准因子 实际上是关联多个doc的  重新生成迭代器 以便重新遍历数据
       values = normsProducer.getNorms(field);
-      // TODO 这里写入一个什么值
       final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
-      // 将文件的偏移量变化写入元数据文件
       meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength
       meta.writeShort(jumpTableEntryCount);
       meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
@@ -153,7 +151,7 @@ final class Lucene80NormsConsumer extends NormsConsumer {
 
     // 基础值写完后 写入一个  doc数量
     meta.writeInt(numDocsWithValue);
-    // 获取每个值 是多少byte
+    // 获取每个值 是多少byte  如果所有值都是相同的 返回0
     int numBytesPerValue = numBytesPerValue(min, max);
 
     meta.writeByte((byte) numBytesPerValue);
@@ -168,8 +166,10 @@ final class Lucene80NormsConsumer extends NormsConsumer {
   }
 
   private int numBytesPerValue(long min, long max) {
+    // 代表所有数据都是一样的
     if (min >= max) {
       return 0;
+    // 计算出标准因子的数据范围
     } else if (min >= Byte.MIN_VALUE && max <= Byte.MAX_VALUE) {
       return 1;
     } else if (min >= Short.MIN_VALUE && max <= Short.MAX_VALUE) {

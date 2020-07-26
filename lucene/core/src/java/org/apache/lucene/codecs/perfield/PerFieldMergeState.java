@@ -51,10 +51,24 @@ import org.apache.lucene.index.Terms;
  */
 final class PerFieldMergeState {
   private final MergeState in;
+
+  /**
+   * merge后的新段中所有 field 信息
+   */
   private final FieldInfos orgMergeFieldInfos;
+  /**
+   * 合并前每个 segment关联的field信息
+   */
   private final FieldInfos[] orgFieldInfos;
+  /**
+   * 负责读取orgFieldInfos 数据
+   */
   private final FieldsProducer[] orgFieldsProducers;
 
+  /**
+   * 通过一个包含了各种merge所需属性的对象进行初始化
+   * @param in
+   */
   PerFieldMergeState(MergeState in) {
     this.in = in;
     this.orgMergeFieldInfos = in.mergeFieldInfos;
@@ -72,7 +86,9 @@ final class PerFieldMergeState {
    * @return The updated instance.
    */
   MergeState apply(Collection<String> fields) {
+    // 因为外层使用者 已经将field 根据写入的格式进行划分了 所以此时使用一层包装确保接下来的使用不会处理到标明要以其他格式写入的field
     in.mergeFieldInfos = new FilterFieldInfos(orgMergeFieldInfos, fields);
+    // 针对 merge前的field信息也要做处理
     for (int i = 0; i < orgFieldInfos.length; i++) {
       in.fieldInfos[i] = new FilterFieldInfos(orgFieldInfos[i], fields);
     }
@@ -94,8 +110,18 @@ final class PerFieldMergeState {
     return in;
   }
 
+  /**
+   * fieldInfo的包装对象
+   */
   private static class FilterFieldInfos extends FieldInfos {
+
+    /**
+     * 哪些fieldName会被拦截
+     */
     private final Set<String> filteredNames;
+    /**
+     * 记录原始 fieldInfo 中有多少命中
+     */
     private final List<FieldInfo> filtered;
 
     // Copy of the private fields from FieldInfos
@@ -111,6 +137,7 @@ final class PerFieldMergeState {
 
     FilterFieldInfos(FieldInfos src, Collection<String> filterFields) {
       // Copy all the input FieldInfo objects since the field numbering must be kept consistent
+      // 生成一个完全相同的副本
       super(toArray(src));
 
       boolean hasVectors = false;
@@ -124,6 +151,7 @@ final class PerFieldMergeState {
 
       this.filteredNames = new HashSet<>(filterFields);
       this.filtered = new ArrayList<>(filterFields.size());
+      // 注意到这里 只有命中过滤容器的field的属性 才会被参考
       for (FieldInfo fi : src) {
         if (this.filteredNames.contains(fi.name)) {
           this.filtered.add(fi);
@@ -228,8 +256,14 @@ final class PerFieldMergeState {
     }
   }
 
+  /**
+   * 对field 读取对象做处理  应该就是指定未命中的 field时 不返回数据吧
+   */
   private static class FilterFieldsProducer extends FieldsProducer {
     private final FieldsProducer in;
+    /**
+     * 只能处理下面的field
+     */
     private final List<String> filtered;
 
     FilterFieldsProducer(FieldsProducer in, Collection<String> filterFields) {

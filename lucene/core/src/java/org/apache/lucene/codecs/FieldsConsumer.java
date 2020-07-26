@@ -82,16 +82,22 @@ public abstract class FieldsConsumer implements Closeable {
    *  <code>mergeState</code>. The default implementation skips
    *  and maps around deleted documents, and calls {@link #write(Fields,NormsProducer)}.
    *  Implementations can override this method for more sophisticated
-   *  merging (bulk-byte copying, etc). */
+   *  merging (bulk-byte copying, etc).
+   * @param mergeState 包含merge需要的相关信息
+   * @param norms 存储了merge后的标准因子
+   */
   public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
     final List<Fields> fields = new ArrayList<>();
+    // 内部划分了每个分片多少doc  对应的reader下标是多少
     final List<ReaderSlice> slices = new ArrayList<>();
 
     int docBase = 0;
 
     for(int readerIndex=0;readerIndex<mergeState.fieldsProducers.length;readerIndex++) {
+      // 遍历参与merge操作的所有segment
       final FieldsProducer f = mergeState.fieldsProducers[readerIndex];
 
+      // 该segment下有多少doc
       final int maxDoc = mergeState.maxDocs[readerIndex];
       f.checkIntegrity();
       slices.add(new ReaderSlice(docBase, maxDoc, readerIndex));
@@ -99,6 +105,7 @@ public abstract class FieldsConsumer implements Closeable {
       docBase += maxDoc;
     }
 
+    // 将多个段相关的fields 合并
     Fields mergedFields = new MappedMultiFields(mergeState, 
                                                 new MultiFields(fields.toArray(Fields.EMPTY_ARRAY),
                                                                 slices.toArray(ReaderSlice.EMPTY_ARRAY)));

@@ -31,13 +31,24 @@ import org.apache.lucene.util.BytesRef;
  */
 
 final class MappingMultiPostingsEnum extends PostingsEnum {
+
+  /**
+   *
+   */
   MultiPostingsEnum multiDocsAndPositionsEnum;
   final String field;
+  /**
+   * 将每个段对应的数据 整合起来
+   */
   final DocIDMerger<MappingPostingsSub> docIDMerger;
   private MappingPostingsSub current;
   private final MappingPostingsSub[] allSubs;
   private final List<MappingPostingsSub> subs = new ArrayList<>();
 
+
+  /**
+   * 该对象相当于做了一个转换
+   */
   private static class MappingPostingsSub extends DocIDMerger.Sub {
     public PostingsEnum postings;
 
@@ -55,13 +66,19 @@ final class MappingMultiPostingsEnum extends PostingsEnum {
     }
   }
 
-  /** Sole constructor. */
+  /**
+   * Sole constructor.
+   * @param field 此时绑定的field信息  (field定位到一组terms,之后再定位到这里)
+   */
   public MappingMultiPostingsEnum(String field, MergeState mergeState) throws IOException {
     this.field = field;
+    // 生成一组可以获取posting属性的对象
     allSubs = new MappingPostingsSub[mergeState.fieldsProducers.length];
     for(int i=0;i<allSubs.length;i++) {
+      // 使用对应的 docMaps映射对象来初始化
       allSubs[i] = new MappingPostingsSub(mergeState.docMaps[i]);
     }
+    // 将一组sub对象整合在一起
     this.docIDMerger = DocIDMerger.of(subs, allSubs.length, mergeState.needsIndexSort);
   }
 

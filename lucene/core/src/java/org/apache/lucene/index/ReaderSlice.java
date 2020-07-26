@@ -21,6 +21,7 @@ package org.apache.lucene.index;
  * Subreader slice from a parent composite reader.
  *
  * @lucene.internal
+ * 简单记录几个偏移量信息 用于从大数据块中切片
  */
 public final class ReaderSlice {
 

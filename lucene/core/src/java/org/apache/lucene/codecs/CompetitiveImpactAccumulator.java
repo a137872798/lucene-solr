@@ -29,6 +29,7 @@ import org.apache.lucene.index.Impact;
 
 /**
  * This class accumulates the (freq, norm) pairs that may produce competitive scores.
+ * 该对象是用来记录频率 和标准因子的
  */
 public final class CompetitiveImpactAccumulator {
 
@@ -63,6 +64,7 @@ public final class CompetitiveImpactAccumulator {
   }
 
   /** Reset to the same state it was in after creation. */
+  // 每当开始处理一个新的 term 时 就会清除内部的数据
   public void clear() {
     Arrays.fill(maxFreqs, 0);
     otherFreqNormPairs.clear();

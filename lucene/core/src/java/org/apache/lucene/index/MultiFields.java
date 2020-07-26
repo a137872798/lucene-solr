@@ -43,8 +43,17 @@ import org.apache.lucene.util.MergedIterator;
  * @lucene.internal
  */
 public final class MultiFields extends Fields {
+  /**
+   * 每个对象都是参与merge的某个segment下所有field
+   */
   private final Fields[] subs;
+  /**
+   * 代表对应segment下总共有多少doc  以及doc从哪里开始  (maxDoc 应该是还没瘦身过的 也就是虽然delDoc已经被处理 但是没有整理docId)
+   */
   private final ReaderSlice[] subSlices;
+  /**
+   * 存储某个field 对应的所有term
+   */
   private final Map<String,Terms> terms = new ConcurrentHashMap<>();
 
   /**
@@ -60,13 +69,21 @@ public final class MultiFields extends Fields {
   public Iterator<String> iterator() {
     Iterator<String> subIterators[] = new Iterator[subs.length];
     for(int i=0;i<subs.length;i++) {
+      // 这里的 fields 已经做过处理了 只能够得到同一format的field
       subIterators[i] = subs[i].iterator();
     }
     return new MergedIterator<>(subIterators);
   }
 
+  /**
+   * 读取某个field下所有的term
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public Terms terms(String field) throws IOException {
+    // 先尝试从缓存中获取
     Terms result = terms.get(field);
     if (result != null)
       return result;
@@ -90,6 +107,7 @@ public final class MultiFields extends Fields {
       // don't cache this case with an unbounded cache, since the number of fields that don't exist
       // is unbounded.
     } else {
+      // 将多个 term整合后返回
       result = new MultiTerms(subs2.toArray(Terms.EMPTY_ARRAY),
           slices2.toArray(ReaderSlice.EMPTY_ARRAY));
       terms.put(field, result);

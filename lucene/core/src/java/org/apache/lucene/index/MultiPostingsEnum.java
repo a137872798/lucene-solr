@@ -27,6 +27,7 @@ import org.apache.lucene.util.BytesRef;
  * API of sub-segments.
  *
  * @lucene.experimental
+ * 创建一个整合了多个 posting 的对象
  */
 
 public final class MultiPostingsEnum extends PostingsEnum {
@@ -40,8 +41,9 @@ public final class MultiPostingsEnum extends PostingsEnum {
   int doc = -1;
 
   /** Sole constructor.
-   * @param parent The {@link MultiTermsEnum} that created us.
-   * @param subReaderCount How many sub-readers are being merged. */
+   * @param parent The {@link MultiTermsEnum} that created us.   该对象是由哪个对象创建的  并且该对象可以被同一个parent复用
+   * @param subReaderCount How many sub-readers are being merged.   代表由多少个segment合并
+   * */
   public MultiPostingsEnum(MultiTermsEnum parent, int subReaderCount) {
     this.parent = parent;
     subPostingsEnums = new PostingsEnum[subReaderCount];
@@ -170,6 +172,7 @@ public final class MultiPostingsEnum extends PostingsEnum {
 
     /** {@link ReaderSlice} describing how this sub-reader
      *  fits into the composite reader. */
+    // 关联的分片信息
     public ReaderSlice slice;
 
     EnumWithSlice() {

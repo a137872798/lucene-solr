@@ -152,6 +152,7 @@ final class SegmentMerger {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
       }
+      // 这里完成了对标准因子的合并
       mergeNorms(segmentWriteState);
       if (mergeState.infoStream.isEnabled("SM")) {
         long t1 = System.nanoTime();
@@ -162,6 +163,7 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
+    // 这里找到合并后段的 标准因子
     try (NormsProducer norms = mergeState.mergeFieldInfos.hasNorms()
         ? codec.normsFormat().normsProducer(segmentReadState)
         : null) {
@@ -170,6 +172,7 @@ final class SegmentMerger {
         // Use the merge instance in order to reuse the same IndexInput for all terms
         normsMergeInstance = norms.getMergeInstance();
       }
+      // term和doc是什么关系  以及 为什么要针对标准因子 单独merge一次
       mergeTerms(segmentWriteState, normsMergeInstance);
     }
     if (mergeState.infoStream.isEnabled("SM")) {

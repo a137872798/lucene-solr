@@ -118,23 +118,25 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
   }
 
   /**
-   * 将某个 term的信息写入到索引文件中
-   * @param term
-   * @param termsEnum
-   * @param docsSeen
-   * @param norms
+   * @param term  本次要写入的term
+   * @param termsEnum   term所属的迭代器
+   * @param docsSeen   相关segment 的maxDoc
+   * @param norms  该对象可以根据field 获取一系列的标准因子
    * @return
    * @throws IOException
    */
   @Override
   public final BlockTermState writeTerm(BytesRef term, TermsEnum termsEnum, FixedBitSet docsSeen, NormsProducer norms) throws IOException {
     NumericDocValues normValues;
+    // 如果此时正在处理的 field 不包含标准因子信息 忽略
     if (fieldInfo.hasNorms() == false) {
       normValues = null;
     } else {
       normValues = norms.getNorms(fieldInfo);
     }
+    // 代表开始处理该term 会重置一些相关数据
     startTerm(normValues);
+    // 从term中获取 pos信息
     postingsEnum = termsEnum.postings(postingsEnum, enumFlags);
     assert postingsEnum != null;
 

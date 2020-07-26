@@ -27,8 +27,10 @@ import static org.apache.lucene.index.FilterLeafReader.FilterTermsEnum;
  *  Fields into one, and maps around deleted documents.
  *  This is used for merging. 
  *  @lucene.internal
+ *  将多个segment映射到 merge后的新segment上
  */
 public class MappedMultiFields extends FilterFields {
+
   final MergeState mergeState;
 
   /** Create a new MappedMultiFields for merging, based on the supplied
@@ -38,26 +40,47 @@ public class MappedMultiFields extends FilterFields {
     this.mergeState = mergeState;
   }
 
+  /**
+   * 通过field信息 获取term   在上层是读取每个合并前段的term信息 合并后返回
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public Terms terms(String field) throws IOException {
     MultiTerms terms = (MultiTerms) in.terms(field);
     if (terms == null) {
       return null;
     } else {
+      // 这里会包裹已经整合过的 terms
       return new MappedMultiTerms(field, mergeState, terms);
     }
   }
 
+  /**
+   * 对已经整合了 各个segment terms的 对象进一步包装
+   */
   private static class MappedMultiTerms extends FilterTerms {
     final MergeState mergeState;
     final String field;
 
+    /**
+     *
+     * @param field
+     * @param mergeState
+     * @param multiTerms 已经整合过的 terms 对象
+     */
     public MappedMultiTerms(String field, MergeState mergeState, MultiTerms multiTerms) {
       super(multiTerms);
       this.field = field;
       this.mergeState = mergeState;
     }
 
+    /**
+     * 迭代合并后的 term信息
+     * @return
+     * @throws IOException
+     */
     @Override
     public TermsEnum iterator() throws IOException {
       TermsEnum iterator = in.iterator();
@@ -90,6 +113,9 @@ public class MappedMultiFields extends FilterFields {
     }
   }
 
+  /**
+   * 包装整合过的 term迭代器
+   */
   private static class MappedMultiTermsEnum extends FilterTermsEnum {
     final MergeState mergeState;
     final String field;
@@ -110,11 +136,19 @@ public class MappedMultiFields extends FilterFields {
       throw new UnsupportedOperationException();
     }
 
+    /**
+     * 将当前term 有关pos的信息填充到 reuse中
+     * @param reuse
+     * @param flags
+     * @return
+     * @throws IOException
+     */
     @Override
     public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
       MappingMultiPostingsEnum mappingDocsAndPositionsEnum;
       if (reuse instanceof MappingMultiPostingsEnum) {
         MappingMultiPostingsEnum postings = (MappingMultiPostingsEnum) reuse;
+        // 当原对象的 field也相同的情况下 使用原对象  否则创建新对象
         if (postings.field.equals(this.field)) {
           mappingDocsAndPositionsEnum = postings;
         } else {
