@@ -170,6 +170,7 @@ public final class BitUtil {
     * encode the provided long. Assuming the input is a signed long whose
     * absolute value can be stored on <code>n</code> bits, the returned value will
     * be an unsigned long that can be stored on <code>n+1</code> bits.
+    * 就是将最高位变成了最低位
     */
    public static long zigZagEncode(long l) {
      return (l >> 63) ^ (l << 1);
