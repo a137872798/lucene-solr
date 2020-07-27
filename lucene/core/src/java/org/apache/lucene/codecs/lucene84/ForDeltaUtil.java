@@ -52,18 +52,24 @@ public class ForDeltaUtil {
   /**
    * Encode deltas of a strictly monotonically increasing sequence of integers.
    * The provided {@code longs} are expected to be deltas between consecutive values.
+   * @param longs 每个docId 相较上一个有效docId的增量
+   * @param out 数据写入的目标输出流 一般对应索引文件
    */
   void encodeDeltas(long[] longs, DataOutput out) throws IOException {
+    // 代表所有增量值都是1  也就是docId 顺序增加  这种特殊情况单纯保存一个 0
     if (longs[0] == 1 && PForUtil.allEqual(longs)) { // happens with very dense postings
       out.writeByte((byte) 0);
     } else {
       long or = 0;
       for (long l : longs) {
+        // 这里是预估最大需要多少位存储
         or |= l;
       }
       assert or != 0;
       final int bitsPerValue = PackedInts.bitsRequired(or);
+      // 先写入一个描述存储位大小的信息
       out.writeByte((byte) bitsPerValue);
+      // 通过一系列诡异的处理后 写入到out中
       forUtil.encode(longs, bitsPerValue, out);
     }
   }

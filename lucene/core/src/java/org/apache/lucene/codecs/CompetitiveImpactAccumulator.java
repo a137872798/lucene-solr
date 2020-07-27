@@ -76,7 +76,7 @@ public final class CompetitiveImpactAccumulator {
   // 添加一个 频率和 标准因子信息
   public void add(int freq, long norm) {
     if (norm >= Byte.MIN_VALUE && norm <= Byte.MAX_VALUE) {
-      // 只获取最低8位
+      // 更新最大值
       int index = Byte.toUnsignedInt((byte) norm);
       maxFreqs[index] = Math.max(maxFreqs[index], freq); 
     } else {

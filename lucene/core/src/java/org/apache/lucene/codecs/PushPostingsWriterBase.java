@@ -118,6 +118,7 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
   }
 
   /**
+   * 大体上就是将 term 关联的 position信息 写入到索引文件
    * @param term  本次要写入的term
    * @param termsEnum   term所属的迭代器
    * @param docsSeen   相关segment 的maxDoc
@@ -136,34 +137,44 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
     }
     // 代表开始处理该term 会重置一些相关数据
     startTerm(normValues);
-    // 从term中获取 pos信息
+    // 从term中获取 pos信息   如果是 merge对象 那么返回的就是每个segment下有关该term的postingsEnum的整合对象
+    // postings 代表了多种描述信息 比如freq payload etc..
     postingsEnum = termsEnum.postings(postingsEnum, enumFlags);
     assert postingsEnum != null;
 
+    // 代表该term下包含多少 doc (或者说处理了多少doc)
     int docFreq = 0;
     long totalTermFreq = 0;
     while (true) {
       int docID = postingsEnum.nextDoc();
+      // 代表此时无数据可读
       if (docID == PostingsEnum.NO_MORE_DOCS) {
         break;
       }
       docFreq++;
       docsSeen.set(docID);
       int freq;
+      // 如果这个field内的数据都写入了 freq信息 那么可以尝试读取
       if (writeFreqs) {
         freq = postingsEnum.freq();
         totalTermFreq += freq;
       } else {
         freq = -1;
       }
+      // 代表开始处理某个doc  也就是doc实际上才是最小单位  在解析数据流的时候 某doc出现的频率等都是已知的  这里只是做一些存储工作
       startDoc(docID, freq);
 
+      // 如果当前处理的 field 携带 position信息
       if (writePositions) {
+        // position 记录了每次doc所在的位置   根据出现的频率次数 读取多个位置
         for(int i=0;i<freq;i++) {
+          // 读取当前doc所在位置信息
           int pos = postingsEnum.nextPosition();
+          // 如果还有其他携带信息 也一并读取
           BytesRef payload = writePayloads ? postingsEnum.getPayload() : null;
           int startOffset;
           int endOffset;
+          // 有偏移量信息的话 也读取
           if (writeOffsets) {
             startOffset = postingsEnum.startOffset();
             endOffset = postingsEnum.endOffset();
@@ -171,16 +182,20 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
             startOffset = -1;
             endOffset = -1;
           }
+          // 将描述位置的4个字段 写入文件中
           addPosition(pos, payload, startOffset, endOffset);
         }
       }
 
+      // 代表某个doc 处理完毕了
       finishDoc();
     }
 
+    // 代表本轮没有处理任何doc 返回null
     if (docFreq == 0) {
       return null;
     } else {
+      // 创建一个描述本次写入结果的 实体对象 (IntBlockTermState)
       BlockTermState state = newTermState();
       state.docFreq = docFreq;
       state.totalTermFreq = writeFreqs ? totalTermFreq : -1;

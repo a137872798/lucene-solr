@@ -588,7 +588,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     private final FieldInfo fieldInfo;
     private long numTerms;
     /**
-     * 根据 segment.maxDoc 进行初始化
+     * 在写入term的过程中 会使用遍历到的doc设置该位图
      */
     final FixedBitSet docsSeen;
     long sumTotalTermFreq;
@@ -600,6 +600,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     // startsByPrefix[0] is the index into pending for the first
     // term/sub-block starting with 't'.  We use this to figure out when
     // to write a new block:
+    // 记录上一个写入的term
     private final BytesRefBuilder lastTerm = new BytesRefBuilder();
     private int[] prefixStarts = new int[8];
 
@@ -983,8 +984,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         System.out.println("BTTW: write term=" + brToString(text) + " prefixStarts=" + Arrays.toString(tmp) + " pending.size()=" + pending.size());
       }
       */
-
+      // 将该term的倒排索引信息写入到 doc文件中  (该term出现在哪些doc上 出现多少次 位置信息 payload 等等)
       BlockTermState state = postingsWriter.writeTerm(text, termsEnum, docsSeen, norms);
+      // 代表数据有效   当该term没有写入到任何doc时 返回null
       if (state != null) {
 
         assert state.docFreq != 0;
@@ -1006,8 +1008,10 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     }
 
     /** Pushes the new term to the top of the stack, and writes new blocks. */
+    // 将term数据写入
     private void pushTerm(BytesRef text) throws IOException {
       // Find common prefix between last term and current term:
+      //
       int prefixLength = Arrays.mismatch(lastTerm.bytes(), 0, lastTerm.length(), text.bytes, text.offset, text.offset + text.length);
       if (prefixLength == -1) { // Only happens for the first term, if it is empty
         assert lastTerm.length() == 0;

@@ -33,7 +33,7 @@ import org.apache.lucene.util.BytesRef;
 final class MappingMultiPostingsEnum extends PostingsEnum {
 
   /**
-   *
+   * 该对象内部已经整合了多个 postingsEnum 对象
    */
   MultiPostingsEnum multiDocsAndPositionsEnum;
   final String field;
@@ -82,12 +82,21 @@ final class MappingMultiPostingsEnum extends PostingsEnum {
     this.docIDMerger = DocIDMerger.of(subs, allSubs.length, mergeState.needsIndexSort);
   }
 
+  /**
+   * 使用相关属性进行初始化
+   * @param postingsEnum
+   * @return
+   * @throws IOException
+   */
   MappingMultiPostingsEnum reset(MultiPostingsEnum postingsEnum) throws IOException {
     this.multiDocsAndPositionsEnum = postingsEnum;
+    // EnumWithSlice 内部包含了当前term读取出来的 PostingsEnum
     MultiPostingsEnum.EnumWithSlice[] subsArray = postingsEnum.getSubs();
     int count = postingsEnum.getNumSubs();
     subs.clear();
     for(int i=0;i<count;i++) {
+      // 就是赋值操作
+      // 这里将数据填充到 sub 之后就开始构建DocIDMerger 对象了
       MappingPostingsSub sub = allSubs[subsArray[i].slice.readerIndex];
       sub.postings = subsArray[i].postingsEnum;
       subs.add(sub);
@@ -115,8 +124,14 @@ final class MappingMultiPostingsEnum extends PostingsEnum {
     throw new UnsupportedOperationException();
   }
 
+  /**
+   * 遍历到下一个doc
+   * @return
+   * @throws IOException
+   */
   @Override
   public int nextDoc() throws IOException {
+    // 获取此时最小doc所绑定的  postingsEnum
     current = docIDMerger.next();
     if (current == null) {
       return NO_MORE_DOCS;

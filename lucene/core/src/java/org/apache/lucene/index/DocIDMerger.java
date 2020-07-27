@@ -156,7 +156,6 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
         @Override
         protected boolean lessThan(Sub a, Sub b) {
           assert a.mappedDocID != b.mappedDocID;
-          // TODO 这里不会出现一样的吗 ??? 哪里做出了保障同时 同一个doc在多个segment的标准因子是否一定会一样呢 
           return a.mappedDocID < b.mappedDocID;
         }
       };

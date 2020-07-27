@@ -33,6 +33,9 @@ import org.apache.lucene.util.BytesRef;
 public final class MultiPostingsEnum extends PostingsEnum {
   private final MultiTermsEnum parent;
   final PostingsEnum[] subPostingsEnums;
+  /**
+   * 存储 PostingsEnum 与 下标的bean对象
+   */
   private final EnumWithSlice[] subs;
   int numSubs;
   int upto;
@@ -59,7 +62,10 @@ public final class MultiPostingsEnum extends PostingsEnum {
     return this.parent == parent;
   }
 
-  /** Re-use and reset this instance on the provided slices. */
+  /**
+   * Re-use and reset this instance on the provided slices.
+   * 此时subs中已经填充了 postingsEnum的数据 这里进行初始化
+   */
   public MultiPostingsEnum reset(final EnumWithSlice[] subs, final int numSubs) {
     this.numSubs = numSubs;
     for(int i=0;i<numSubs;i++) {

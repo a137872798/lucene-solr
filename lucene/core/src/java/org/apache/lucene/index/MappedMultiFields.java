@@ -158,6 +158,7 @@ public class MappedMultiFields extends FilterFields {
         mappingDocsAndPositionsEnum = new MappingMultiPostingsEnum(field, mergeState);
       }
 
+      // 在这一步中 数据会填充到 docsAndPositionsEnum
       MultiPostingsEnum docsAndPositionsEnum = (MultiPostingsEnum) in.postings(mappingDocsAndPositionsEnum.multiDocsAndPositionsEnum, flags);
       mappingDocsAndPositionsEnum.reset(docsAndPositionsEnum);
       return mappingDocsAndPositionsEnum;

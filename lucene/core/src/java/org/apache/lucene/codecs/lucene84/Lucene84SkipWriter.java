@@ -159,6 +159,7 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
    * 初始化跳跃表
    */
   private void initSkip() {
+    // 每次处理一个新的 field时 会将 initialized修改成 false 然后每当处理的 doc数量满足一个block时 会触发一次bufferSkip
     if (!initialized) {
       // 回收之前 buffer中写入的数据
       super.resetSkip();
@@ -185,10 +186,12 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
 
   /**
    * Sets the values for the current skip data.
+   * @param numDocs 此时写入了多少doc
    * 将这些数据 写入到跳跃表结构
    */
   public void bufferSkip(int doc, CompetitiveImpactAccumulator competitiveFreqNorms,
       int numDocs, long posFP, long payFP, int posBufferUpto, int payloadByteUpto) throws IOException {
+    // 开始初始化数据块
     initSkip();
     // 更新当前的最新信息
     this.curDoc = doc;
@@ -197,17 +200,17 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
     this.curPayPointer = payFP;
     this.curPosBufferUpto = posBufferUpto;
     this.curPayloadByteUpto = payloadByteUpto;
-    // 将 freq norm 累加到第一层
+    // 将 freq norm 累加到第一层  curCompetitiveFreqNorms 的长度代表层级
     this.curCompetitiveFreqNorms[0].addAll(competitiveFreqNorms);
-    // 这个方法会将数据 写入到多层  转发到 writeSkipData
+    // 将数据写入到 跳跃表结构
     bufferSkip(numDocs);
   }
 
 
   /**
-   * 父类这个跳跃表结构很奇怪 长度 层级 一开始就确定了   每当写入一个新数据时 在调用子类的writeSkipData 后 会在当前level对应的output中写入 下一层的output长度
-   * @param level      the level skip data shall be writing for  代表此时要写入的 output在第几个level
-   * @param skipBuffer the skip buffer to write to
+   * 因为一开始 跳跃表的 间隔 层级 等都是确定的 所以能够确定要将数据写入到哪里
+   * @param level      the level skip data shall be writing for  标记此时往跳跃表的第几层写入数据
+   * @param skipBuffer the skip buffer to write to   对应存储数据的容器
    * @throws IOException
    */
   @Override
@@ -243,17 +246,16 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
 
     // 以上都是只存储差值
 
-    // 找到当前level的impact累加器
+    // 找到当前level的impact累加器  TODO 这里写入时 额外增加一个 level 不知道为啥
     CompetitiveImpactAccumulator competitiveFreqNorms = curCompetitiveFreqNorms[level];
     assert competitiveFreqNorms.getCompetitiveFreqNormPairs().size() > 0;
     if (level + 1 < numberOfSkipLevels) {
-      // impact 是跨级累加的  为啥啊 你大爷
       curCompetitiveFreqNorms[level + 1].addAll(competitiveFreqNorms);
     }
-    // 有关impact的增量数据 单独写入到freqNormOut
+    // 有关impact的增量数据 写入到临时容器中
     writeImpacts(competitiveFreqNorms, freqNormOut);
 
-    // 将 freqNormOut的 长度 以及数据写入到 skipBuffer 中
+    // 将数据转移到 skipBuffer中
     skipBuffer.writeVInt(Math.toIntExact(freqNormOut.size()));
     freqNormOut.copyTo(skipBuffer);
     freqNormOut.reset();

@@ -122,8 +122,8 @@ public abstract class MultiLevelSkipListWriter {
     protected void init() {
         // 每个元素对应一个 output  该对象本身是按照层级存储的
         /**
-         * [1]        [[[[[[]]]]]]  output
-         * [2]     [[[[[[[[]]]]]]]]]  output
+         * [1]  [[[[]]]]  output
+         * [2]  [[[[[[[[]]]]]]]]]  output
          * [3] [[[[[[[[[[[[[]]]]]]]]]]]]]]  output
          */
         skipBuffer = new ByteBuffersDataOutput[numberOfSkipLevels];
@@ -137,6 +137,7 @@ public abstract class MultiLevelSkipListWriter {
      */
     protected void resetSkip() {
         if (skipBuffer == null) {
+            // 初始化多层 out结构
             init();
         } else {
             // ByteBuffersDataOutput.newResettableInstance() 该函数分配的 buffer 具备重复利用的能力
@@ -166,11 +167,11 @@ public abstract class MultiLevelSkipListWriter {
 
         assert df % skipInterval == 0;
         int numLevels = 1;
-        // 这样才转换成 skip[0]   对照该类上方的图
+        // 这样才转换成 skip[0]   对照该类上方的图   最底层包含了所有的数据 切换到skip[0] 时 要将数据/skipInterval
         df /= skipInterval;
 
         // determine max level
-        // 计算该数据 会存储在多少级中
+        // 计算该数据 会存储在多少级中   再skip[] 内部 每级往少 元素变成 n/skipMultiplier
         while ((df % skipMultiplier) == 0 && numLevels < numberOfSkipLevels) {
             numLevels++;
             df /= skipMultiplier;
@@ -187,7 +188,7 @@ public abstract class MultiLevelSkipListWriter {
 
             if (level != 0) {
                 // store child pointers for all levels except the lowest
-                // 除了最低层外 其他层要写入上层的长度
+                // 除了最低层外 其他层要写入下层的偏移量  (体现跳跃表的特性 查询数据时 就按照该值定位)
                 skipBuffer[level].writeVLong(childPointer);
             }
 

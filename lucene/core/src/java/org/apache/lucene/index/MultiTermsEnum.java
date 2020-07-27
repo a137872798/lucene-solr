@@ -51,6 +51,10 @@ public final class MultiTermsEnum extends BaseTermsEnum {
      * 此时最小值对应的迭代器
      */
     private final TermsEnumWithSlice[] top;
+
+    /**
+     * 此时 top对应的postingEnum数组
+     */
     private final MultiPostingsEnum.EnumWithSlice[] subDocs;
 
     private BytesRef lastSeek;
@@ -437,6 +441,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
 
         int upto = 0;
 
+        // 将此时 term相同的所有元素 按照readSlice的顺序排序
         ArrayUtil.timSort(top, 0, numTop, INDEX_COMPARATOR);
 
         for (int i = 0; i < numTop; i++) {
@@ -444,8 +449,10 @@ public final class MultiTermsEnum extends BaseTermsEnum {
             final TermsEnumWithSlice entry = top[i];
 
             assert entry.index < docsEnum.subPostingsEnums.length : entry.index + " vs " + docsEnum.subPostingsEnums.length + "; " + subs.length;
+            // 这里是读取 原生term的posting信息  注意这里还打算复用之前的对象
             final PostingsEnum subPostingsEnum = entry.terms.postings(docsEnum.subPostingsEnums[entry.index], flags);
             assert subPostingsEnum != null;
+            // 将数据读取出来后 重新设置到 docsEnum上
             docsEnum.subPostingsEnums[entry.index] = subPostingsEnum;
             subDocs[upto].postingsEnum = subPostingsEnum;
             subDocs[upto].slice = entry.subSlice;
