@@ -468,6 +468,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         return brToString(new BytesRef(b));
     }
 
+    /**
+     * entry 有2种类型 除了 term 还有block 类型  该对象包含了与  FST 交互的逻辑
+     */
     private static final class PendingBlock extends PendingEntry {
         public final BytesRef prefix;
         public final long fp;
@@ -477,6 +480,15 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         public final boolean isFloor;
         public final int floorLeadByte;
 
+        /**
+         *
+         * @param prefix 该block携带的前缀信息
+         * @param fp  写入该term相关信息前 termWriter的文件偏移量
+         * @param hasTerms
+         * @param isFloor
+         * @param floorLeadByte
+         * @param subIndices
+         */
         public PendingBlock(BytesRef prefix, long fp, boolean hasTerms, boolean isFloor, int floorLeadByte, List<FST<BytesRef>> subIndices) {
             super(false);
             this.prefix = prefix;
@@ -663,7 +675,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         private final List<PendingEntry> pending = new ArrayList<>();
 
         // Reused in writeBlocks:
-        // 该对象内部存储的是一个个块
+        // 当前待处理的 block  每当后缀不同触发 writeBlocks时 每满足一定的量，将多个term写入到output中 以及包装成 PendingBlock对象 加入到该列表
         private final List<PendingBlock> newBlocks = new ArrayList<>();
 
         /**
@@ -678,7 +690,8 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         /**
          * Writes the top count entries in pending, using prevTerm to compute the prefix.
          *
-         * @param prefixLength 写入的起始位置 非数组下标
+         * @param prefixLength 对应上一个term 与本次term不同的位置的起点(非相同的位置)  !!!不是数组下标 也就是想要从数组中读取数据 还需要-1
+         *                     实际上该值与本次term的长度没有任何关系 比如 aaaa  aaab aaac  aaad  ae  这时传进来的就是3 与 ae的长度毫无关系
          * @param count        代表该位置此时已经有多少term共享了
          *                     将后缀写入到 block中
          */
@@ -703,7 +716,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             boolean hasTerms = false;
             boolean hasSubBlocks = false;
 
-            // 计算该前缀首次被共享时 此时该对象已经处理了多少term
+            // 计算该前缀首次被共享时 此时该对象已经处理了多少term  (这样可以定义处理的范围 之前写入的term是不需要处理的)
             // (只有首次 每个值被分配为0  之后当某次没有任何前缀相同时 产生了新的前缀 此时它们按照pending进行初始化 就不是0了)
             int start = pending.size() - count;
             // 此时该对象已经写入了多少term
@@ -719,9 +732,15 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
                 int suffixLeadLabel;
 
+                // 从这里可以看出 block 也会写入到 pending中
                 if (ent.isTerm) {
                     PendingTerm term = (PendingTerm) ent;
-                    // 代表某次 term 的全部byte刚好对应这个前缀  那么针对它 要存储的后缀就为-1 代表没有后缀需要存储
+                    // 代表某次 term 的全部byte刚好对应这个前缀  那么要存储的后缀就为-1 代表没有后缀需要存储
+                    // 假设  aaa aaab aaac aaad aaae  aab 这时进入这个方法 prefixLength 长度就是3 意味着从长度为3的部分出现不同 然后这里开始遍历 aaa -> aaae 的entry
+                    // 这种情况对应 aaa 和 aab
+
+                    // 首先要明确能进入到这里 start.length-...>end.length 长度只可能 >= prefixLength
+                    // 因为count代表该前缀开始被共享的地方 通过count计算出的start 能确保都包含这个前缀
                     if (term.termBytes.length == prefixLength) {
                         // Suffix is 0, i.e. prefix 'foo' and term is
                         // 'foo' so the term has empty string suffix
@@ -729,7 +748,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                         assert lastSuffixLeadLabel == -1 : "i=" + i + " lastSuffixLeadLabel=" + lastSuffixLeadLabel;
                         suffixLeadLabel = -1;
                     } else {
-                        // 注意[prefixLength] 实际上是获取首个不同的byte
+                        // termBytes[prefixLength] 这个值取出来好像是再往后一位  这个值是灵活变动的 所以在外层没有满足啥 最小item条件
                         suffixLeadLabel = term.termBytes[prefixLength] & 0xff;
                     }
                     // TODO 这种情况先忽略
@@ -740,25 +759,27 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 }
                 // if (DEBUG) System.out.println("  i=" + i + " ent=" + ent + " suffixLeadLabel=" + suffixLeadLabel);
 
-                // suffixLeadLabel 是后缀的首个byte (第一个不相同的byte)
-                // lastSuffixLeadLabel 记录上一次的后缀首个byte
+                // 对应每次灵活变动的 最后一个值
                 if (suffixLeadLabel != lastSuffixLeadLabel) {
-                    // 此时处理的term 距离上次写入block的term的差值  第一次为0
                     int itemsInBlock = i - nextBlockStart;
                     // 当差值超过一定值时 将数据写入到block 中
-                    // TODO end - nextBlockStart > maxItemsInBlock 啥意思???
+                    // 这里还可以看到 当此时剩余的entry还不足某个单位的时候 不采用这种写法了
                     if (itemsInBlock >= minItemsInBlock && end - nextBlockStart > maxItemsInBlock) {
                         // The count is too large for one block, so we must break it into "floor" blocks, where we record
                         // the leading label of the suffix of the first term in each floor block, so at search time we can
                         // jump to the right floor block.  We just use a naive greedy segmenter here: make a new floor
                         // block as soon as we have at least minItemsInBlock.  This is not always best: it often produces
                         // a too-small block as the final block:
+                        // 如果按一次写入 那么数量过多 所以选择打散
+                        // 只要不是一次写入了 所有数据 就认为是打散的
                         boolean isFloor = itemsInBlock < count;
-                        // 写入block
+                        // writeBlock 就是将当前后缀信息写入到output中 以及一些元数据 统计信息等
+                        // 返回的是一个 PendingBlock对象 该对象内部包含了本次共享的前缀   (此时前缀还没有写入到output中)
                         newBlocks.add(writeBlock(prefixLength, isFloor, nextFloorLeadLabel, nextBlockStart, i, hasTerms, hasSubBlocks));
 
                         hasTerms = false;
                         hasSubBlocks = false;
+                        // 每次操作完记录上次写入block时对应的 suffixLeadLabel信息
                         nextFloorLeadLabel = suffixLeadLabel;
                         nextBlockStart = i;
                     }
@@ -775,6 +796,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             }
 
             // Write last block, if any:
+            // 每当触发了一次 writeBlock 就会生成一个 PendingBlock 这里应该是强制将最后的数据 以一个块的单位写入
             if (nextBlockStart < end) {
                 int itemsInBlock = end - nextBlockStart;
                 boolean isFloor = itemsInBlock < count;
@@ -783,6 +805,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
             assert newBlocks.isEmpty() == false;
 
+            // 此时所有term 都已经将后缀数据写入到输出流了 同时它们存储的前缀数据都是相同的  以block为单位生成了多个 pendingBlock对象
             PendingBlock firstBlock = newBlocks.get(0);
 
             assert firstBlock.isFloor || newBlocks.size() == 1;
@@ -815,10 +838,14 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
          * same prefix, and so we broke it into multiple floor blocks where
          * we record the starting label of the suffix of each floor block.
          *
+         * @param prefixLength 代表本次处理的term与之后的term 不同byte对应的位置 不是数组下标
+         *
          * @param start 首先该对象会将所有处理的term存储到一个 pending中  并且每次按照相同前缀存储数据时 是有一个最小的阈值的 只有当前缀不再相同
          *              且之前很多term都使用相同前缀时 才触发 writerBlocks  这些term又需要拆开来处理   而start都是当中某批数据的首个term
          * @param end   对应某批数据的最后一个term
          *              <p>
+         * @param isFloor 代表没有将所有数据一次性写入
+         * @param floorLeadLabel 上一个调用writeBlock时 灵活后缀的ascii码
          * @param hasSubBlocks 代表存储 blockEntry
          */
         private PendingBlock writeBlock(int prefixLength, boolean isFloor, int floorLeadLabel, int start, int end,
@@ -832,20 +859,22 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // 先假设为true吧
             boolean hasFloorLeadLabel = isFloor && floorLeadLabel != -1;
 
+            // 从这里可以看出 多个block 他们的前缀是一样的
+
             // 这里为前缀额外拓展了一个槽
             final BytesRef prefix = new BytesRef(prefixLength + (hasFloorLeadLabel ? 1 : 0));
-            // 将上一个term的数据拷贝到新申请的数据块中
+            // 注意这里只存储了前缀  此时count个entry都是共享这个前缀的
             System.arraycopy(lastTerm.get().bytes, 0, prefix.bytes, 0, prefixLength);
             prefix.length = prefixLength;
 
             //if (DEBUG2) System.out.println("    writeBlock field=" + fieldInfo.name + " prefix=" + brToString(prefix) + " fp=" + startFP + " isFloor=" + isFloor + " isLastInFloor=" + (end == pending.size()) + " floorLeadLabel=" + floorLeadLabel + " start=" + start + " end=" + end + " hasTerms=" + hasTerms + " hasSubBlocks=" + hasSubBlocks);
 
             // Write block header:
-            // 代表本次要处理的 term（每个term被包装成对应entry） 数量
+            // 记录了有多少个entry共享这些前缀
             int numEntries = end - start;
             // 类似于token 携带特殊信息
             int code = numEntries << 1;
-            // 代表此时已经处理最后一批数据了 最低位设置成1  如果最低位为0 代表还有block
+            // 代表此时已经处理最后一批数据了 最低位设置成1  如果最低位为0 代表还有block    当前term还没有写入到pending中 所以lastTerm就是pending.size()对应的term
             if (end == pending.size()) {
                 // Last block:
                 code |= 1;
@@ -1073,6 +1102,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             statsWriter.reset();
 
             // Write term meta data byte[] blob
+            // 写入元数据
             termsOut.writeVInt((int) metaWriter.size());
             metaWriter.copyTo(termsOut);
             metaWriter.reset();
@@ -1083,9 +1113,12 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
             if (hasFloorLeadLabel) {
                 // We already allocated to length+1 above:
+                // 之前预留一个空间是为了写入特殊标识
                 prefix.bytes[prefix.length++] = (byte) floorLeadLabel;
             }
 
+            // 将相关信息包装成一个block  如果该block 下没有subIndices 那么应该就是将他当作一个 subBlock
+            // 注意前缀还没有写入到 output中
             return new PendingBlock(prefix, startFP, hasTerms, isFloor, floorLeadLabel, subIndices);
         }
 
@@ -1144,10 +1177,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         /**
          * Pushes the new term to the top of the stack, and writes new blocks.
          */
-        // 将term数据写入
         private void pushTerm(BytesRef text) throws IOException {
             // Find common prefix between last term and current term:
-            // 返回相同的前缀长度
+            // 返回相同的前缀长度 ！！！注意不是数组下标
             int prefixLength = Arrays.mismatch(lastTerm.bytes(), 0, lastTerm.length(), text.bytes, text.offset, text.offset + text.length);
             // -1代表2个term完全相同  然而在同一个field下 是不可能出现2个相同的term的 所以这里重置成0
             if (prefixLength == -1) { // Only happens for the first term, if it is empty
@@ -1158,16 +1190,14 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // if (DEBUG) System.out.println("  shared=" + pos + "  lastTerm.length=" + lastTerm.length);
 
             // Close the "abandoned" suffix now:
-            // 假设上一个term是本次term的子集  那么不会进入该循环
+            // 注意这里的i是下标  也就是实际上会读取到上个term的最后一个值
+            // 比如 abc  abcde  这里就是从 c开始往前数  同时如果last是本次的子集 那么不需要处理
+            // 如果是 abcc abcde 那么就会进入下面的判断
             for (int i = lastTerm.length() - 1; i >= prefixLength; i--) {
 
                 // How many items on top of the stack share the current suffix
                 // we are closing:
-                // 这个差值就可以理解为此时不在相同的某个byte在之前已经被共享的次数
-                // 比如 bbb bbc bbd bbe bbf bc  这样之前的 bb的第二个b是一直被共享着的  所以 prefixStarts[i] 一直为0
-                // 而这次第二个b 不再被共享 此时发现他与pending的差值比较大 就写入到block中
-                // 而 bbb bbc bbd bbe bbf 的情况是 最后一个元素 一直在跟pending同步 prefixTopSize值反而就小
-                // 当然也会出现连续2个值都需要被写入的情况   比如  bbb bbc bbd bbe bbf c 这样 以bb为前缀的数据都满足要求
+                // 只有当某个值 之前一直被共享 之后突然不被共享时 才进行写入 因为每次被发现不共享时 会更新该值的 prefixStarts[i]
                 int prefixTopSize = pending.size() - prefixStarts[i];
                 if (prefixTopSize >= minItemsInBlock) {
                     // if (DEBUG) System.out.println("pushTerm i=" + i + " prefixTopSize=" + prefixTopSize + " minItemsInBlock=" + minItemsInBlock);
@@ -1183,7 +1213,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             }
 
             // Init new tail:
-            // 这里更新的是尾部   从非共享的部分开始设置
+            // 长度换成下标是从 非共享的位置开始 到这个term为止  注意如果之前的term更长 那么prefixStarts[?] 后面的值是不会更新的
             for (int i = prefixLength; i < text.length; i++) {
                 prefixStarts[i] = pending.size();
             }
