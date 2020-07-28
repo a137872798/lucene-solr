@@ -17,12 +17,6 @@
 package org.apache.lucene.codecs.blocktree;
 
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
-
 import org.apache.lucene.codecs.BlockTermState;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.FieldsConsumer;
@@ -54,6 +48,12 @@ import org.apache.lucene.util.fst.BytesRefFSTEnum;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.FSTCompiler;
 import org.apache.lucene.util.fst.Util;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 
 /*
   TODO:
@@ -588,9 +588,8 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         }
 
         /**
-         *
          * @param df  docFreq
-         * @param ttf  totalTermFreq
+         * @param ttf totalTermFreq
          * @throws IOException
          */
         void add(int df, long ttf) throws IOException {
@@ -815,11 +814,12 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
          * were too many (more than maxItemsInBlock) entries sharing the
          * same prefix, and so we broke it into multiple floor blocks where
          * we record the starting label of the suffix of each floor block.
-         * @param start  首先该对象会将所有处理的term存储到一个 pending中  并且每次按照相同前缀存储数据时 是有一个最小的阈值的 只有当前缀不再相同
-         *               且之前很多term都使用相同前缀时 才触发 writerBlocks  这些term又需要拆开来处理   而start都是当中某批数据的首个term
-         * @param end 对应某批数据的最后一个term
          *
-         * 如果isFloor为true 代表此时有太多entry共享了相同的前缀 需要打散成多个 floor blocks 啥玩意???
+         * @param start 首先该对象会将所有处理的term存储到一个 pending中  并且每次按照相同前缀存储数据时 是有一个最小的阈值的 只有当前缀不再相同
+         *              且之前很多term都使用相同前缀时 才触发 writerBlocks  这些term又需要拆开来处理   而start都是当中某批数据的首个term
+         * @param end   对应某批数据的最后一个term
+         *              <p>
+         * @param hasSubBlocks 代表存储 blockEntry
          */
         private PendingBlock writeBlock(int prefixLength, boolean isFloor, int floorLeadLabel, int start, int end,
                                         boolean hasTerms, boolean hasSubBlocks) throws IOException {
@@ -862,19 +862,21 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // TODO: cutover to bulk int codec... simple64?
 
             // We optimize the leaf block case (block has only terms), writing a more
-            // compact format in this case:   啥玩意  块只有term的情况下 将更多数据以压缩格式写入???
+            // compact format in this case:
+            // 当只有termEntry 没有blockEntry时 代表可以压缩更多的数据
             boolean isLeafBlock = hasSubBlocks == false;
 
             //System.out.println("  isLeaf=" + isLeafBlock);
 
+            // 这里存储的是block数据
             final List<FST<BytesRef>> subIndices;
 
-            // 首次数据是基于绝对值存储的
+            // first数据是基于绝对值存储的
             boolean absolute = true;
 
-            // TODO 先假设  hasSubBlocks == true 吧 忽略这里
+            // 代表没有blockEntry
             if (isLeafBlock) {
-                // Block contains only ordinary terms:
+                // Block contains only ordinary terms:  因为不包含block数据 所以该属性可以为null
                 subIndices = null;
                 StatsWriter statsWriter = new StatsWriter(this.statsWriter, fieldInfo.getIndexOptions() != IndexOptions.DOCS);
                 for (int i = start; i < end; i++) {
@@ -934,7 +936,8 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                         // it's a prefix term.  Terms cannot be larger than ~32 KB
                         // so we won't run out of bits:
 
-                        // 将后缀信息写入到 相关输出流中
+                        // 将后缀信息写入到 相关输出流中   在一连串的输入后 相当于本批所有term的后缀信息(数据,长度)都被写入到容器中了
+                        // ！！！注意在 non-leaf 的情况下 额外占用了一位
                         suffixLengthsWriter.writeVInt(suffix << 1);
                         suffixWriter.append(term.termBytes, prefixLength, suffix);
 
@@ -966,6 +969,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
                         // For non-leaf block we borrow 1 bit to record
                         // if entry is term or sub-block:f
+                        // non-leaf 下长度要多占用一位
                         suffixLengthsWriter.writeVInt((suffix << 1) | 1);
                         suffixWriter.append(block.prefix.bytes, prefixLength, suffix);
 
@@ -997,32 +1001,42 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // auto-increment IDs, so not compressing in that case helps not hurt ID lookups by too much.
             // We also only start compressing when the prefix length is greater than 2 since blocks whose prefix length is
             // 1 or 2 always all get visited when running a fuzzy query whose max number of edits is 2.
-            // 满足这个条件才会进行压缩
+            // 这个应该是经过各种实际考量过的   首先前缀小于2的话 会经常命中模糊查询 所以就不进行压缩了
+            // 并且后缀的平均长度要达到2以上 才有压缩的必要
             if (suffixWriter.length() > 2L * numEntries && prefixLength > 2) {
                 // LZ4 inserts references whenever it sees duplicate strings of 4 chars or more, so only try it out if the
                 // average suffix length is greater than 6.
+                // 因为LZ4 压缩有一个基础长度 当相同的字符串长度小于该值时 是无法进行压缩的 所以这里增加了6倍的限制
                 if (suffixWriter.length() > 6L * numEntries) {
                     LZ4.compress(suffixWriter.bytes(), 0, suffixWriter.length(), spareWriter, compressionHashTable);
                     if (spareWriter.size() < suffixWriter.length() - (suffixWriter.length() >>> 2)) {
                         // LZ4 saved more than 25%, go for it
+                        // 当成功压缩到原来的 25% 就采用这种压缩方式
                         compressionAlg = CompressionAlgorithm.LZ4;
                     }
                 }
+                // 代表采用LZ4 进行压缩时 压缩率不满意
                 if (compressionAlg == CompressionAlgorithm.NO_COMPRESSION) {
+                    // 先释放掉之前存储的数据
                     spareWriter.reset();
                     if (spareBytes.length < suffixWriter.length()) {
                         spareBytes = new byte[ArrayUtil.oversize(suffixWriter.length(), 1)];
                     }
+                    // 这个压缩算法就不看了
                     if (LowercaseAsciiCompression.compress(suffixWriter.bytes(), suffixWriter.length(), spareBytes, spareWriter)) {
                         compressionAlg = CompressionAlgorithm.LOWERCASE_ASCII;
                     }
                 }
             }
+            // 生成token信息 首先最高3位存储的是 多个entry的后缀总长度
             long token = ((long) suffixWriter.length()) << 3;
+            // 4 需要3个位表示 代表是叶子block??? 从上下文判断应该就是仅存在 termEntry
             if (isLeafBlock) {
                 token |= 0x04;
             }
+            // 低2位标明压缩方式
             token |= compressionAlg.code;
+            // 从这里可以看出 存储的都是后缀数据
             termsOut.writeVLong(token);
             if (compressionAlg == CompressionAlgorithm.NO_COMPRESSION) {
                 termsOut.writeBytes(suffixWriter.bytes(), suffixWriter.length());
@@ -1035,19 +1049,25 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // Write suffix lengths
             final int numSuffixBytes = Math.toIntExact(suffixLengthsWriter.size());
             spareBytes = ArrayUtil.grow(spareBytes, numSuffixBytes);
+            // 把长度信息存储到 spareBytes 中
             suffixLengthsWriter.copyTo(new ByteArrayDataOutput(spareBytes));
             suffixLengthsWriter.reset();
+
+            // 代表所有后缀的长度信息都相同
             if (allEqual(spareBytes, 1, numSuffixBytes, spareBytes[0])) {
                 // Structured fields like IDs often have most values of the same length
+                // 最低位是1 代表所有长度一致  之后只要读取一个byte就可以获取所有的长度信息
                 termsOut.writeVInt((numSuffixBytes << 1) | 1);
                 termsOut.writeByte(spareBytes[0]);
             } else {
+                // 最低位是0 将所有长度信息写入到 输出流中
                 termsOut.writeVInt(numSuffixBytes << 1);
                 termsOut.writeBytes(spareBytes, numSuffixBytes);
             }
 
             // Stats
             final int numStatsBytes = Math.toIntExact(statsWriter.size());
+            // 当一组term信息都写入完毕后 将统计信息写入到 terms索引文件中
             termsOut.writeVInt(numStatsBytes);
             statsWriter.copyTo(termsOut);
             statsWriter.reset();
@@ -1236,8 +1256,16 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         private final BytesRefBuilder suffixWriter = new BytesRefBuilder();
         private final ByteBuffersDataOutput statsWriter = ByteBuffersDataOutput.newResettableInstance();
         private final ByteBuffersDataOutput metaWriter = ByteBuffersDataOutput.newResettableInstance();
+
+        /**
+         * 该对象存储压缩后的 后缀数据
+         */
         private final ByteBuffersDataOutput spareWriter = ByteBuffersDataOutput.newResettableInstance();
         private byte[] spareBytes = BytesRef.EMPTY_BYTES;
+
+        /**
+         * 采用高压缩率LZ4 存储时使用的临时容器对象
+         */
         private final LZ4.HighCompressionHashTable compressionHashTable = new LZ4.HighCompressionHashTable();
     }
 
