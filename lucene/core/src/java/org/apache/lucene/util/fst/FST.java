@@ -722,26 +722,22 @@ public final class FST<T> implements Accountable {
     /**
      * serializes new node by appending its bytes to the end
      * of the current byte[]
-     * @param fstCompiler
-     * @param nodeIn
+     * @param fstCompiler  往fst中插入数据的是哪个 compiler
+     * @param nodeIn   本次插入的节点 从frontier的最后一个空节点开始
      * @return
      * @throws IOException
-     * builder 在写入新的节点时 根据情况会将之前的节点尾椎冻结  也就是调用该方法 构建 FST
-     * 注意 冻结过程是从后往前的
+     * 将某个未编译的节点添加到 fst中
      */
     long addNode(FSTCompiler<T> fstCompiler, FSTCompiler.UnCompiledNode<T> nodeIn) throws IOException {
-        // 这里先获取一个空的输出
+        // 这里先获取一个空的输出  一般情况下 outputs 就是 ByteSequenceOutputs   那么这里就会返回一个 NO_OUTPUT
         T NO_OUTPUT = outputs.getNoOutput();
 
         //System.out.println("FST.addNode pos=" + bytes.getPosition() + " numArcs=" + nodeIn.numArcs);
-        // 如果FST 接收的arc 出度为0  返回一个无效的地址
+        // 最后一个节点肯定就是这种情况
         if (nodeIn.numArcs == 0) {
-            // 如果该节点就是 final
             if (nodeIn.isFinal) {
-                // 返回末尾节点
                 return FINAL_END_NODE;
             } else {
-                // 代表还没有到末尾节点
                 return NON_FINAL_END_NODE;
             }
         }

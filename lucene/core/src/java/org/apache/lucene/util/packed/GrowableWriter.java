@@ -29,8 +29,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * to do this, it will grow the number of bits per value to 64.
  *
  * <p>@lucene.internal</p>
- * 对应 PagedGrowableWriter 创建的 Mutable实现类
- * 本对象就像是一个包装类
+ * 包装后具备扩容能力
  */
 public class GrowableWriter extends PackedInts.Mutable {
 
@@ -87,7 +86,7 @@ public class GrowableWriter extends PackedInts.Mutable {
    * @param value
    */
   private void ensureCapacity(long value) {
-    // 当前写入的值 如果小于之前初始化时 规定的 那么直接在current中分配即可
+    // 如果 写入的值与一开始创建时  估算的perBit一样就不需要处理
     if ((value & currentMask) == value) {
       return;
     }
@@ -95,9 +94,9 @@ public class GrowableWriter extends PackedInts.Mutable {
     // 判断该数据会占用多少bit   等价于 Math.max(1, 64 - Long.numberOfLeadingZeros(bits))
     final int bitsRequired = PackedInts.unsignedBitsRequired(value);
     assert bitsRequired > current.getBitsPerValue();
-    // 获取当前已经写入的长度
+    // 获取之前预估的容量大小
     final int valueCount = size();
-    // 这里按需分配数据块
+    // 按照新的 bitsRequired 重新生成packed对象
     PackedInts.Mutable next = PackedInts.getMutable(valueCount, bitsRequired, acceptableOverheadRatio);
     // 将之前的数据拷贝进去
     PackedInts.copy(current, 0, next, 0, valueCount, PackedInts.DEFAULT_BUFFER_SIZE);

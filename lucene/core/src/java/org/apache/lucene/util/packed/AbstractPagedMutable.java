@@ -65,11 +65,11 @@ public abstract class AbstractPagedMutable<T extends AbstractPagedMutable<T>> ex
     AbstractPagedMutable(int bitsPerValue, long size, int pageSize) {
         this.bitsPerValue = bitsPerValue;
         this.size = size;
-        // 返回从下往上数有多少个0   他这里是不是有潜规则 比如pageSize是2的n次  否则>>>pageShift 时应该是计算不出页数的
+        // 返回从下往上数有多少个0   pageSize要求必须是2的幂次
         pageShift = checkBlockSize(pageSize, MIN_BLOCK_SIZE, MAX_BLOCK_SIZE);
         // 获取掩码
         pageMask = pageSize - 1;
-        // 计算有多少 block     size代表总长度  pageSize 是每个page的大小
+        // 计算有多少 block     size代表总长度  pageSize 是每个page的大小   虽然block一开始的值可能比较小 但是它可以扩容
         final int numPages = numBlocks(size, pageSize);
         // 数组可以使用抽象类声明   那么每个page 对应一个Mutable
         subMutables = new PackedInts.Mutable[numPages];
@@ -197,6 +197,7 @@ public abstract class AbstractPagedMutable<T extends AbstractPagedMutable<T>> ex
         for (int i = 0; i < copy.subMutables.length; ++i) {
             // 如果是最后一页 那么valueCount 不同
             final int valueCount = i == copy.subMutables.length - 1 ? lastPageSize(newSize) : pageSize();
+            // 之前存在的数据可能部分的 bitPerValue 已经发生变化了 所以以那个大小为基准创建容器  之后的数据还是按照初始的bitsPerValue 创建
             final int bpv = i < numCommonPages ? subMutables[i].getBitsPerValue() : this.bitsPerValue;
             copy.subMutables[i] = newMutable(valueCount, bpv);
             // 拷贝之前的数据

@@ -92,7 +92,7 @@ public class FSTCompiler<T> {
     // instead of storing the address of the target node for
     // a given arc, we mark a single bit noting that the next
     // node in the byte[] is the target node):
-    // 代表上一个冻结的节点
+    // 描述上一个节点在 bytesStore的地址   如果是最后那个空节点 那么该值为0
     long lastFrozenNode;
 
     // Reused temporarily while building the FST:
@@ -211,9 +211,7 @@ public class FSTCompiler<T> {
          * 默认情况下 会共享相同的后缀  (可以节省空间)     fst本身用于存储大量的文本 所以对于内存消耗比较注重  会尽可能的压缩内存
          */
         private boolean shouldShareSuffix = true;
-        /**
-         * ???
-         */
+
         private boolean shouldShareNonSingletonNodes = true;
         /**
          * 允许共享的最大尾缀长度
@@ -392,49 +390,53 @@ public class FSTCompiler<T> {
     }
 
     /**
-     * 将某个节点变成编译后的状态
+     * 编译某个节点
      *
-     * @param nodeIn
-     * @param tailLength 这里是
+     * @param nodeIn   从frontier 为input预留的node 开始 不断往前编译  直到首个不再共享前缀的节点(parent)的下一个节点(node)
+     * @param tailLength   从1开始增大 直到 后缀长度+1 (lastInput.length-prefixLenPlus1+1)
      * @return
      * @throws IOException
      */
     private CompiledNode compileNode(UnCompiledNode<T> nodeIn, int tailLength) throws IOException {
+        // 对应 bytesStore的地址
         final long node;
-        // 找到 fst 当前写入的位置
+        // 找到数据仓库此时的偏移量
         long bytesPosStart = bytes.getPosition();
-        // 代表开启了共享后缀
+        // dedupHash != null 代表开启了共享后缀
+        // 这里还要求尾部长度 不能超过限制值
+        // TODO doShareNonSingletonNodes 啥意思???  该值默认为true
         if (dedupHash != null && (doShareNonSingletonNodes || nodeIn.numArcs <= 1) && tailLength <= shareMaxTailLength) {
-            // 当 numArcs为0 时  addNode 会返回-1   这应该代表一个无效值 所以就不需要存桶了
+            // 如果是最后一个节点 arc应该就是0 那么此时就可以加入到 fst中
             if (nodeIn.numArcs == 0) {
+                // 如果是最后一个节点 返回的node 就是0 (NON_FINAL_END_NODE)
                 node = fst.addNode(this, nodeIn);
                 // 更新上一个被冻结的节点
                 lastFrozenNode = node;
             } else {
-                // 尝试将节点加入到 hash桶中 确保复用节点   hashBucket 底层使用 packedInts 基于位存储数据 节省内存空间
-                // 该方法内部也会间接触发  fst.addNode  并将返回的地址作为value 存入hash桶
+                // 除了最后一个节点之外 其他节点应该是携带 arc信息的 将信息写入到 nodeHash中 （store内部也会调用 fst.addNode）
                 node = dedupHash.add(this, nodeIn);
             }
         } else {
-            // 将节点加入到 fst中  返回一个编译后的节点
+            // 这里不使用缓存 所以直接写入到fst中
             node = fst.addNode(this, nodeIn);
         }
         assert node != -2;
 
-        // 此时位置已经移动了 因为数据已经通过fst写入到 bytes中了
+        // 检测store的偏移量是否发生了变化
         long bytesPosEnd = bytes.getPosition();
+        // 代表确实写入了数据
         if (bytesPosEnd != bytesPosStart) {
             // The FST added a new node:
             assert bytesPosEnd > bytesPosStart;
-            // 代表成功为  fst插入了一个新节点
+            // 将此时最新的地址信息写入到 lastNode上
             lastFrozenNode = node;
         }
 
-        // 因为写入成功了 将numArc 置0
+        // 将该节点属性清除 这样就可以作为一个普通节点 等待下一个input填充数据
         nodeIn.clear();
 
+        // 返回一个编译完的节点 内部的node 就是 bytesStore的地址
         final CompiledNode fn = new CompiledNode();
-        // 设置node的地址  同时返回的fn 节点会替换掉之前 arc指向的节点
         fn.node = node;
         return fn;
     }
@@ -531,14 +533,18 @@ public class FSTCompiler<T> {
                 // dead-end states:
                 final boolean isFinal = node.isFinal || node.numArcs == 0;
 
-                // 默认进入上面的分支
+                // 默认进入第一个分支
                 if (doCompile) {
                     // this node makes it and we now compile it.  first,
                     // compile any targets that were previously
                     // undecided:
-                    // 找到本次处理的不匹配的字符 与子节点进行处理
+                    // 找到本次处理的不匹配的字符与node节点 进行处理
+                    // replaceLast 会替换parent的最后一个arc对象相关属性
                     parent.replaceLast(lastInput.intAt(idx - 1),
-                            // 将源节点变成编译后的版本   (就是写入到FST中)
+                            // 第一次处理 node 对应frontier 最后一个空节点 (每次frontier 都会比写入的input大1)
+                            // idx最大值为 lastInput.length()  也就是第二个参数最小值为 1
+                            // 从compileNode 可以看出 大体是将 UncompileNode 的数据转存到 bytesStore中 然后 clear node之前的数据
+                            // 并将 写入 bytesStore数据后返回的地址赋值到一个新创建的CompileNode对象中
                             compileNode(node, 1 + lastInput.length() - idx),
                             nextFinalOutput,
                             isFinal);
@@ -833,7 +839,8 @@ public class FSTCompiler<T> {
      */
     static final class CompiledNode implements Node {
         /**
-         * 地址信息
+         * 数据之前被写入到 bytesStore中
+         * 这里就是写入时返回的地址信息
          */
         long node;
 
@@ -951,7 +958,7 @@ public class FSTCompiler<T> {
 
         /**
          * 替换最后一个 arc下挂载的节点
-         *
+         * TODO arc在什么时机创建 以及它是做什么的???
          * @param labelToMatch
          * @param target
          * @param nextFinalOutput

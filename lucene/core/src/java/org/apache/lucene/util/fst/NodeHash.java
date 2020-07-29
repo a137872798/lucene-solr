@@ -27,7 +27,7 @@ import org.apache.lucene.util.packed.PagedGrowableWriter;
 final class NodeHash<T> {
 
     /**
-     * 具备自主扩容能力的对象  用于写入数据
+     * 实际存储数据的桶
      */
     private PagedGrowableWriter table;
     private long count;
@@ -52,22 +52,14 @@ final class NodeHash<T> {
      * @param in
      */
     public NodeHash(FST<T> fst, FST.BytesReader in) {
-        // 采用紧凑模式进行创建    size 代表一开始支持存储多少元素  pageSize 代表一个页支持存储多少元素  同时一个元素占用   startBitsPerValue位
-        // 一开始预估内部的元素都占 8位  也就是256 (仅通过8位来存储数据 虽然上限值 以及读取效率会降低 但是更加节省内存)
+        // 该对象包含扩容的api 并且 每当写入的 元素需要的 bitPerValue 变大时 就将原本的数据取出来 按照新的位数 写入到一个新容器中
         table = new PagedGrowableWriter(16, 1 << 27, 8, PackedInts.COMPACT);
         mask = 15;
         this.fst = fst;
         this.in = in;
     }
 
-    /**
-     * 判断目标地址是否就是该node 的地址  TODO 这个先忽略
-     *
-     * @param node
-     * @param address
-     * @return
-     * @throws IOException
-     */
+
     private boolean nodesEqual(FSTCompiler.UnCompiledNode<T> node, long address) throws IOException {
         // 将数据读取到 arc中
         fst.readFirstRealTargetArc(address, scratchArc, in);
@@ -168,7 +160,7 @@ final class NodeHash<T> {
     }
 
     /**
-     * 往 hash结构中存入数据
+     * 将某个节点数据写入到 缓存 以及 fst中
      * @param fstCompiler    本次写入的节点所属的 compiler
      * @param nodeIn      被加入的是某个未完成的节点
      * @return

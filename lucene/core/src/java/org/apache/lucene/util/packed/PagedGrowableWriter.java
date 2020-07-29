@@ -25,9 +25,7 @@ import org.apache.lucene.util.packed.PackedInts.Mutable;
  * you need random write-access. Otherwise this class will likely be slower and
  * less memory-efficient.
  *
- * @lucene.internal 将数据拆分并存入 大小固定的 block中
- * 只有当需要随机访问时 才应该使用 PackedLongValues  而非 PagedGrowableWriter
- * 并且该对象的读取可能会更耗时一些  不过更加节省内存
+ * @lucene.internal
  */
 public final class PagedGrowableWriter extends AbstractPagedMutable<PagedGrowableWriter> {
 
@@ -50,8 +48,8 @@ public final class PagedGrowableWriter extends AbstractPagedMutable<PagedGrowabl
     }
 
     /**
-     * @param size
-     * @param pageSize                默认为 1<<27     注意这里传入的 pageSize应当为2的幂次
+     * @param size                     总计多少元素
+     * @param pageSize                 每页存多少元素
      * @param startBitsPerValue       每个值会占用多少bit    默认是8
      * @param acceptableOverheadRatio 默认情况下不适用额外的内存  但是在读取时会更耗时一些  对应 PackedInts.COMPACT
      * @param fillPages               默认情况下为true
