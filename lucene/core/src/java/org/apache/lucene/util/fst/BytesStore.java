@@ -66,6 +66,7 @@ class BytesStore extends DataOutput implements Accountable {
    */
   public BytesStore(int blockBits) {
     this.blockBits = blockBits;
+    // 通过位运算计算 block的大小
     blockSize = 1 << blockBits;
     blockMask = blockSize-1;
     nextWrite = blockSize;
@@ -505,16 +506,20 @@ class BytesStore extends DataOutput implements Accountable {
     return getReverseReader(true);
   }
 
+  /**
+   * 获取一个反向读取的对象
+   * @param allowSingle  是否支持处理只有一个block的情况
+   * @return
+   */
   FST.BytesReader getReverseReader(boolean allowSingle) {
     // 如果内部只有一个元素 那么直接返回一个基于 byte[] 的反向reader
     if (allowSingle && blocks.size() == 1) {
       return new ReverseBytesReader(blocks.get(0));
     }
-    // 返回一个内部类
     return new FST.BytesReader() {
       // 默认情况下指向的是第一个 byte[]
       private byte[] current = blocks.size() == 0 ? null : blocks.get(0);
-      // 对应list 下标
+      // 对应blocks下标
       private int nextBuffer = -1;
       // 对应byte[] 下标
       private int nextRead = 0;

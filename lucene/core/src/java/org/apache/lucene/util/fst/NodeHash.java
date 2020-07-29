@@ -46,6 +46,11 @@ final class NodeHash<T> {
      */
     private final FST.BytesReader in;
 
+    /**
+     * 通过 fst 以及反向读取 fst内部数据的 BytesStore的reader对象进行初始化
+     * @param fst
+     * @param in
+     */
     public NodeHash(FST<T> fst, FST.BytesReader in) {
         // 采用紧凑模式进行创建    size 代表一开始支持存储多少元素  pageSize 代表一个页支持存储多少元素  同时一个元素占用   startBitsPerValue位
         // 一开始预估内部的元素都占 8位  也就是256 (仅通过8位来存储数据 虽然上限值 以及读取效率会降低 但是更加节省内存)

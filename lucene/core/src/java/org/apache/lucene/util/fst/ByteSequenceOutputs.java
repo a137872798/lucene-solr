@@ -44,6 +44,12 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
     return singleton;
   }
 
+  /**
+   * 返回二者交集
+   * @param output1
+   * @param output2
+   * @return
+   */
   @Override
   public BytesRef common(BytesRef output1, BytesRef output2) {
     assert output1 != null;
@@ -60,9 +66,11 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
       pos2++;
     }
 
+    // 如果首个byte 没有匹配上 就认为没有共同的部分
     if (pos1 == output1.offset) {
       // no common prefix
       return NO_OUTPUT;
+      // 代表 p1 或者p2 被完全匹配了
     } else if (pos1 == output1.offset + output1.length) {
       // output1 is a prefix of output2
       return output1;
@@ -70,10 +78,17 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
       // output2 is a prefix of output1
       return output2;
     } else {
+      // 将写入的部分 单独包装成一个新的 ref 注意 数据体还是共用内部的bytes 只是维护了一份新的指针
       return new BytesRef(output1.bytes, output1.offset, pos1-output1.offset);
     }
   }
 
+  /**
+   * 这里只是返回 output裁剪掉一部分长度后的数据 裁剪的长度为inc
+   * @param output
+   * @param inc
+   * @return
+   */
   @Override
   public BytesRef subtract(BytesRef output, BytesRef inc) {
     assert output != null;
@@ -89,11 +104,18 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
       } else {
         assert inc.length < output.length: "inc.length=" + inc.length + " vs output.length=" + output.length;
         assert inc.length > 0;
+        // 可以看到 偏移量往后移动了 inc的长度
         return new BytesRef(output.bytes, output.offset + inc.length, output.length-inc.length);
       }
     }
   }
 
+  /**
+   * 将2个 byteRef 组合在一起
+   * @param prefix
+   * @param output
+   * @return
+   */
   @Override
   public BytesRef add(BytesRef prefix, BytesRef output) {
     assert prefix != null;
@@ -113,6 +135,12 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
     }
   }
 
+  /**
+   * 将 prefix的数据 写入到 out 中
+   * @param prefix
+   * @param out
+   * @throws IOException
+   */
   @Override
   public void write(BytesRef prefix, DataOutput out) throws IOException {
     assert prefix != null;
@@ -120,6 +148,12 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
     out.writeBytes(prefix.bytes, prefix.offset, prefix.length);
   }
 
+  /**
+   * 生成一个输出流 读取in内部的数据
+   * @param in
+   * @return
+   * @throws IOException
+   */
   @Override
   public BytesRef read(DataInput in) throws IOException {
     final int len = in.readVInt();
@@ -133,6 +167,11 @@ public final class ByteSequenceOutputs extends Outputs<BytesRef> {
     }
   }
 
+  /**
+   * 跳跃到输入流的末尾
+   * @param in
+   * @throws IOException
+   */
   @Override
   public void skipOutput(DataInput in) throws IOException {
     final int len = in.readVInt();

@@ -891,7 +891,9 @@ public final class Util {
   }
 
   /** Just takes unsigned byte values from the BytesRef and
-   *  converts into an IntsRef. */
+   *  converts into an IntsRef.
+   * 就是转换成 ascii码
+   */
   public static IntsRef toIntsRef(BytesRef input, IntsRefBuilder scratch) {
     scratch.clear();
     for(int i=0;i<input.length;i++) {

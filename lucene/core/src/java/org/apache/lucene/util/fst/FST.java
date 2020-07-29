@@ -454,19 +454,19 @@ public final class FST<T> implements Accountable {
     /**
      * make a new empty FST, for building; Builder invokes this
      *
-     * @param inputType     代表数据的输入里欸选哪个
-     * @param outputs
-     * @param bytesPageBits
+     * @param inputType   代表输出类型
+     * @param outputs   用于构建FST的特殊输出流 一般是ByteSequenceOutputs
+     * @param bytesPageBits  每个bit 对应多大的 byte[] 数据页  默认值为15
      */
     FST(INPUT_TYPE inputType, Outputs<T> outputs, int bytesPageBits) {
         this.inputType = inputType;
         this.outputs = outputs;
         fstStore = null;
-        // 根据指定的大小创建 store对象   该对象内部就是一个 List<byte[]>
+        // 根据指定的大小创建 store对象
         bytes = new BytesStore(bytesPageBits);
         // pad: ensure no node gets address 0 which is reserved to mean
         // the stop state w/ no arcs
-        // 初始化时写入一个0  这也代表着一个终止标识
+        // 初始化时写入一个0  这也代表着一个FST的终止标识
         bytes.writeByte((byte) 0);
         emptyOutput = null;
     }

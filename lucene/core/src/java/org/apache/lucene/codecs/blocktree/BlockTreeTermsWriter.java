@@ -406,6 +406,13 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         }
     }
 
+    /**
+     * 对输出进行编码  也就是为 fileOffset 的最低2位设置标识
+     * @param fp
+     * @param hasTerms  上一次处理的entry是term还是block
+     * @param isFloor  本次处理的所有term 是否在一个block内
+     * @return
+     */
     static long encodeOutput(long fp, boolean hasTerms, boolean isFloor) {
         assert fp < (1L << 62);
         return (fp << 2) | (hasTerms ? BlockTreeTermsReader.OUTPUT_FLAG_HAS_TERMS : 0) | (isFloor ? BlockTreeTermsReader.OUTPUT_FLAG_IS_FLOOR : 0);
@@ -482,12 +489,13 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
         /**
          *
-         * @param prefix 该block携带的前缀信息
+         * @param prefix 该block携带的前缀信息  本次处理的所有entry中都包含相同的前缀
+         *               同时该数据中除了前缀外 如果 ifFloor为 true 那么最后一位会存储 floorLeadLabel
          * @param fp  写入该term相关信息前 termWriter的文件偏移量
-         * @param hasTerms
-         * @param isFloor
-         * @param floorLeadByte
-         * @param subIndices
+         * @param hasTerms  代表处理的上一个entry是 term 还是 block
+         * @param isFloor  代表处理本次 entry 划分成了多个块
+         * @param floorLeadByte 处理上一个entry时 灵活byte对应的ascii
+         * @param subIndices  当被处理的entry是 term时 该list为null
          */
         public PendingBlock(BytesRef prefix, long fp, boolean hasTerms, boolean isFloor, int floorLeadByte, List<FST<BytesRef>> subIndices) {
             super(false);
@@ -504,6 +512,13 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             return "BLOCK: prefix=" + brToString(prefix);
         }
 
+        /**
+         * 每当某次处理 writeBlocks结束后 可能会有多个block写入到 一个列表中 在处理结束后会调用该方法  这里所有 PendingBlock的前缀是一样的
+         * @param blocks  此时所有待处理的block对象  包含自身
+         * @param scratchBytes
+         * @param scratchIntsRef
+         * @throws IOException
+         */
         public void compileIndex(List<PendingBlock> blocks, ByteBuffersDataOutput scratchBytes, IntsRefBuilder scratchIntsRef) throws IOException {
 
             assert (isFloor && blocks.size() > 1) || (isFloor == false && blocks.size() == 1) : "isFloor=" + isFloor + " blocks=" + blocks;
@@ -514,21 +529,29 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // TODO: try writing the leading vLong in MSB order
             // (opposite of what Lucene does today), for better
             // outputs sharing in the FST
+            // encodeOutput 就是在fileOffset的最后2位 追加一些描述信息
             scratchBytes.writeVLong(encodeOutput(fp, hasTerms, isFloor));
+
+            // 因为本次处理 拆分成了多个block
             if (isFloor) {
+                // 写入block的数量
                 scratchBytes.writeVInt(blocks.size() - 1);
+                // 注意 不会写入自己  并且 root block的 floorLeadByte 是-1
                 for (int i = 1; i < blocks.size(); i++) {
                     PendingBlock sub = blocks.get(i);
                     assert sub.floorLeadByte != -1;
                     //if (DEBUG) {
                     //  System.out.println("    write floorLeadByte=" + Integer.toHexString(sub.floorLeadByte&0xff));
                     //}
+                    // 写入灵活变动的byte
                     scratchBytes.writeByte((byte) sub.floorLeadByte);
                     assert sub.fp > fp;
+                    // 将term的偏移量 写入到scratchBytes 中  并且最低位存储的是 该block的上一个entry是否是否是 term
                     scratchBytes.writeVLong((sub.fp - fp) << 1 | (sub.hasTerms ? 1 : 0));
                 }
             }
 
+            // 该对象内部包含一些构建 FST的方法
             final ByteSequenceOutputs outputs = ByteSequenceOutputs.getSingleton();
             final FSTCompiler<BytesRef> fstCompiler = new FSTCompiler.Builder<>(FST.INPUT_TYPE.BYTE1, outputs).shouldShareNonSingletonNodes(false).build();
             //if (DEBUG) {
@@ -537,6 +560,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             //indexBuilder.DEBUG = false;
             final byte[] bytes = scratchBytes.toArrayCopy();
             assert bytes.length > 0;
+            // Util.toIntsRef(prefix, scratchIntsRef)   将 前缀数据写入到scratchIntsRef 中
             fstCompiler.add(Util.toIntsRef(prefix, scratchIntsRef), new BytesRef(bytes, 0, bytes.length));
             scratchBytes.reset();
 
@@ -777,6 +801,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                         // 返回的是一个 PendingBlock对象 该对象内部包含了本次共享的前缀   (此时前缀还没有写入到output中)
                         newBlocks.add(writeBlock(prefixLength, isFloor, nextFloorLeadLabel, nextBlockStart, i, hasTerms, hasSubBlocks));
 
+                        // 每当写入一个block的数据后 对相关标识进行重置
                         hasTerms = false;
                         hasSubBlocks = false;
                         // 每次操作完记录上次写入block时对应的 suffixLeadLabel信息
@@ -810,12 +835,14 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
             assert firstBlock.isFloor || newBlocks.size() == 1;
 
+            // scratchBytes，scratchIntsRef 应该只是2个临时对象
             firstBlock.compileIndex(newBlocks, scratchBytes, scratchIntsRef);
 
             // Remove slice from the top of the pending stack, that we just wrote:
             pending.subList(pending.size() - count, pending.size()).clear();
 
             // Append new block
+            // 每当处理完一批term后 就会产生一个block 并填装到pending中(他代表之前处理的多个term的总集)
             pending.add(firstBlock);
 
             newBlocks.clear();
@@ -845,8 +872,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
          * @param end   对应某批数据的最后一个term
          *              <p>
          * @param isFloor 代表没有将所有数据一次性写入
-         * @param floorLeadLabel 上一个调用writeBlock时 灵活后缀的ascii码
-         * @param hasSubBlocks 代表存储 blockEntry
+         * @param floorLeadLabel 处理上一个entry时 灵活byte对应的ascii码
+         * @param hasTerms 代表上一个entry是term
+         * @param hasSubBlocks 代表上一个entry是 block
          */
         private PendingBlock writeBlock(int prefixLength, boolean isFloor, int floorLeadLabel, int start, int end,
                                         boolean hasTerms, boolean hasSubBlocks) throws IOException {
@@ -892,7 +920,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
             // We optimize the leaf block case (block has only terms), writing a more
             // compact format in this case:
-            // 当只有termEntry 没有blockEntry时 代表可以压缩更多的数据
+            // 代表上次处理的是 term
             boolean isLeafBlock = hasSubBlocks == false;
 
             //System.out.println("  isLeaf=" + isLeafBlock);
