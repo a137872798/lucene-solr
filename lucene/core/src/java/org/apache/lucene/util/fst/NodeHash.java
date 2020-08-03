@@ -30,6 +30,9 @@ final class NodeHash<T> {
      * 实际存储数据的桶
      */
     private PagedGrowableWriter table;
+    /**
+     * 记录此时hash结构中一共存储了多少数据
+     */
     private long count;
     private long mask;
     /**
@@ -60,12 +63,20 @@ final class NodeHash<T> {
     }
 
 
+    /**
+     * 检测fst上目标地址对应的node与传入的node是否完全一致  TODO 待看
+     * @param node
+     * @param address
+     * @return
+     * @throws IOException
+     */
     private boolean nodesEqual(FSTCompiler.UnCompiledNode<T> node, long address) throws IOException {
-        // 将数据读取到 arc中
+        // 将数据读取到目标容器
         fst.readFirstRealTargetArc(address, scratchArc, in);
 
         // Fail fast for a node with fixed length arcs.
         if (scratchArc.bytesPerArc() != 0) {
+            // 只有当 flag是 用于二分查找时 才直接使用numArc做判断
             if (scratchArc.nodeFlags() == FST.ARCS_FOR_BINARY_SEARCH) {
                 if (node.numArcs != scratchArc.numArcs()) {
                     return false;
@@ -114,7 +125,6 @@ final class NodeHash<T> {
             final FSTCompiler.Arc<T> arc = node.arcs[arcIdx];
             //System.out.println("  label=" + arc.label + " target=" + ((Builder.CompiledNode) arc.target).node + " h=" + h + " output=" + fst.outputs.outputToString(arc.output) + " isFinal?=" + arc.isFinal);
             h = PRIME * h + arc.label;
-            // 该节点下关联的arc 绑定的一定是 编译完成的节点???
             long n = ((FSTCompiler.CompiledNode) arc.target).node;
             h = PRIME * h + (int) (n ^ (n >> 32));
             h = PRIME * h + arc.output.hashCode();
@@ -179,12 +189,12 @@ final class NodeHash<T> {
             // 代表该位置还没有设置值
             if (v == 0) {
                 // freeze & add
-                // 这时会触发节点的冻结  返回的结果是地址吗???
+                // 将节点冻结后存储到fst中 实际上就是存储到ByteStore中
                 final long node = fst.addNode(fstCompiler, nodeIn);
                 //System.out.println("  now freeze node=" + node);
                 assert hash(node) == h : "frozenHash=" + hash(node) + " vs h=" + h;
                 count++;
-                // 将地址存储到桶中
+                // 将存储到fst后返回的地址信息保存起来
                 table.set(pos, node);
                 // Rehash at 2/3 occupancy:
                 // 当前桶中的数据如果超过了 2/3  进行重hash
@@ -193,7 +203,7 @@ final class NodeHash<T> {
                 }
                 // 成功添加到bucket 后 返回node   对应nodeIn的地址
                 return node;
-            // 如果已经设置到桶中了   直接返回
+            // 如果已经设置到桶中了   直接返回在fst中的地址
             } else if (nodesEqual(nodeIn, v)) {
                 // same node is already here
                 return v;
@@ -231,7 +241,6 @@ final class NodeHash<T> {
         final PagedGrowableWriter oldTable = table;
 
         // 前几次分配 桶的大小远远不及 pageSize  之后 桶中的总元素会越来越大  使用的页也会越来越多
-        // 这里每个值占用的 bit数 也被重新分配   为什么一开始要定8 啊   而且当前桶中占的元素数量与之后计算位有什么关系
         table = new PagedGrowableWriter(2 * oldTable.size(), 1 << 30, PackedInts.bitsRequired(count), PackedInts.COMPACT);
         mask = table.size() - 1;
         for (long idx = 0; idx < oldTable.size(); idx++) {

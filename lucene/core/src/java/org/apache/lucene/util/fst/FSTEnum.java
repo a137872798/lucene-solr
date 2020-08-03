@@ -28,16 +28,30 @@ import static org.apache.lucene.util.fst.FST.Arc.BitTable;
  *
  * @lucene.experimental
  * 在 lucene中 迭代器都被叫做 Enum
+ * 该对象是从fst中读取数据
 */
 
 abstract class FSTEnum<T> {
+
+  /**
+   * 数据存储在fst中
+   */
   protected final FST<T> fst;
 
+  /**
+   * 存储 ascii码
+   */
   @SuppressWarnings({"rawtypes","unchecked"}) protected FST.Arc<T>[] arcs = new FST.Arc[10];
   // outputs are cumulative
+  /**
+   * 每个arc对应的权重信息
+   */
   @SuppressWarnings({"rawtypes","unchecked"}) protected T[] output = (T[]) new Object[10];
 
   protected final T NO_OUTPUT;
+  /**
+   * 该对象负责从 fst中读取数据   (一般是反向读取的容器)
+   */
   protected final FST.BytesReader fstReader;
 
   protected int upto;

@@ -192,6 +192,9 @@ public final class FST<T> implements Accountable {
         // So only valid when bytesPerArc != 0.
         // nodeFlags == ARCS_FOR_BINARY_SEARCH || nodeFlags == ARCS_FOR_DIRECT_ADDRESSING.
 
+        /**
+         * 如果arc以固定长度存储时 才会设置这个值
+         */
         private int bytesPerArc;
 
         private long posArcsStart;
@@ -562,7 +565,7 @@ public final class FST<T> implements Accountable {
     }
 
     /**
-     * 当调用 FSTCompiler.compiler() 时 会从根节点开始 冻结所有节点 并构建完整的 FST
+     * 当调用 FSTCompiler.compiler() 时 会从后往前冻结所有节点 然后通过root.node 来触发该方法
      * @param newStartNode
      * @throws IOException
      */
@@ -741,15 +744,15 @@ public final class FST<T> implements Accountable {
                 return NON_FINAL_END_NODE;
             }
         }
-        // 在初始化 fstCompiler的时候 实际上bytes  就是fst.bytes    这里返回上次写入的位置
+
+        // 当目标节点的arc不为0时  实际上非末尾节点都会存在arc 就是input在对应下标的 ascii码
+        // 获取compiler中存储数据的仓库
         final long startAddress = fstCompiler.bytes.getPosition();
         //System.out.println("  startAddr=" + startAddress);
 
-        // 是否应该以 FixedLength 的长度 存储arc
-        // 如果返回true 代表每个 arc都用一样的字节长度  每个arc本身的长度 可能是不一致的 那么就按照最长的arc分配长度
-        // 坏处是会存在内存碎片  好处是能够快速定位到第n个arc的位置
+        // 是否以固定长度存储 arcs
         final boolean doFixedLengthArcs = shouldExpandNodeWithFixedLengthArcs(fstCompiler, nodeIn);
-        // 代表允许以固定长度存储 arc
+        // 代表允许以固定长度存储 arc  TODO 先忽略这里 因为一般情况下node只会使用到一个arc  一旦后缀不一样了 节点就会被冻结 arc就会被清除
         if (doFixedLengthArcs) {
             //System.out.println("  fixed length arcs");
             // 如果当前长度小于 目标节点的出度
@@ -761,22 +764,19 @@ public final class FST<T> implements Accountable {
             }
         }
 
-        // 累加到 fstCompiler的 arc计数器上
+        // 累计arc的值
         fstCompiler.arcCount += nodeIn.numArcs;
 
         final int lastArc = nodeIn.numArcs - 1;
 
-        // 这里又 获取了一次 position
         long lastArcStart = fstCompiler.bytes.getPosition();
 
-        // 用于记录遍历过程中 遇到的最长的arc  这样便于使用固定长度存储arc
         int maxBytesPerArc = 0;
         int maxBytesPerArcWithoutLabel = 0;
         // 这里在遍历所有的 arc
         for (int arcIdx = 0; arcIdx < nodeIn.numArcs; arcIdx++) {
             final FSTCompiler.Arc<T> arc = nodeIn.arcs[arcIdx];
-            // 获取arc 上的 target 并转换成一个完成编译的节点
-            // 可以假定上一个节点肯定已经被编译完成了  (每次插入数据时上一个节点都会被冻结)
+            // 在FSTCompiler.freezeTail 中 冻结节点是从后往前的   arc.target的更新对应该方法 replaceLast
             final FSTCompiler.CompiledNode target = (FSTCompiler.CompiledNode) arc.target;
 
             // 下面根据节点情况 生成标记位
@@ -789,8 +789,7 @@ public final class FST<T> implements Accountable {
                 flags += BIT_LAST_ARC;
             }
 
-            // 下游节点 就是刚刚被冻结的节点   （虽然每次从后往前冻结节点 但是前面的arc target指向并没有改变）
-            // 同时不能开启 固定长度arc
+            // 代表上一个冻结的节点就是本次arc指向的节点
             if (fstCompiler.lastFrozenNode == target.node && !doFixedLengthArcs) {
                 // TODO: for better perf (but more RAM used) we
                 // could avoid this except when arc is "near" the
@@ -798,11 +797,11 @@ public final class FST<T> implements Accountable {
                 flags += BIT_TARGET_NEXT;
             }
 
-            // 如果当前arc 刚好代表末尾
+            // TODO 目前只看到 最后一个空节点的 isFinal是true  不过应该有其他地方会修改
+            // TODO 这里的潜台词 isFinal 为 false  nextFinalOutput == NO_OUTPUT 还需要理解下
             if (arc.isFinal) {
-                // 追加标志信息
                 flags += BIT_FINAL_ARC;
-                // TODO 这是什么意思 ???
+                // 代表下一个节点携带了 output (权重信息)
                 if (arc.nextFinalOutput != NO_OUTPUT) {
                     flags += BIT_ARC_HAS_FINAL_OUTPUT;
                 }
@@ -810,15 +809,15 @@ public final class FST<T> implements Accountable {
                 assert arc.nextFinalOutput == NO_OUTPUT;
             }
 
-            // 代表下游节点有出度   否则在 FST.addNode 中 检测到出度为0 会返回0 或者-1
+            // 代表下游节点有效  并不是空节点    返回的是存储在ByteStore的地址
             boolean targetHasArcs = target.node > 0;
 
-            // 如果目标节点后没有数据了 代表是终止节点  这个跟上面的 BIT_FINAL_ARC 有啥关系
+            // 当下游没有节点时 写入特殊标识
             if (!targetHasArcs) {
                 flags += BIT_STOP_NODE;
             }
 
-            // 代表有 输出数据
+            // 如果当前节点挂载的arc有权重信息
             if (arc.output != NO_OUTPUT) {
                 flags += BIT_ARC_HAS_OUTPUT;
             }
@@ -827,36 +826,37 @@ public final class FST<T> implements Accountable {
             fstCompiler.bytes.writeByte((byte) flags);
             // 此时写入的位置已经更新了
             long labelStart = fstCompiler.bytes.getPosition();
-            // 这里对应 RefInts 的某个数字  (写入时基于 ascii所以是int类型  每个arc对应一个字符)
+            // 将 ascii信息写入
             writeLabel(fstCompiler.bytes, arc.label);
-            // 通过偏移量的变化 确定写入的长度   每写入一个 byte 该值+1
+            // 计算数据的长度信息
             int numLabelBytes = (int) (fstCompiler.bytes.getPosition() - labelStart);
 
             // System.out.println("  write arc: label=" + (char) arc.label + " flags=" + flags + " target=" + target.node + " pos=" + bytes.getPosition() + " output=" + outputs.outputToString(arc.output));
 
-            // outputs 实际上是个 输出的加工对象   将原有的output 做加工后 写入到实际存储数据的 BytesStore中
-            // 这个 output 就是权重值   TODO 权重值会被怎么加工呢  又为了什么被加工呢
+            // 如果携带了权重信息 那么将权重信息写入
             if (arc.output != NO_OUTPUT) {
+                // outputs.write 会先将数据的长度信息写入 之后才写入数据
                 outputs.write(arc.output, fstCompiler.bytes);
                 //System.out.println("    write output");
             }
 
-            // 将 final加工后写入
+            // 代表下个节点有权重信息   注意与上面的含义不同
             if (arc.nextFinalOutput != NO_OUTPUT) {
                 //System.out.println("    write final output");
                 outputs.writeFinalOutput(arc.nextFinalOutput, fstCompiler.bytes);
             }
 
-            // 啥意思
+            // 代表子节点不为空节点    并且上一个冻结的节点 不是本次指向的节点
             if (targetHasArcs && (flags & BIT_TARGET_NEXT) == 0) {
                 assert target.node > 0;
                 //System.out.println("    write target");
+                // 将子节点的地址写入
                 fstCompiler.bytes.writeVLong(target.node);
             }
 
             // just write the arcs "like normal" on first pass, but record how many bytes each one took
             // and max byte size:
-            // 如果按照固定长度   需要先找到最长的那个 arc
+            // TODO 先忽略 固定长度 arc的写入
             if (doFixedLengthArcs) {
                 // 记录本次被遍历的 arc 的长度
                 int numArcBytes = (int) (fstCompiler.bytes.getPosition() - lastArcStart);
@@ -892,8 +892,7 @@ public final class FST<T> implements Accountable {
     */
 
 
-        // 上面的任务 完成了每个arc 的存储 (包含标识位  一些其他信息等)
-        // 如果每个arc 采用固定长度 那么要修改之前写入的arc  变成等长
+        // TODO 忽略固定长度
         if (doFixedLengthArcs) {
             assert maxBytesPerArc > 0;
             // 2nd pass just "expands" all arcs to take up a fixed byte size
@@ -914,7 +913,7 @@ public final class FST<T> implements Accountable {
             }
         }
 
-        // 这个偏移量就是当前节点的地址
+        // 这个偏移量就是当前节点的地址  可以看到是一个末尾的地址
         final long thisNodeAddress = fstCompiler.bytes.getPosition() - 1;
         // 这里反转内部存储的数据
         fstCompiler.bytes.reverse(startAddress, thisNodeAddress);
@@ -931,15 +930,14 @@ public final class FST<T> implements Accountable {
      * Nodes with fixed length arcs use more space, because they encode all arcs with a fixed number
      * of bytes, but they allow either binary search or direct addressing on the arcs (instead of linear
      * scan) on lookup by arc label.
-     * 判断是否应该为 每个arc 分配相同的空间
-     * 如果元素本身比较少 是不推荐这样做的  分配相同空间无非就是通过 二分查找提升查询效率  如果元素本身就少的情况下 并不能明显的提升速度 返回产生了内存碎片
+     * 判断目标节点下的arc数据是否应该以相同长度存储
      */
     private boolean shouldExpandNodeWithFixedLengthArcs(FSTCompiler<T> fstCompiler, FSTCompiler.UnCompiledNode<T> node) {
         // 首先需要 compiler 打开这个开关
         return fstCompiler.allowFixedLengthArcs &&
-                // depth 就是 frontier 的下标
+                // depth 就是 frontier 的下标     当前处理的node下标要在3以内  且arc数量超过5
                 ((node.depth <= FIXED_LENGTH_ARC_SHALLOW_DEPTH && node.numArcs >= FIXED_LENGTH_ARC_SHALLOW_NUM_ARCS) ||
-                        // 如果数量超过这个值就可以无视深度
+                        // 如果arc数量超过10就可以无视深度
                         node.numArcs >= FIXED_LENGTH_ARC_DEEP_NUM_ARCS);
     }
 

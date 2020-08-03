@@ -26,9 +26,14 @@ import org.apache.lucene.util.BytesRef;
  *  FST.
  *
   * @lucene.experimental
+ * 该对象负责读取 fst内部的数据
 */
 
 public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
+
+  /**
+   * 负责存储临时数据的容器
+   */
   private final BytesRef current = new BytesRef(10);
   private final InputOutput<T> result = new InputOutput<>();
   private BytesRef target;

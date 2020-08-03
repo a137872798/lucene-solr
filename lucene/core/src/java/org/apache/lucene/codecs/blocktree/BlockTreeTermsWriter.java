@@ -565,6 +565,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             scratchBytes.reset();
 
             // Copy over index for all sub-blocks
+            // 将所有fst数据整合到一个fst中
             for (PendingBlock block : blocks) {
                 if (block.subIndices != null) {
                     for (FST<BytesRef> subIndex : block.subIndices) {
@@ -588,10 +589,11 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
         // TODO: maybe we could add bulk-add method to
         // Builder?  Takes FST and unions it w/ current
-        // FST.
+        // FST.  将子block的fst数据汇总到一个fst
         private void append(FSTCompiler<BytesRef> fstCompiler, FST<BytesRef> subIndex, IntsRefBuilder scratchIntsRef) throws IOException {
             final BytesRefFSTEnum<BytesRef> subIndexEnum = new BytesRefFSTEnum<>(subIndex);
             BytesRefFSTEnum.InputOutput<BytesRef> indexEnt;
+            // 通过迭代器读取数据 并将数据体抽取出来追加到 fst中
             while ((indexEnt = subIndexEnum.next()) != null) {
                 //if (DEBUG) {
                 //  System.out.println("      add sub=" + indexEnt.input + " " + indexEnt.input + " output=" + indexEnt.output);
