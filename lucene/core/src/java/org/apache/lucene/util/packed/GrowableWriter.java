@@ -86,7 +86,7 @@ public class GrowableWriter extends PackedInts.Mutable {
    * @param value
    */
   private void ensureCapacity(long value) {
-    // 如果 写入的值与一开始创建时  估算的perBit一样就不需要处理
+    // 写入的值 所需要的位数 比一开始预估的低 不需要创建新的容器
     if ((value & currentMask) == value) {
       return;
     }
