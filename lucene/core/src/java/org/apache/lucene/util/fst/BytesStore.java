@@ -413,7 +413,7 @@ class BytesStore extends DataOutput implements Accountable {
    */
   public void finish() {
     if (current != null) {
-      // 这里创建了一个 等大的数组 将元素拷贝进去
+      // 避免内存的浪费 创建了一个合适大小的数组 复制数据后替换最后一个数组
       byte[] lastBuffer = new byte[nextWrite];
       System.arraycopy(current, 0, lastBuffer, 0, nextWrite);
       // 替换原来的数组

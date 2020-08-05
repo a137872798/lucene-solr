@@ -34,12 +34,12 @@ import static org.apache.lucene.util.fst.FST.Arc.BitTable;
 abstract class FSTEnum<T> {
 
   /**
-   * 数据存储在fst中
+   * 数据所在的fst
    */
   protected final FST<T> fst;
 
   /**
-   * 存储 ascii码
+   * 负责读取某个node下的arc信息
    */
   @SuppressWarnings({"rawtypes","unchecked"}) protected FST.Arc<T>[] arcs = new FST.Arc[10];
   // outputs are cumulative
@@ -54,6 +54,9 @@ abstract class FSTEnum<T> {
    */
   protected final FST.BytesReader fstReader;
 
+  /**
+   * 对应迭代器光标
+   */
   protected int upto;
   int targetLength;
 
@@ -64,6 +67,7 @@ abstract class FSTEnum<T> {
     this.fst = fst;
     fstReader = fst.getBytesReader();
     NO_OUTPUT = fst.outputs.getNoOutput();
+    // 创建首个arc 它指向的 node 是 startNode 并且值为-1
     fst.getFirstArc(getArc(0));
     output[0] = NO_OUTPUT;
   }
@@ -105,6 +109,10 @@ abstract class FSTEnum<T> {
     //System.out.println("  fall through upto=" + upto);
   }
 
+  /**
+   * 从 fst中读取下一个数据
+   * @throws IOException
+   */
   protected void doNext() throws IOException {
     //System.out.println("FE: next upto=" + upto);
     if (upto == 0) {
@@ -114,6 +122,7 @@ abstract class FSTEnum<T> {
     } else {
       // pop
       //System.out.println("  check pop curArc target=" + arcs[upto].target + " label=" + arcs[upto].label + " isLast?=" + arcs[upto].isLast());
+      // 如果此时读取的是最后一个arc
       while (arcs[upto].isLast()) {
         upto--;
         if (upto == 0) {
@@ -650,6 +659,11 @@ abstract class FSTEnum<T> {
     }
   }
 
+  /**
+   * 获取对应的arc 不存在则创建
+   * @param idx
+   * @return
+   */
   private FST.Arc<T> getArc(int idx) {
     if (arcs[idx] == null) {
       arcs[idx] = new FST.Arc<>();

@@ -64,7 +64,7 @@ final class NodeHash<T> {
 
 
     /**
-     * 检测fst上目标地址对应的node与传入的node是否完全一致  TODO 待看
+     * 检测2个node挂载的arc是否完全相同 (包括他们的target)
      * @param node
      * @param address
      * @return
@@ -75,6 +75,7 @@ final class NodeHash<T> {
         fst.readFirstRealTargetArc(address, scratchArc, in);
 
         // Fail fast for a node with fixed length arcs.
+        // bytesPerArc 代表arc是按照固定长度存储的
         if (scratchArc.bytesPerArc() != 0) {
             // 只有当 flag是 用于二分查找时 才直接使用numArc做判断
             if (scratchArc.nodeFlags() == FST.ARCS_FOR_BINARY_SEARCH) {
@@ -91,6 +92,7 @@ final class NodeHash<T> {
         }
 
         for (int arcUpto = 0; arcUpto < node.numArcs; arcUpto++) {
+            // 挨个读取arc信息   从这里可以看出 UnCompileNode.Arc 的字段与 CompileNode.Arc 的字段含义是大体相同的
             final FSTCompiler.Arc<T> arc = node.arcs[arcUpto];
             if (arc.label != scratchArc.label() ||
                     !arc.output.equals(scratchArc.output()) ||
@@ -100,13 +102,16 @@ final class NodeHash<T> {
                 return false;
             }
 
+            // 如果该arc 刚好是本节点下挂载的最后一个arc
             if (scratchArc.isLast()) {
+                // 代表之前的arc全都匹配 且数量也完全一样
                 if (arcUpto == node.numArcs - 1) {
                     return true;
                 } else {
                     return false;
                 }
             }
+            // 将下一个arc信息读取到临时容器   挨个比较所有的arc
             fst.readNextRealArc(scratchArc, in);
         }
 

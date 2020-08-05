@@ -165,8 +165,8 @@ public final class FST<T> implements Accountable {
 
     /**
      * Represents a single arc.
+     * arc上携带了 数据的ascii码 以及权重信息
      */
-    // arc 用于连接2个节点
     public static final class Arc<T> {
 
         //*** Arc fields.
@@ -176,12 +176,15 @@ public final class FST<T> implements Accountable {
         private T output;
 
         /**
-         * 代表该 arc指向的下一个 node 的地址或者id  注意 与 FSTCompiler.Arc 不同  那个arc的 target是一个UnCompiledNode
+         * 指向下一个 CompileNode的地址
          */
         private long target;
 
         private byte flags;
 
+        /**
+         * 下一个节点对应的权重信息
+         */
         private T nextFinalOutput;
 
         private long nextArc;
@@ -565,7 +568,7 @@ public final class FST<T> implements Accountable {
     }
 
     /**
-     * 当调用 FSTCompiler.compiler() 时 会从后往前冻结所有节点 然后通过root.node 来触发该方法
+     * 当调用 FSTCompiler.compiler() 时 会从后往前冻结所有节点 然后通过root.node(存储在fst BytesStore的地址) 来触发该方法
      * @param newStartNode
      * @throws IOException
      */
@@ -736,8 +739,9 @@ public final class FST<T> implements Accountable {
         T NO_OUTPUT = outputs.getNoOutput();
 
         //System.out.println("FST.addNode pos=" + bytes.getPosition() + " numArcs=" + nodeIn.numArcs);
-        // 最后一个节点肯定就是这种情况
+        // 代表这个节点没有任何出度 一般就是最后一个节点
         if (nodeIn.numArcs == 0) {
+            // 在 builder.add()中 只要本次input与上次不相同 就会将isFinal设置成true
             if (nodeIn.isFinal) {
                 return FINAL_END_NODE;
             } else {
@@ -746,13 +750,12 @@ public final class FST<T> implements Accountable {
         }
 
         // 当目标节点的arc不为0时  实际上非末尾节点都会存在arc 就是input在对应下标的 ascii码
-        // 获取compiler中存储数据的仓库
         final long startAddress = fstCompiler.bytes.getPosition();
         //System.out.println("  startAddr=" + startAddress);
 
         // 是否以固定长度存储 arcs
         final boolean doFixedLengthArcs = shouldExpandNodeWithFixedLengthArcs(fstCompiler, nodeIn);
-        // 代表允许以固定长度存储 arc  TODO 先忽略这里 因为一般情况下node只会使用到一个arc  一旦后缀不一样了 节点就会被冻结 arc就会被清除
+        // 代表允许以固定长度存储 arc  TODO 先忽略这里 因为一般情况下node只会使用到一个arc
         if (doFixedLengthArcs) {
             //System.out.println("  fixed length arcs");
             // 如果当前长度小于 目标节点的出度
@@ -767,8 +770,10 @@ public final class FST<T> implements Accountable {
         // 累计arc的值
         fstCompiler.arcCount += nodeIn.numArcs;
 
+        // 获取最后一个arc的下标
         final int lastArc = nodeIn.numArcs - 1;
 
+        // 获取此时的起点位置  准备写入数据
         long lastArcStart = fstCompiler.bytes.getPosition();
 
         int maxBytesPerArc = 0;
@@ -776,20 +781,20 @@ public final class FST<T> implements Accountable {
         // 这里在遍历所有的 arc
         for (int arcIdx = 0; arcIdx < nodeIn.numArcs; arcIdx++) {
             final FSTCompiler.Arc<T> arc = nodeIn.arcs[arcIdx];
-            // 在FSTCompiler.freezeTail 中 冻结节点是从后往前的   arc.target的更新对应该方法 replaceLast
+            // 因为从后往前处理 后面的节点在编译完成后 会作为target 设置到上一个为编译node的lastArc中
             final FSTCompiler.CompiledNode target = (FSTCompiler.CompiledNode) arc.target;
 
             // 下面根据节点情况 生成标记位
             int flags = 0;
             //System.out.println("  arc " + arcIdx + " label=" + arc.label + " -> target=" + target.node);
 
-            // 最后一次进入循环  之后就不满足 arcIdx < nodeIn.numArcs 的条件
+            // 代表此时遍历的是最后一个arc
             if (arcIdx == lastArc) {
                 // 为标识值 加了一个 特殊值
                 flags += BIT_LAST_ARC;
             }
 
-            // 代表上一个冻结的节点就是本次arc指向的节点
+            // 代表上一个冻结的节点就是本次arc指向的节点  这样就可以不存储next的节点对应的下标了
             if (fstCompiler.lastFrozenNode == target.node && !doFixedLengthArcs) {
                 // TODO: for better perf (but more RAM used) we
                 // could avoid this except when arc is "near" the
@@ -797,15 +802,15 @@ public final class FST<T> implements Accountable {
                 flags += BIT_TARGET_NEXT;
             }
 
-            // TODO 目前只看到 最后一个空节点的 isFinal是true  不过应该有其他地方会修改
-            // TODO 这里的潜台词 isFinal 为 false  nextFinalOutput == NO_OUTPUT 还需要理解下
+            // 代表连接的节点是否是 final 节点
             if (arc.isFinal) {
                 flags += BIT_FINAL_ARC;
-                // 代表下一个节点携带了 output (权重信息)
+                // 如果下个节点携带权重信息 (携带的前提就是下个节点 isFinal为true 且 arc携带权重)
                 if (arc.nextFinalOutput != NO_OUTPUT) {
                     flags += BIT_ARC_HAS_FINAL_OUTPUT;
                 }
             } else {
+                // 如果下个节点不是 final 节点 那么该值必然不会被设置 只有当下个节点是final时 才可能设置node.output信息
                 assert arc.nextFinalOutput == NO_OUTPUT;
             }
 
@@ -1140,13 +1145,16 @@ public final class FST<T> implements Accountable {
     public Arc<T> getFirstArc(Arc<T> arc) {
         T NO_OUTPUT = outputs.getNoOutput();
 
+        // TODO
         if (emptyOutput != null) {
             arc.flags = BIT_FINAL_ARC | BIT_LAST_ARC;
             arc.nextFinalOutput = emptyOutput;
+            // 当某arc  isFinal == false  时  且nextFinalOutput不为空  在flag中追加 BIT_ARC_HAS_FINAL_OUTPUT
             if (emptyOutput != NO_OUTPUT) {
                 arc.flags = (byte) (arc.flags() | BIT_ARC_HAS_FINAL_OUTPUT);
             }
         } else {
+            // 正常情况下 首个初始化的arc 会被标记成 arc[]的最后一个   同时output 和nextOutput 都是 NO_OUTPUT
             arc.flags = BIT_LAST_ARC;
             arc.nextFinalOutput = NO_OUTPUT;
         }
@@ -1154,6 +1162,7 @@ public final class FST<T> implements Accountable {
 
         // If there are no nodes, ie, the FST only accepts the
         // empty string, then startNode is 0
+        // 首个arc 指向的target是 startNode
         arc.target = startNode;
         return arc;
     }
@@ -1239,11 +1248,15 @@ public final class FST<T> implements Accountable {
      * this changes the provided <code>arc</code> (2nd arg) in-place and returns
      * it.
      *
+     * @param follow  上一个节点  它的target所指向的地址 可以在in中 读取到 填充到本次arc的数据
+     * @param arc
+     * @param in  一般存储的都是地址信息 所以需要配合输入流读取数据
      * @return Returns the second argument (<code>arc</code>).
      */
     public Arc<T> readFirstTargetArc(Arc<T> follow, Arc<T> arc, BytesReader in) throws IOException {
         //int pos = address;
         //System.out.println("    readFirstTarget follow.target=" + follow.target + " isFinal=" + follow.isFinal());
+        // TODO 什么情况会是final ???
         if (follow.isFinal()) {
             // Insert "fake" final first arc:
             arc.label = END_LABEL;
@@ -1260,22 +1273,27 @@ public final class FST<T> implements Accountable {
             //System.out.println("    insert isFinal; nextArc=" + follow.target + " isLast=" + arc.isLast() + " output=" + outputs.outputToString(arc.output));
             return arc;
         } else {
+            // 通过第一个arc连接的 node的地址 以及另一个arc  读取数据
             return readFirstRealTargetArc(follow.target(), arc, in);
         }
     }
 
     /**
-     * @param nodeAddress
-     * @param arc
-     * @param in          该对象负责从fst中读取数据
+     * @param nodeAddress  某个CompileNode的地址
+     * @param arc          数据会填充到该arc下
+     * @param in          该对象负责从fst中读取数据   (只携带地址信息无法读取数据 所以一般方法中要传入一个 输入流)
      * @return
      * @throws IOException
      */
     public Arc<T> readFirstRealTargetArc(long nodeAddress, Arc<T> arc, final BytesReader in) throws IOException {
+        // 定位到目标位置
         in.setPosition(nodeAddress);
         //System.out.println("   flags=" + arc.flags);
 
+        // 在addNode 的最后  会将写入的数据顺序倒转  所以这里使用反向输入流 读取的数据反而是正向的
+        // 通过上个节点的某些信息 为本次的arc设置属性
         byte flags = arc.nodeFlags = in.readByte();
+        // TODO 只有当 arc以等长形式写入时 才会设置这2个值 先忽略
         if (flags == ARCS_FOR_BINARY_SEARCH || flags == ARCS_FOR_DIRECT_ADDRESSING) {
             //System.out.println("  fixed length arc");
             // Special arc which is actually a node header for fixed length arcs.
@@ -1463,6 +1481,7 @@ public final class FST<T> implements Accountable {
      * Reads an arc.
      * <br>Precondition: The arc flags byte has already been read and set;
      * the given BytesReader is positioned just after the arc flags byte.
+     * 从容器中读取数据 并填充到arc 上
      */
     private Arc<T> readArc(Arc<T> arc, BytesReader in) throws IOException {
         if (arc.nodeFlags() == ARCS_FOR_DIRECT_ADDRESSING) {
@@ -1657,6 +1676,7 @@ public final class FST<T> implements Accountable {
     /**
      * Returns a {@link BytesReader} for this FST, positioned at
      * position 0.
+     * FST 有2种初始化方式 一种根据 BytesStore 一种根据  FSTStore
      */
     public BytesReader getBytesReader() {
         if (this.fstStore != null) {
@@ -1683,9 +1703,8 @@ public final class FST<T> implements Accountable {
 
         /**
          * Returns true if this reader uses reversed bytes
-         * under-the-hood.
+         * under-the-hood. 判断数据是否采用反向读取的方式
          */
-        // 判断数据是否采用反向读取的方式
         public abstract boolean reversed();
     }
 }

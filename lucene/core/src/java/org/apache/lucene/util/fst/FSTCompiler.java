@@ -390,7 +390,8 @@ public class FSTCompiler<T> {
     }
 
     /**
-     * 编译某个节点
+     * 一旦将 UnCompiledNode 的数据写入到 fst 这个节点就可以清空了
+     * 从后往前的话 相当于 将该node下挂载的 arc数据也写入到 fst了   并且此时 arc的target 也是已经编译过的节点 (也就是存储在fst的节点)
      *
      * @param nodeIn   从frontier 为input预留的node 开始 不断往前编译  直到首个不再共享前缀的节点(parent)的下一个节点(node)
      * @param tailLength   从1开始增大 直到 后缀长度+1 (lastInput.length-prefixLenPlus1+1)
@@ -407,13 +408,13 @@ public class FSTCompiler<T> {
         if (dedupHash != null && (doShareNonSingletonNodes || nodeIn.numArcs <= 1) && tailLength <= shareMaxTailLength) {
             // 如果是最后一个节点 arc应该就是0 该节点不需要缓存
             if (nodeIn.numArcs == 0) {
-                // 如果是最后一个节点 返回的node 就是0 (NON_FINAL_END_NODE)
+                // 如果是最后一个节点 返回的node 就是-1 FINAL_END_NODE
                 node = fst.addNode(this, nodeIn);
                 // 更新上一个被冻结的节点
                 lastFrozenNode = node;
             } else {
                 // 除了最后一个节点之外 其他节点应该是携带 arc信息的 将信息写入到 nodeHash中 （store内部也会调用 fst.addNode）
-                // 如果hash中已经存储了目标节点的数据 （通过自定义的equals来判断）
+                // 如果hash中已经存储了目标节点的数据 （通过自定义的equals来判断）直接返回地址
                 node = dedupHash.add(this, nodeIn);
             }
         } else {
@@ -524,7 +525,7 @@ public class FSTCompiler<T> {
                     compileAllTargets(node, lastInput.length() - idx);
                 }
 
-                // 获取下游节点的权重值
+                // 获取下游节点的权重值  只有当node节点本身是isFinal时 output就是上一个arc的output
                 final T nextFinalOutput = node.output;
 
                 // We "fake" the node as being final if it has no
@@ -532,7 +533,7 @@ public class FSTCompiler<T> {
                 // as non-final (the FST can represent this), but
                 // FSTEnum, Util, etc., have trouble w/ non-final
                 // dead-end states:
-                // 当该节点是此时最后一个节点时   它的arc数量为0
+                // 当该节点是此时最后一个节点时   它的arc数量为0 在这个场景下 arcs能为0 就代表是末尾节点
                 final boolean isFinal = node.isFinal || node.numArcs == 0;
 
                 // 默认进入第一个分支
@@ -692,9 +693,11 @@ public class FSTCompiler<T> {
             frontier[idx].inputCount++;
         }
 
-        // 找到最后一个节点 是空节点
+
+        // 当本次传入的 input值比之前短的时候 获取到的是此时最后一个arc的下一个节点
+        // 本次传入长的话 返回的就是最后一个节点 (这种情况最简单 可以忽略 )
+        // 以上2条都代表同一个含义 也就是lastNode之前的活跃arc链路刚好代表某个input的完结
         final UnCompiledNode<T> lastNode = frontier[input.length];
-        // 只要本次输入的值 与上次不一样  该节点就认为是终止节点   TODO 如果本次传入的值与上次一样 那么在上一轮 lastNode 就应该被标记成isFinal了吧
         if (lastInput.length() != input.length || prefixLenPlus1 != input.length + 1) {
             lastNode.isFinal = true;
             lastNode.output = NO_OUTPUT;
@@ -702,11 +705,12 @@ public class FSTCompiler<T> {
 
         // push conflicting outputs forward, only as far as
         // needed
-        // 共享权重
+        // 共享权重   实际上能进入 下面的循环代表 prefixLenPlus1 至少是3 也就是公共前缀至少是2 因为此时如果只有2个节点 (起始节点和终止节点)
+        // 那么前缀长度最多只能是1  无法往下游传播权重
         for (int idx = 1; idx < prefixLenPlus1; idx++) {
-            // 从第2个节点到 首个非共享节点
+            // 从第2个节点到最后一个共享节点
             final UnCompiledNode<T> node = frontier[idx];
-            // 从首个节点到最后一个 共享的节点
+            // 从首个节点到倒数第二个共享的节点
             final UnCompiledNode<T> parentNode = frontier[idx - 1];
 
             // 找到此时正在使用的arc的权重值
@@ -721,11 +725,12 @@ public class FSTCompiler<T> {
                 // 找到本次权重与上次权重的公共部分
                 commonOutputPrefix = fst.outputs.common(output, lastOutput);
                 assert validOutput(commonOutputPrefix);
-                // 将上一次权重 减去本次公共前缀的部分  如果有多出来的部分就是 需要留到子级arc  如果没有多出来的部分 返回 NO_OUTPUT
+                // 将上一次权重 减去本次公共权重的部分  如果有多出来的部分就是 需要留到子级arc  如果没有多出来的部分 返回 NO_OUTPUT
                 wordSuffix = fst.outputs.subtract(lastOutput, commonOutputPrefix);
                 assert validOutput(wordSuffix);
                 // 2种情况 一种本次权重比上次大  那么commonOutputPrefix 就是 lastOutput  就不需要往下游arc增加权重
-                // 第二种情况 本次权重比上次小 commonOutputPrefix 比lastOutput小
+                // 第二种情况 本次权重比上次小 先将之前的权重值修改成 公共大小 同时将剩余的权重往下游arc转移  注意 在下一次循环中最后一个arc的权重还会转移
+                // 因为要确保公共前缀的权重不能超过此时新插入的input的权重值
                 parentNode.setLastOutput(input.ints[input.offset + idx - 1], commonOutputPrefix);
                 // 将剩余部分追加到所有的arc 因为他们共享的arc(边的权重变小了) 所以相应的要给所有子级arc增加权重才能维持前后不变
                 // 当本次权重比上次大时 不需要处理
@@ -740,18 +745,18 @@ public class FSTCompiler<T> {
             assert validOutput(output);
         }
 
-        // 进入到这里时 output 已经尽可能被复用了 得到一个小的增量值
+        // 进入到这里时 output 已经尽可能被复用了 得到一个小的增量值  又或者output可以完全共享 此时就是 NO_OUTPUT
 
         // 代表2次输入的数据一致
         if (lastInput.length() == input.length && prefixLenPlus1 == 1 + input.length) {
             // same input more than 1 time in a row, mapping to
             // multiple outputs
-            // 当数据一致时 将权重结合
+            // 当数据一致时 将权重结合  在 ByteSequenceOutputs中不会发生这种情况
             lastNode.output = fst.outputs.merge(lastNode.output, output);
         } else {
             // this new arc is private to this new input; set its
             // arc output to the leftover output:
-            // 只会设置首个非共享节点的权重值
+            // 此时将剩余的权重 尽可能往前放 在这里的体现就是 放到了 最后一个共享节点的 新的 arc.output上
             frontier[prefixLenPlus1 - 1].setLastOutput(input.ints[input.offset + prefixLenPlus1 - 1], output);
         }
 
@@ -823,7 +828,7 @@ public class FSTCompiler<T> {
     // 每个node下会挂载一个 Arc[]
     static class Arc<T> {
         int label;                             // really an "unsigned" byte   这个arc所代表的值 使用ascii 代替byte  （这条边附带的文本信息）
-        Node target;   // 连接的下个节点  也就是先从一个node出发 它包含了一个 arc[] 然后每个arc又会连接到下一个node
+        Node target;   // 刚创建时 target 指向下一个UnCompileNode   一旦该arc对应的数据写入到fst之后 target会指向存储在fst内的地址(也就是CompileNode)
         boolean isFinal;  // 当该表示为true 时  target 为无效节点 意味着到达末尾了
         T output;     // out也就是类似权重的附加值了  FST的特性是每个字符串有自己的权重 而不会重复
         T nextFinalOutput;
@@ -883,7 +888,7 @@ public class FSTCompiler<T> {
         T output;
 
         /**
-         * 代表这个节点处理完毕了
+         * 代表该节点之前的活跃arc链路刚好是一个input的值
          */
         boolean isFinal;
         /**
@@ -923,6 +928,7 @@ public class FSTCompiler<T> {
          */
         void clear() {
             numArcs = 0;
+            // 重置的时候不携带任何标记信息 所以置为false
             isFinal = false;
             output = owner.NO_OUTPUT;
             inputCount = 0;
@@ -976,7 +982,7 @@ public class FSTCompiler<T> {
             // 先找到最后一个arc
             final Arc<T> arc = arcs[numArcs - 1];
             assert arc.label == labelToMatch : "arc.label=" + arc.label + " vs " + labelToMatch;
-            // 记录它的target信息
+            // 写入 compileNode 后 该字段会记录地址
             arc.target = target;
             //assert target.node != -2;
             // 连接的节点的权重
@@ -1023,7 +1029,9 @@ public class FSTCompiler<T> {
                 assert owner.validOutput(arcs[arcIdx].output);
             }
 
-            // 如果当前节点是最后一个节点  还会额外为该对象的 output赋值
+            // 首先考虑一下 能进入到prependOutput 就代表本次权重是比上次的权重小的 所以 arc上的权重要传播到下游
+            // 如果 此时该节点刚好代表某个arc链路的完结 需要为该节点设置output
+            // 也就是说正常情况下 权重都是在arc链路中被共享的  但是遇到isFinal的情况 就需要将output设置到节点上
             if (isFinal) {
                 output = owner.fst.outputs.add(outputPrefix, output);
                 assert owner.validOutput(output);
