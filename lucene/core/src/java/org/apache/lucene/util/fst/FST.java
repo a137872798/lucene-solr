@@ -753,7 +753,7 @@ public final class FST<T> implements Accountable {
         final long startAddress = fstCompiler.bytes.getPosition();
         //System.out.println("  startAddr=" + startAddress);
 
-        // 是否以固定长度存储 arcs
+        // 是否以固定长度存储 arcs  当某个node下挂载的arc特别多的情况 可以采用固定长度存储 这样可以利用二分查找
         final boolean doFixedLengthArcs = shouldExpandNodeWithFixedLengthArcs(fstCompiler, nodeIn);
         // 代表允许以固定长度存储 arc  TODO 先忽略这里 因为一般情况下node只会使用到一个arc
         if (doFixedLengthArcs) {
@@ -778,7 +778,7 @@ public final class FST<T> implements Accountable {
 
         int maxBytesPerArc = 0;
         int maxBytesPerArcWithoutLabel = 0;
-        // 这里在遍历所有的 arc
+        // 这里在遍历所有的 arc 从0开始 最后又会将数据反向写入
         for (int arcIdx = 0; arcIdx < nodeIn.numArcs; arcIdx++) {
             final FSTCompiler.Arc<T> arc = nodeIn.arcs[arcIdx];
             // 因为从后往前处理 后面的节点在编译完成后 会作为target 设置到上一个为编译node的lastArc中
@@ -794,7 +794,7 @@ public final class FST<T> implements Accountable {
                 flags += BIT_LAST_ARC;
             }
 
-            // 代表上一个冻结的节点就是本次arc指向的节点  这样就可以不存储next的节点对应的下标了
+            // 代表上一个冻结的节点就是本次arc指向的节点  这样就可以不存储next的节点对应的下标了  一般就是最后一个arc才出现这种情况
             if (fstCompiler.lastFrozenNode == target.node && !doFixedLengthArcs) {
                 // TODO: for better perf (but more RAM used) we
                 // could avoid this except when arc is "near" the
@@ -802,27 +802,27 @@ public final class FST<T> implements Accountable {
                 flags += BIT_TARGET_NEXT;
             }
 
-            // 代表连接的节点是否是 final 节点
+            // 代表该arc刚好是某个input的结尾
             if (arc.isFinal) {
                 flags += BIT_FINAL_ARC;
-                // 如果下个节点携带权重信息 (携带的前提就是下个节点 isFinal为true 且 arc携带权重)
+                // 代表该节点上 存储了权重信息 比如 do15 dog 2 那么权重差值13 就会存储在o的节点上 用于还原do的权重信息
                 if (arc.nextFinalOutput != NO_OUTPUT) {
                     flags += BIT_ARC_HAS_FINAL_OUTPUT;
                 }
             } else {
-                // 如果下个节点不是 final 节点 那么该值必然不会被设置 只有当下个节点是final时 才可能设置node.output信息
+                // 如果下个节点不是 final 节点 那么该值必然不会被设置
                 assert arc.nextFinalOutput == NO_OUTPUT;
             }
 
-            // 代表下游节点有效  并不是空节点    返回的是存储在ByteStore的地址
+            // 代表下游节点有效  并不是空节点    返回的是存储在ByteStore的地址   如果整条链路中最后一个arc 它的target就是 <= 0
             boolean targetHasArcs = target.node > 0;
 
-            // 当下游没有节点时 写入特殊标识
+            // 当下游节点无arc数据时 写入特殊标识
             if (!targetHasArcs) {
                 flags += BIT_STOP_NODE;
             }
 
-            // 如果当前节点挂载的arc有权重信息
+            // 代表当前arc 有权重信息
             if (arc.output != NO_OUTPUT) {
                 flags += BIT_ARC_HAS_OUTPUT;
             }

@@ -444,21 +444,22 @@ public class FSTCompiler<T> {
 
     /**
      *
-     * @param prefixLenPlus1 相同前缀长度+1 (原本 prefixLen 是数组下标)
+     * @param prefixLenPlus1 相同前缀长度+1
      * @throws IOException
      */
     private void freezeTail(int prefixLenPlus1) throws IOException {
         //System.out.println("  compileTail " + prefixLenPlus1);
         final int downTo = Math.max(1, prefixLenPlus1);
-        // downTo 就是从末尾开始直到第一个不一样的元素  也就是遍历不相同的部分
+        // 从后往前 直到前缀相同的位置 将arc数据写入到 fst中
         for (int idx = lastInput.length(); idx >= downTo; idx--) {
 
             boolean doPrune = false;
             boolean doCompile = false;
 
-            // frontier[idx] 是取下一个元素 frontier会确保比当前最长的input长度多1个单位
+            // 从最后一个节点开始
+            // 极端情况 idx = prefixLenPlus1  也就是 首个非共享节点
             final UnCompiledNode<T> node = frontier[idx];
-            // 该值才对应此时处理的后缀不同的节点  最终指向首个不共享的节点
+            // 极端情况是首个共享节点
             final UnCompiledNode<T> parent = frontier[idx - 1];
 
             // minSuffixCount1 该值默认是0 先忽略第一个分支
@@ -525,7 +526,7 @@ public class FSTCompiler<T> {
                     compileAllTargets(node, lastInput.length() - idx);
                 }
 
-                // 获取下游节点的权重值  只有当node节点本身是isFinal时 output就是上一个arc的output
+                // 如果此时该节点正好对应着某个input的结尾
                 final T nextFinalOutput = node.output;
 
                 // We "fake" the node as being final if it has no
@@ -533,7 +534,7 @@ public class FSTCompiler<T> {
                 // as non-final (the FST can represent this), but
                 // FSTEnum, Util, etc., have trouble w/ non-final
                 // dead-end states:
-                // 当该节点是此时最后一个节点时   它的arc数量为0 在这个场景下 arcs能为0 就代表是末尾节点
+                // 如果此时该节点正好对应着某个input的结尾 或者此时是最后一个节点
                 final boolean isFinal = node.isFinal || node.numArcs == 0;
 
                 // 默认进入第一个分支
@@ -650,7 +651,7 @@ public class FSTCompiler<T> {
         // 首个block input的长度就是 共享前缀的长度  之后的block 长度+1 在原有的基础上增加一个floorLeadLabel   再之后同一批block的长度应该都是一样的
         final int pos1Stop = Math.min(lastInput.length(), input.length);
         while (true) {
-            // 增加经过该节点的链路数量  (这个时候应该只存在一种链路  一旦出现了不一样的节点的时候 应该就会将不同的节点编译掉)
+            // 先增加上游节点的inputCount 然后才开始比较边的值是否相同
             frontier[pos1].inputCount++;
             // 注意 当达到某个输入流的末尾 或者 当2者不同时 退出循环     lastInput.intAt(0) 代表 frontier[0].firstArc的label
             if (pos1 >= pos1Stop || lastInput.intAt(pos1) != input.ints[pos2]) {
@@ -660,11 +661,10 @@ public class FSTCompiler<T> {
             pos2++;
         }
 
-        // 前缀长度+1   pos1是数组下标
+        // 退出时是共享前缀边的长度  非数组下标 这里再将长度+1
         final int prefixLenPlus1 = pos1 + 1;
 
-        // 本次输入的字符可能长度超过了之前创建的 node 这里针对 frontier进行扩容
-        // 注意这里额外创建了一个node  (input.length + 1)
+        // 节点本身就要比最大的input长度多1  node -> arc -> node
         if (frontier.length < input.length + 1) {
             final UnCompiledNode<T>[] next = ArrayUtil.grow(frontier, input.length + 1);
             for (int idx = frontier.length; idx < next.length; idx++) {
@@ -676,17 +676,12 @@ public class FSTCompiler<T> {
         // minimize/compile states from previous input's
         // orphan'd suffix
         // 因为传入了新的值 所以之前不同的后缀部分可以被冻结了   内部涉及到写入FST 以及存储到 NodeHash 以压缩FST大小的逻辑
-        /**
-         * 这里只有2种情况
-         * 1: prefixLenPlus1 超过了之前存储的数据 那么就不需要冻结
-         * 2: prefixLenPlus1 <= 之前存储的数据   超出的部分要进行冻结
-         */
         freezeTail(prefixLenPlus1);
 
         // init tail states for current input
         //
         for (int idx = prefixLenPlus1; idx <= input.length; idx++) {
-            // frontier[idx - 1] 对应最后一个共用的 UnCompilerNode   对应的input.ints[input.offset + idx - 1] 则是arc的值
+            // frontier[idx - 1] 对应最后一个共用的 UnCompilerNode   这时增加新的arc
             // 在经过freezeTail 后 所有node都已经被重置了 这里只有第一个节点有2个arc 其他的都是单个arc  (前提是共享前缀长度小于上次的长度  否则全都是1个arc )
             frontier[idx - 1].addArc(input.ints[input.offset + idx - 1], frontier[idx]);
             // 增加该节点上链路被共享次数   (首次创建arc就代表该链路默认被共享了一次)
@@ -698,6 +693,7 @@ public class FSTCompiler<T> {
         // 本次传入长的话 返回的就是最后一个节点 (这种情况最简单 可以忽略 )
         // 以上2条都代表同一个含义 也就是lastNode之前的活跃arc链路刚好代表某个input的完结
         final UnCompiledNode<T> lastNode = frontier[input.length];
+        // 只有当2次输入完全一致时 才不会重置吧   后半句就代表2次input必须完全一致
         if (lastInput.length() != input.length || prefixLenPlus1 != input.length + 1) {
             lastNode.isFinal = true;
             lastNode.output = NO_OUTPUT;
@@ -705,8 +701,7 @@ public class FSTCompiler<T> {
 
         // push conflicting outputs forward, only as far as
         // needed
-        // 共享权重   实际上能进入 下面的循环代表 prefixLenPlus1 至少是3 也就是公共前缀至少是2 因为此时如果只有2个节点 (起始节点和终止节点)
-        // 那么前缀长度最多只能是1  无法往下游传播权重
+        // 共享权重
         for (int idx = 1; idx < prefixLenPlus1; idx++) {
             // 从第2个节点到最后一个共享节点
             final UnCompiledNode<T> node = frontier[idx];
@@ -719,6 +714,18 @@ public class FSTCompiler<T> {
 
             final T commonOutputPrefix;
             final T wordSuffix;
+
+            // 这里列出4种情况
+            // do 15 dog 2    同样两轮循环 第一轮 d共享权重 同时将权重13传播到o 第二轮重置o的权重 同时将13往后传播 g 携带的权重就变成13
+            //                同时 o后面的节点在上一轮被标记成isFinal 会携带一个13的权重
+            //                之后在 frontier[prefixLenPlus1 - 1].setLastOutput(input.ints[input.offset + prefixLenPlus1 - 1], output);  g上的权重又会被覆盖成 NO_OUTPUT
+            // do 2 dog 15   第一轮循环 d共享权重2 将权重13传播到o 第二轮将o的权重置空 同时发现o后面的节点是isFinal节点 所以 o后面的node output为 NO_OUTPUT 最后将g赋予权重13
+            // dog 2 do 15   此时prefixLenPlus1 为3 第一轮循环 d共享前缀2 同时无可传播的权重 第二轮循环 o权重为空 同时发现o后面的node被标识为isFinal 将权重设置到节点上 此时该节点作为finalNode
+            // dog 15 do 2   该情况与第三种基本相同 不过finalNode 的output为 NO_OUTPUT 同时传播权重到g上
+            //               o后面的节点还是会被标记成 isFinal 所以就有了 isFinal为true 但是output不一定存在的情况
+
+            // 假设 do 15 dog 2 dof2 这时 g是不会被冻结的  13是放在节点上的 所以在传播过程中 13不需要被传播第二次 只要处理完前面共享的d/2就可以
+            // 如果一个input只出现一次 那么一个节点只能被设置成一次final 除非 数据被冻结 节点被重置才有可能重新从 isFinal false->true
 
             // 代表之前 arc上已经设置了权重值 这里打算复用  那么就是往之后的节点追加权重差值
             if (lastOutput != NO_OUTPUT) {
@@ -733,7 +740,6 @@ public class FSTCompiler<T> {
                 // 因为要确保公共前缀的权重不能超过此时新插入的input的权重值
                 parentNode.setLastOutput(input.ints[input.offset + idx - 1], commonOutputPrefix);
                 // 将剩余部分追加到所有的arc 因为他们共享的arc(边的权重变小了) 所以相应的要给所有子级arc增加权重才能维持前后不变
-                // 当本次权重比上次大时 不需要处理
                 node.prependOutput(wordSuffix);
             } else {
                 // 无可复用的权重值
@@ -985,9 +991,9 @@ public class FSTCompiler<T> {
             // 写入 compileNode 后 该字段会记录地址
             arc.target = target;
             //assert target.node != -2;
-            // 连接的节点的权重
+            // 当下个节点正好是final时 记录它的output
             arc.nextFinalOutput = nextFinalOutput;
-            // 代表连接的节点是否是最后一个节点
+            // 下个节点是否是 final (是的话代表某个input 刚好以该arc作为结尾)
             arc.isFinal = isFinal;
         }
 
@@ -1029,7 +1035,6 @@ public class FSTCompiler<T> {
                 assert owner.validOutput(arcs[arcIdx].output);
             }
 
-            // 首先考虑一下 能进入到prependOutput 就代表本次权重是比上次的权重小的 所以 arc上的权重要传播到下游
             // 如果 此时该节点刚好代表某个arc链路的完结 需要为该节点设置output
             // 也就是说正常情况下 权重都是在arc链路中被共享的  但是遇到isFinal的情况 就需要将output设置到节点上
             if (isFinal) {
