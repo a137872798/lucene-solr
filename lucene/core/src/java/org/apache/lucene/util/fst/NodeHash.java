@@ -75,7 +75,7 @@ final class NodeHash<T> {
         fst.readFirstRealTargetArc(address, scratchArc, in);
 
         // Fail fast for a node with fixed length arcs.
-        // bytesPerArc 代表arc是按照固定长度存储的
+        // bytesPerArc 代表arc是按照固定长度存储的  TODO 先跳过这种情况
         if (scratchArc.bytesPerArc() != 0) {
             // 只有当 flag是 用于二分查找时 才直接使用numArc做判断
             if (scratchArc.nodeFlags() == FST.ARCS_FOR_BINARY_SEARCH) {

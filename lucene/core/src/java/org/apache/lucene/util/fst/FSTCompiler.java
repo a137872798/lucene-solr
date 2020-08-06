@@ -715,16 +715,21 @@ public class FSTCompiler<T> {
             final T commonOutputPrefix;
             final T wordSuffix;
 
-            // 这里列出4种情况
-            // do 15 dog 2    同样两轮循环 第一轮 d共享权重 同时将权重13传播到o 第二轮重置o的权重 同时将13往后传播 g 携带的权重就变成13
-            //                同时 o后面的节点在上一轮被标记成isFinal 会携带一个13的权重
+            // 这里列出2种情况    dog 2 do15 和  dog15 do2 在这个具体实现中并不能正常运行  因为lucene的fst前提条件就是 数据是顺序插入的
+            // 比如 dog2 do15  在下面 发现第二轮lastOutput == NO_OUTPUT 直接就跳过了往node设置output的过程了
+            // node -> d -> node -> o -> node -> g -> node
+            //         2            13
+            //                      0     13     13
+            //                                    0
+            // do 15 dog 2    同样两轮循环 第一轮 d共享权重2  将13传播给o  第二轮 o的权重变成common 也就是0   同时发现 o后面的node是final 节点 将权重差值 13-0 设置到该节点上
             //                之后在 frontier[prefixLenPlus1 - 1].setLastOutput(input.ints[input.offset + prefixLenPlus1 - 1], output);  g上的权重又会被覆盖成 NO_OUTPUT
-            // do 2 dog 15   第一轮循环 d共享权重2 将权重13传播到o 第二轮将o的权重置空 同时发现o后面的节点是isFinal节点 所以 o后面的node output为 NO_OUTPUT 最后将g赋予权重13
-            // dog 2 do 15   此时prefixLenPlus1 为3 第一轮循环 d共享前缀2 同时无可传播的权重 第二轮循环 o权重为空 同时发现o后面的node被标识为isFinal 将权重设置到节点上 此时该节点作为finalNode
-            // dog 15 do 2   该情况与第三种基本相同 不过finalNode 的output为 NO_OUTPUT 同时传播权重到g上
-            //               o后面的节点还是会被标记成 isFinal 所以就有了 isFinal为true 但是output不一定存在的情况
 
-            // 假设 do 15 dog 2 dof2 这时 g是不会被冻结的  13是放在节点上的 所以在传播过程中 13不需要被传播第二次 只要处理完前面共享的d/2就可以
+            // node -> d -> node -> o -> node -> g -> node
+            //         2            0
+            //
+            //                                   13
+            // do 2 dog 15   第一轮循环 d共享权重2 没有权重可以传给下游  第二轮 公共权重直接为NO_OUTPUT  最后 为g设置13
+
             // 如果一个input只出现一次 那么一个节点只能被设置成一次final 除非 数据被冻结 节点被重置才有可能重新从 isFinal false->true
 
             // 代表之前 arc上已经设置了权重值 这里打算复用  那么就是往之后的节点追加权重差值

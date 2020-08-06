@@ -580,6 +580,7 @@ public final class FST<T> implements Accountable {
         if (newStartNode == FINAL_END_NODE && emptyOutput != null) {
             newStartNode = 0;
         }
+        // 此时 startNode 记录的就是最后一个arc对应flag的位置
         startNode = newStartNode;
         bytes.finish();
     }
@@ -753,7 +754,7 @@ public final class FST<T> implements Accountable {
         final long startAddress = fstCompiler.bytes.getPosition();
         //System.out.println("  startAddr=" + startAddress);
 
-        // 是否以固定长度存储 arcs  当某个node下挂载的arc特别多的情况 可以采用固定长度存储 这样可以利用二分查找
+        // 是否以固定长度存储 arcs  当某个node下挂载的arc特别多的情况 可以采用固定长度存储 这样可以利用二分查找   TODO 这个逻辑就先不看吧
         final boolean doFixedLengthArcs = shouldExpandNodeWithFixedLengthArcs(fstCompiler, nodeIn);
         // 代表允许以固定长度存储 arc  TODO 先忽略这里 因为一般情况下node只会使用到一个arc
         if (doFixedLengthArcs) {
@@ -806,6 +807,7 @@ public final class FST<T> implements Accountable {
             if (arc.isFinal) {
                 flags += BIT_FINAL_ARC;
                 // 代表该节点上 存储了权重信息 比如 do15 dog 2 那么权重差值13 就会存储在o的节点上 用于还原do的权重信息
+                // 比如 do2 dog15 那么 o 后面的节点final 也是true 但是这时就不需要额外的权重了
                 if (arc.nextFinalOutput != NO_OUTPUT) {
                     flags += BIT_ARC_HAS_FINAL_OUTPUT;
                 }
@@ -817,7 +819,7 @@ public final class FST<T> implements Accountable {
             // 代表下游节点有效  并不是空节点    返回的是存储在ByteStore的地址   如果整条链路中最后一个arc 它的target就是 <= 0
             boolean targetHasArcs = target.node > 0;
 
-            // 当下游节点无arc数据时 写入特殊标识
+            // 当下游节点无arc数据时 写入特殊标识  表示此边的目标节点是-1，已经遍历到了FST的末尾
             if (!targetHasArcs) {
                 flags += BIT_STOP_NODE;
             }
@@ -840,12 +842,12 @@ public final class FST<T> implements Accountable {
 
             // 如果携带了权重信息 那么将权重信息写入
             if (arc.output != NO_OUTPUT) {
-                // outputs.write 会先将数据的长度信息写入 之后才写入数据
+                // outputs.write 会先将数据的长度信息写入 之后才写入数据 因为有可能权重会超过一个byte才能表示
                 outputs.write(arc.output, fstCompiler.bytes);
                 //System.out.println("    write output");
             }
 
-            // 代表下个节点有权重信息   注意与上面的含义不同
+            // 存储节点上的权重信息
             if (arc.nextFinalOutput != NO_OUTPUT) {
                 //System.out.println("    write final output");
                 outputs.writeFinalOutput(arc.nextFinalOutput, fstCompiler.bytes);
@@ -1140,7 +1142,7 @@ public final class FST<T> implements Accountable {
 
     /**
      * Fills virtual 'start' arc, ie, an empty incoming arc to the FST's start node
-     * 将传入的arc 的target 指向 startNode
+     * 读取第一个arc的数据  这是一个startArc 并没有存储实际数据 他指向编译完成的fst的 最后一个arc的地址
      */
     public Arc<T> getFirstArc(Arc<T> arc) {
         T NO_OUTPUT = outputs.getNoOutput();
@@ -1248,27 +1250,34 @@ public final class FST<T> implements Accountable {
      * this changes the provided <code>arc</code> (2nd arg) in-place and returns
      * it.
      *
-     * @param follow  上一个节点  它的target所指向的地址 可以在in中 读取到 填充到本次arc的数据
-     * @param arc
-     * @param in  一般存储的都是地址信息 所以需要配合输入流读取数据
+     * @param follow  上一个arc的数据
+     * @param arc    通过上一个arc读取到的数据会被填充到该arc内
+     * @param in  用于反向读取fst内部已经编译完成的数据
      * @return Returns the second argument (<code>arc</code>).
      */
     public Arc<T> readFirstTargetArc(Arc<T> follow, Arc<T> arc, BytesReader in) throws IOException {
         //int pos = address;
         //System.out.println("    readFirstTarget follow.target=" + follow.target + " isFinal=" + follow.isFinal());
-        // TODO 什么情况会是final ???
+        // 代表此时arc是某个input的结尾
         if (follow.isFinal()) {
             // Insert "fake" final first arc:
+            // 这时就返回一个 特殊的arc提示已经读取完毕
             arc.label = END_LABEL;
+            // 将follow原本连接的下一个节点的output回填到 arc上  此时计算总的output就是这些arc.output的总和
             arc.output = follow.nextFinalOutput();
+            // 标记该arc代表了某个input的结尾
             arc.flags = BIT_FINAL_ARC;
+            // 代表该follow 连接到的是 终止节点 (因为target是数组下标-1 终止节点的下标是0)
             if (follow.target() <= 0) {
                 arc.flags |= BIT_LAST_ARC;
             } else {
                 // NOTE: nextArc is a node (not an address!) in this case:
+                // 回填下一个arc的地址
                 arc.nextArc = follow.target();
             }
+            // 因为本节点已经结束了 所以target 填了 一个 空值
             arc.target = FINAL_END_NODE;
+            // TODO 这个标识是???
             arc.nodeFlags = arc.flags;
             //System.out.println("    insert isFinal; nextArc=" + follow.target + " isLast=" + arc.isLast() + " output=" + outputs.outputToString(arc.output));
             return arc;

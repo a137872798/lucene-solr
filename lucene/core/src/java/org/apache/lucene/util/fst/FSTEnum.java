@@ -65,9 +65,10 @@ abstract class FSTEnum<T> {
    *  term before target.  */
   FSTEnum(FST<T> fst) {
     this.fst = fst;
+    // 反向读取对象
     fstReader = fst.getBytesReader();
     NO_OUTPUT = fst.outputs.getNoOutput();
-    // 创建首个arc 它指向的 node 是 startNode 并且值为-1
+    // 此时读取的是一个空的arc  它的target指向 编译完成的fst的首个arc的地址
     fst.getFirstArc(getArc(0));
     output[0] = NO_OUTPUT;
   }
@@ -118,6 +119,7 @@ abstract class FSTEnum<T> {
     if (upto == 0) {
       //System.out.println("  init");
       upto = 1;
+      // 开始读取第一个有实际意义的数据
       fst.readFirstTargetArc(getArc(0), getArc(1), fstReader);
     } else {
       // pop
