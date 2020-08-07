@@ -28,7 +28,7 @@ import org.apache.lucene.index.PointValues;
 
 /**
  * Describes the properties of a field.
- * 该对象描述了某个field的属性
+ * 该对象描述了某个field的属性  因为实现了IndexableFieldType接口 所以除了基本信息外 还会包含哪些信息支持被索引
  */
 public class FieldType implements IndexableFieldType  {
 
@@ -66,6 +66,9 @@ public class FieldType implements IndexableFieldType  {
   private int dimensionCount;
   private int indexDimensionCount;
   private int dimensionNumBytes;
+  /**
+   * 用户自定义信息
+   */
   private Map<String, String> attributes;
 
   /**
@@ -299,6 +302,7 @@ public class FieldType implements IndexableFieldType  {
    * @throws IllegalStateException if this FieldType is frozen against
    *         future modifications.
    * @see #indexOptions()
+   * 设置被索引项 最多支持  docs  freqs  positions
    */
   public void setIndexOptions(IndexOptions value) {
     checkIfFrozen();

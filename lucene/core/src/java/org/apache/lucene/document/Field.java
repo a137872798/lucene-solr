@@ -58,24 +58,26 @@ import org.apache.lucene.util.BytesRef;
  * to the state of the IndexableFieldType will impact any
  * Field it is used in.  It is strongly recommended that no
  * changes be made after Field instantiation.
- * IndexableField 代表索引中的一个字段
- */
+ * IndexableField 接口 表示field  支持一个返回 IndexableFieldType 的方法
+ * Field 有很多子类 他们都固化了自己的 IndexableFieldType
+ * 如果用户手动创建 Field 可以自己指定索引存储信息
+ * */
 public class Field implements IndexableField {
 
   /**
    * Field's type
-   * 该字段的类型
+   * 描述哪些属性支持被索引
    */
   protected final IndexableFieldType type;
 
   /**
    * Field's name
-   * 字段名
+   * 域的名字
    */
   protected final String name;
 
   /** Field's value */
-  // 字段对应的数据内容
+  // 域所携带的数据
   protected Object fieldsData;
 
   /** Pre-analyzed tokenStream for indexed fields; this is
@@ -210,7 +212,6 @@ public class Field implements IndexableField {
    * @param type field type
    * @throws IllegalArgumentException if the field name, bytes or type
    *         is null, or the field's type is indexed().
-   *         BytesRef 就是一个 byte[]
    */
   public Field(String name, BytesRef bytes, IndexableFieldType type) {
     if (name == null) {
@@ -237,6 +238,7 @@ public class Field implements IndexableField {
    * @throws IllegalArgumentException if either the name, value or type
    *         is null, or if the field's type is neither indexed() nor stored(), 
    *         or if indexed() is false but storeTermVectors() is true.
+   *         创建一个域对象
    */
   public Field(String name, CharSequence value, IndexableFieldType type) {
     if (name == null) {
@@ -630,12 +632,14 @@ public class Field implements IndexableField {
   }
 
   /** Specifies whether and how a field should be stored. */
+  // 描述是否需要存储 域信息
   public static enum Store {
 
     /** Store the original field value in the index. This is useful for short texts
      * like a document's title which should be displayed with the results. The
      * value is stored in its original form, i.e. no analyzer is used before it is
      * stored.
+     * 将域的值存储到 索引中
      */
     YES,
 

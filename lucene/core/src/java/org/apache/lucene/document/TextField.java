@@ -25,13 +25,15 @@ import org.apache.lucene.index.IndexOptions;
 /** A field that is indexed and tokenized, without term
  *  vectors.  For example this would be used on a 'body'
  *  field, that contains the bulk of a document's text. */
-
+// 代表整个域是一个 文本类型  他的索引信息已经被固化了
 public final class TextField extends Field {
 
   /** Indexed, tokenized, not stored. */
+  // 代表参与索引 参与分词 不需要存储
   public static final FieldType TYPE_NOT_STORED = new FieldType();
 
   /** Indexed, tokenized, stored. */
+  // 参与索引 分词 存储
   public static final FieldType TYPE_STORED = new FieldType();
 
   static {

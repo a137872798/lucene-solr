@@ -49,16 +49,14 @@ import org.apache.lucene.util.ThreadInterruptedException;
 final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerThread>, Closeable {
 
   /**
-   * 池内有多少工作线程
+   * 该容器存储了所有 pool创建的线程 便于统一管理
    */
   private final Set<DocumentsWriterPerThread> dwpts = Collections.newSetFromMap(new IdentityHashMap<>());
   /**
    * 此时空闲的线程
    */
   private final Deque<DocumentsWriterPerThread> freeList = new ArrayDeque<>();
-  /**
-   * 类似于 threadFactory
-   */
+
   private final IOSupplier<DocumentsWriterPerThread> dwptFactory;
   private int takenWriterPermits = 0;
   private boolean closed;
@@ -87,7 +85,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
   }
 
   /**
-   * 与上面对应
+   * 此时不允许创建新的工作线程
    */
   synchronized void unlockNewWriters() {
     assert takenWriterPermits > 0;
@@ -106,6 +104,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
    */
   private synchronized DocumentsWriterPerThread newWriter() throws IOException {
     assert takenWriterPermits >= 0;
+    // 只要此时创建新的writer 还处于上锁状态 就只能等待
     while (takenWriterPermits > 0) {
       // we can't create new DWPTs while not all permits are available
       try {
@@ -114,10 +113,11 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
         throw new ThreadInterruptedException(ie);
       }
     }
-    // 该工厂只是为  thread对象填充各种属性
+    // 该工厂只是为  DocumentsWriterPerThread对象填充各种属性
     DocumentsWriterPerThread dwpt = dwptFactory.get();
     // 在存入到能够被其他线程访问到的容器前 先抢占这个对象
     dwpt.lock(); // lock so nobody else will get this DWPT
+    // 存储到管理所有线程的 容器中
     dwpts.add(dwpt);
     return dwpt;
   }
@@ -139,6 +139,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
       final Iterator<DocumentsWriterPerThread> descendingIterator = freeList.descendingIterator();
       while (descendingIterator.hasNext()) {
         DocumentsWriterPerThread perThread = descendingIterator.next();
+        // 可以看到 先尝试对线程上锁 成功抢占后 才允许返回  同时从空闲队列中移除  也就是本对象是支持复用的
         if (perThread.tryLock()) {
           descendingIterator.remove();
           return perThread;

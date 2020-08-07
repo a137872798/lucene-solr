@@ -198,7 +198,9 @@ public class TestIndexWriter extends LuceneTestCase {
 
   static void addDoc(IndexWriter writer) throws IOException
   {
+    // 创建一个doc 对象   doc实现了 field的迭代器接口 初始化时内部没有数据
     Document doc = new Document();
+    // 这里创建一个 text类型的field
     doc.add(newTextField("content", "aaa", Field.Store.NO));
     writer.addDocument(doc);
   }

@@ -84,7 +84,7 @@ final class DefaultIndexingChain extends DocConsumer {
     // NOTE: I tried using Hash Map<String,PerField>
     // but it was ~2% slower on Wiki and Geonames with Java
     // 1.7.0_25:
-    // hash桶 当内部 totalFieldCount 长度达到1/2时 进行扩容  多个fieldInfo 以链表形式连接
+    // 缓存了每个field 需要存储到索引文件的信息  每当processField时 通过fieldName 找到之前的perField对象 这也代表着 fieldName 是IndexWriter唯一的 (通过那个全局容器去重)
     private PerField[] fieldHash = new PerField[2];
     private int hashMask = 1;
 
@@ -93,7 +93,7 @@ final class DefaultIndexingChain extends DocConsumer {
      */
     private int totalFieldCount;
     /**
-     * 每当处理一个新的  doc时 就会增加年代
+     * 每当处理一个新的  doc时 就会增加gen  代表某些field是同一批写入的
      */
     private long nextFieldGen;
 
@@ -115,16 +115,16 @@ final class DefaultIndexingChain extends DocConsumer {
     public DefaultIndexingChain(DocumentsWriterPerThread docWriter) {
         this.docWriter = docWriter;
         this.fieldInfos = docWriter.getFieldInfosBuilder();
-        // 当写入一组 doc 时 每次docState都会更新 同时会通过该对象挨个写入doc
+        // 该对象记录了此时正在处理的doc 信息 以及当前 docId
         this.docState = docWriter.docState;
         this.bytesUsed = docWriter.bytesUsed;
 
         final TermsHash termVectorsWriter;
-        // 每个thread 存储的文档会被归结到 某个segment中 在这个段中 可以规定排序规则
+        // TODO 先假设 indexSort为null
         if (docWriter.getSegmentInfo().getIndexSort() == null) {
-            // 该对象对外暴露处理doc的api 内部维护了 向索引文件写入数据的 writer
+            // 该对象专门负责存储 field相关信息 (生成索引结构 并存储)
             storedFieldsConsumer = new StoredFieldsConsumer(docWriter);
-            // 同上 不过该对象写入的是向量数据
+            // 该对象负责写入term的向量信息 TODO 现在还不清楚什么是向量信息 继承自一个 TermsHash对象
             termVectorsWriter = new TermVectorsConsumer(docWriter);
         } else {
             // 当声明了排序规则时 创建2个排序对象
@@ -471,6 +471,7 @@ final class DefaultIndexingChain extends DocConsumer {
     // 开始存储某个doc下所有的field
     private void startStoredFields(int docID) throws IOException {
         try {
+            // 做writer的初始化工作  并且发现 lastDocId 落后于 docId时 填充一些空的doc
             storedFieldsConsumer.startDocument(docID);
         } catch (Throwable th) {
             docWriter.onAbortingException(th);
@@ -503,6 +504,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // multiple field instances by the same name):
         int fieldCount = 0;
 
+        // 默认情况下 该值总是与 docId一致 标明了某个field是在处理哪个doc时存储的
         long fieldGen = nextFieldGen++;
 
         // NOTE: we need two passes here, in case there are
@@ -511,10 +513,11 @@ final class DefaultIndexingChain extends DocConsumer {
         // analyzer is free to reuse TokenStream across fields
         // (i.e., we cannot have more than one TokenStream
         // running "at once"):
-        // 实际上是转发到 词向量对象的 .startDocument()   会重置 词向量消费者内部的perField属性  perField 代表以field为单位解析 doc内部的数据
+        //
+        // 在 TermVectorsConsumer中 会清除 处理上一个doc时产生的field信息
         termsHash.startDocument();
 
-        // 为存储该doc下所有的field做准备 一般就是做清理工作
+        // 让 StoredFieldsConsumer 做一些准备工作
         startStoredFields(docState.docID);
         try {
             // 遍历该文档下所有的 field
@@ -546,10 +549,10 @@ final class DefaultIndexingChain extends DocConsumer {
     }
 
     /**
-     * 以 field 为单位 解析内部数据
+     * 在 processDocument中 会遍历doc下所有field 并进行处理
      *
-     * @param field
-     * @param fieldGen
+     * @param field   因为field实现了 IndexableField接口 会记录field上哪些信息需要存储到索引文件
+     * @param fieldGen  代表该field是属于哪个年代被处理的  目前 gen = docId
      * @param fieldCount  这个count是指处理某个doc时 总计遇到了几个field
      * @return
      * @throws IOException
@@ -566,7 +569,7 @@ final class DefaultIndexingChain extends DocConsumer {
         }
 
         // Invert indexed fields:
-        // 首先要确保 索引选项不为 NONE
+        // 代表field的某些信息需要写入到索引文件中
         if (fieldType.indexOptions() != IndexOptions.NONE) {
             // 将内部信息抽取出来生成 perField 对象
             fp = getOrAddField(fieldName, fieldType, true);
@@ -808,33 +811,37 @@ final class DefaultIndexingChain extends DocConsumer {
      * absorbing the type information from {@link FieldType},
      * and creates a new {@link PerField} if this field name
      * wasn't seen yet.
+     * @param invert 是否需要反转
+     * 通过记录了 该field下需要存储哪些信息 生成 PerField对象
      */
-    // 根据 field的索引信息 生成对象
     private PerField getOrAddField(String name, IndexableFieldType fieldType, boolean invert) {
 
         // Make sure we have a PerField allocated
         final int hashPos = name.hashCode() & hashMask;
+        // 先通过hash值检测是否已经为该field 生成过PerField信息了 也就是默认 fieldName 作为了field的唯一标识 不允许重复
         PerField fp = fieldHash[hashPos];
-        // 对应hashMap的 get()
+        // 通过 拉链法解决hash冲突
         while (fp != null && !fp.fieldInfo.name.equals(name)) {
             fp = fp.next;
         }
 
-        // 代表该 field的信息还是首次生成
+        // 代表之前并不存在该field 对应的 PerField 对象
         if (fp == null) {
             // First time we are seeing this field in this segment
 
             // 如果该fieldName 对应的field已经存在 选择复用 否则创建一个新的field 对象
+            // doc是 IndexableField的集合 那时候并没有生成 FieldInfo对象
+            // 在getOrAdd方法上加了并发控制
             FieldInfo fi = fieldInfos.getOrAdd(name);
-            // 使用该对象的索引信息填充 该对象
+            // 上面创建的FieldInfo 还是一个空对象  将需要存储到索引文件中的信息填充到 fieldInfo上
             initIndexOptions(fi, fieldType.indexOptions());
-            // 找到 描述该field的一组额外信息 全部转移到fi对象中
+            // 如果fieldType 上设置了用户自定义的属性 会转移到 fieldInfo.attribute
             Map<String, String> attributes = fieldType.getAttributes();
             if (attributes != null) {
                 attributes.forEach((k, v) -> fi.putAttribute(k, v));
             }
 
-            // 根据索引版本号 创建 perField 对象
+            // 根据索引版本号,fieldInfo 创建 perField 对象
             fp = new PerField(docWriter.getIndexCreatedVersionMajor(), fi, invert);
             // 链表操作  这里有必要刻意弄成一个 hash桶吗
             fp.next = fieldHash[hashPos];
@@ -874,6 +881,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // This is the first time we are seeing this field indexed, so we now
         // record the index options so that any future attempt to (illegally)
         // change the index options of this field, will throw an IllegalArgExc:
+        // 存储映射关系到全局容器
         fieldInfos.globalFieldNumbers.setIndexOptions(info.number, info.name, indexOptions);
         info.setIndexOptions(indexOptions);
     }
@@ -921,6 +929,7 @@ final class DefaultIndexingChain extends DocConsumer {
         long fieldGen = -1;
 
         // Used by the hash table
+        // 通过拉链法解决hash冲突 因为该对象主要是存放在 hash数组中
         PerField next;
 
         // Lazy init'd:
@@ -952,7 +961,7 @@ final class DefaultIndexingChain extends DocConsumer {
          */
         void setInvertState() {
             invertState = new FieldInvertState(indexCreatedVersionMajor, fieldInfo.name, fieldInfo.getIndexOptions());
-            // addField 会封装出一个 FreqPerField 对象 （同时该对象内部还以链表形式连接到一个 termVectorPerField对象）
+            // 这里开始处理 field信息 并存储解析出来的term
             termsHashPerField = termsHash.addField(invertState, fieldInfo);
             // 如果域信息存在 标准因子 那么需要初始化一个标准因子 writer
             if (fieldInfo.omitsNorms() == false) {

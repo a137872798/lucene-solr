@@ -31,7 +31,7 @@ import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 
 /**
- * 该对象和SortingTermVectorsConsumer 作为 FreqProxTermsWriter 的下游 会接受它发来的数据
+ * 词向量信息consumer 实际上以hash结构存储数据
  */
 class TermVectorsConsumer extends TermsHash {
   /**
@@ -63,7 +63,7 @@ class TermVectorsConsumer extends TermsHash {
   int numVectorFields;
   int lastDocID;
   /**
-   * 每次 reset时 会置空这个数组    TermVectorsConsumerPerField 该对象负责以 field 为单位 从term中抽取信息
+   * 每次 reset时 会置空这个数组    TermVectorsConsumerPerField负责从doc中抽取信息 并以field为单位存储
    */
   private TermVectorsConsumerPerField[] perFields = new TermVectorsConsumerPerField[1];
 
@@ -187,7 +187,7 @@ class TermVectorsConsumer extends TermsHash {
   }
 
   /**
-   * 词向量对象 在插入一个域时 会生成 一个  TermVectorsConsumerPerField
+   * 解析field 信息 读取termVectors
    * @param invertState
    * @param fieldInfo
    * @return
@@ -218,6 +218,7 @@ class TermVectorsConsumer extends TermsHash {
    */
   @Override
   void startDocument() {
+    // 清理处理上一个doc 时 遗留的 field信息
     resetFields();
     numVectorFields = 0;
   }

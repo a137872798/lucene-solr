@@ -51,7 +51,8 @@ import java.util.List;
 /**
  * {@link StoredFieldsWriter} impl for {@link CompressingStoredFieldsFormat}.
  *
- * @lucene.experimental 该对象配合压缩算法  负责将 域信息存储到 索引文件种
+ * @lucene.experimental
+ * 该对象才是将field信息存储到索引文件的工作对象
  */
 public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
@@ -161,20 +162,20 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         this.docBase = 0;
         // 这里创建了一个  可重复利用 BB对象的 output
         this.bufferedDocs = ByteBuffersDataOutput.newResettableInstance();
-        // 记录本次field 中有多少是具备排序属性的
+        // 每个doc 下存储了多少field
         this.numStoredFields = new int[16];
         this.endOffsets = new int[16];
         this.numBufferedDocs = 0;
 
         boolean success = false;
         try {
-            // 创建文件输出流  后缀名 fdt
+            // 创建文件输出流  后缀名 fdt 用于存储field信息
             fieldsStream = directory.createOutput(IndexFileNames.segmentFileName(segment, segmentSuffix, FIELDS_EXTENSION), context);
             // 写入文件头
             CodecUtil.writeIndexHeader(fieldsStream, formatName, VERSION_CURRENT, si.getId(), segmentSuffix);
             assert CodecUtil.indexHeaderLength(formatName, segmentSuffix) == fieldsStream.getFilePointer();
 
-            // 这里也会创建对应的临时文件   当该文件写入完毕后 indexWriter 会记录写入的doc总数 file最后的偏移量之类的信息 并转存到 Meta文件 和 Index文件 同时删除临时文件
+            // 针对field信息的索引文件
             indexWriter = new FieldsIndexWriter(directory, segment, segmentSuffix, INDEX_EXTENSION_PREFIX, INDEX_CODEC_NAME, si.getId(), blockShift, context);
 
             fieldsStream.writeVInt(chunkSize);

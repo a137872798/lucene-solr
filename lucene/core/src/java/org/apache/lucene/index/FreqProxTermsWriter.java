@@ -31,14 +31,15 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 
 /**
- * 该对象负责写入词的频率   该对象下游是写入词向量的对象
+ * 该对象负责写入词的频率
  */
 final class FreqProxTermsWriter extends TermsHash {
 
   /**
    * 在DefaultIndexingChain 中 该对象初始化时  还传入了一个 词向量对象 作为 下游对象
+   * 因为 词向量信息和 词频率信息 都是处理同一份 term 所以可以形成链表结构
    * @param docWriter
-   * @param termVectors
+   * @param termVectors  实际上会存储一个 TermVectorsConsumer
    */
   public FreqProxTermsWriter(DocumentsWriterPerThread docWriter, TermsHash termVectors) {
     super(docWriter, true, termVectors);
@@ -148,7 +149,7 @@ final class FreqProxTermsWriter extends TermsHash {
    */
   @Override
   public TermsHashPerField addField(FieldInvertState invertState, FieldInfo fieldInfo) {
-    // 先调用下游的  addField 之后将结果作为 返回的 perField的属性
+    // 先调用下游存储词向量的 TermHash.addField 之后将结果作为 返回的 perField的属性
     return new FreqProxTermsWriterPerField(invertState, this, fieldInfo, nextTermsHash.addField(invertState, fieldInfo));
   }
 }

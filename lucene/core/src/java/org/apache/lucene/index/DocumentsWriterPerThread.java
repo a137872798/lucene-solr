@@ -51,7 +51,7 @@ import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_MASK;
 import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /**
- * 针对docWriter 的操作可能是通过多个线程   每个线程对应一个该对象
+ * 具体的写入逻辑都在这个类里面
  */
 final class DocumentsWriterPerThread {
 
@@ -84,6 +84,9 @@ final class DocumentsWriterPerThread {
     }
 
 
+    /**
+     * 每个线程会维护一个处理器 负责通过分词器解析doc 并抽取相关信息存储到索引文件中
+     */
     static final IndexingChain defaultIndexingChain = new IndexingChain() {
 
         @Override
@@ -93,28 +96,28 @@ final class DocumentsWriterPerThread {
     };
 
     /**
-     * 当需要将某个doc 写入到索引时  会将相关信息填充到该对象
+     * 简单的bean对象
      */
     static class DocState {
         /**
-         * 当前负责写入文档数据的 线程
+         * 该描述信息绑定在哪个thread上
          */
         final DocumentsWriterPerThread docWriter;
         /**
-         * 该对象负责对写入的数据进行分词
+         * thread 使用哪个分词器解析doc
          */
         final Analyzer analyzer;
         InfoStream infoStream;
         /**
-         * 该对象负责打分
+         * 该对象负责对doc打分
          */
         Similarity similarity;
         /**
-         * 更新此时 doc 对应的文档号
+         * 此时处理到的最新的doc id
          */
         int docID;
         /**
-         * 用于遍历当前文档内部的域信息
+         * 此时正在处理的doc  可以通过它遍历内部的一组field  (field 有自己的name 和value 以及 记录哪些信息会存储到索引文件的 indexableType)
          */
         Iterable<? extends IndexableField> doc;
 
@@ -249,6 +252,9 @@ final class DocumentsWriterPerThread {
     // 该对象还指定了 内存分配器
     final Allocator byteBlockAllocator;
     final IntBlockPool.Allocator intBlockAllocator;
+    /**
+     * 代表此时正在解析的doc (解析指的是通过分词器抽取数据 以及生成索引结构的过程)
+     */
     private final AtomicLong pendingNumDocs;
     private final LiveIndexWriterConfig indexWriterConfig;
     /**
@@ -268,42 +274,45 @@ final class DocumentsWriterPerThread {
 
 
     /**
-     * @param indexVersionCreated
-     * @param segmentName
-     * @param directoryOrig
-     * @param directory
-     * @param indexWriterConfig
-     * @param infoStream
+     * @param indexVersionCreated  描述创建的索引版本
+     * @param segmentName   注意 每个 thread对象维护一个段名 而thread对象本身是可复用的 也就是往IndexWriter并发写入doc
+     *                      每个线程会对应一个 DocWriterThread 并有一个对应的segmentName
+     * @param directoryOrig 存储索引文件的目录
+     * @param directory  通过装饰器包装后的目录
+     * @param indexWriterConfig  配置信息
+     * @param infoStream   日志对象
      * @param deleteQueue
-     * @param fieldInfos
-     * @param pendingNumDocs      归属于某个 pool的 thread 共享同一个 pendingNumDocs
+     * @param fieldInfos   通过该对象创建的field 会存储到一个以 IndexWriter为单位的全局容器中
+     * @param pendingNumDocs      归属于某个 DocWriter的 thread 共享同一个 pendingNumDocs
      * @param enableTestPoints
      * @throws IOException
      */
     DocumentsWriterPerThread(int indexVersionCreated, String segmentName, Directory directoryOrig, Directory directory, LiveIndexWriterConfig indexWriterConfig, InfoStream infoStream, DocumentsWriterDeleteQueue deleteQueue,
                              FieldInfos.Builder fieldInfos, AtomicLong pendingNumDocs, boolean enableTestPoints) throws IOException {
+        // directory 原本在 IndexWriter上增加了对文件锁的判断 这里又进行了一层包装 通过该对象创建的文件都会被记录下来 以便在遇到异常时删除文件
         this.directory = new TrackingDirectoryWrapper(directory);
         this.fieldInfos = fieldInfos;
         this.indexWriterConfig = indexWriterConfig;
         this.infoStream = infoStream;
         this.codec = indexWriterConfig.getCodec();
-        // 这里通过 thread 和 analyzer 初始化 docState
+        // 只是一个简单的bean对象 内部描述了 该thread 通过哪个analyzer 对写入的doc进行解析 以及当前正在处理的doc信息
         this.docState = new DocState(this, indexWriterConfig.getAnalyzer(), infoStream);
-        // 获取打分器
+        // 为状态对象设置 打分器
         this.docState.similarity = indexWriterConfig.getSimilarity();
-        // 由同一个 pool 创建的线程会共享一个  numDoc 对象
+        // 由同一个 docWriter 创建的线程会共享一个  numDoc 对象 记录此时待刷盘的doc
         this.pendingNumDocs = pendingNumDocs;
         bytesUsed = Counter.newCounter();
         // 当使用该分配器 创建 BB 对象时 还会额外记录使用了多少内存
         byteBlockAllocator = new DirectTrackingAllocator(bytesUsed);
-        // 创建记录该段 某些field 更新状态的对象
+        // 注意 每个thread 对应一个存储doc更新的容器  同时也对应一个段
         pendingUpdates = new BufferedUpdates(segmentName);
         intBlockAllocator = new IntBlockAllocator(bytesUsed);
+        // 同一个DocWriter下的所有thread共用一个删除队列  queue负责采集更新/删除信息
         this.deleteQueue = Objects.requireNonNull(deleteQueue);
         assert numDocsInRAM == 0 : "num docs " + numDocsInRAM;
-        // 每个线程会持有自己的分片对象  不是共享的    这个deleteQueue 应该对应了某个pool
+        // 每个线程会持有自己的分片对象  每个线程就是通过这个分片对象 将bufferedUpdate 同步到 deleteQueue的 globalBufferedUpdates中的
         deleteSlice = deleteQueue.newSlice();
-        // 在创建段对象的时候 声明版本信息 用于判断索引能够兼容
+        // 根据段的版本号  创建段的描述信息
         segmentInfo = new SegmentInfo(directoryOrig, Version.LATEST, Version.LATEST, segmentName, -1, false, codec, Collections.emptyMap(), StringHelper.randomId(), Collections.emptyMap(), indexWriterConfig.getIndexSort());
         assert numDocsInRAM == 0;
         if (INFO_VERBOSE && infoStream.isEnabled("DWPT")) {
@@ -315,6 +324,7 @@ final class DocumentsWriterPerThread {
         this.indexVersionCreated = indexVersionCreated;
         // this should be the last call in the ctor
         // it really sucks that we need to pull this within the ctor and pass this ref to the chain!
+        // 初始化处理器对象 该对象包含了解析doc 存储数据到索引文件的核心逻辑
         consumer = indexWriterConfig.getIndexingChain().getChain(this);
     }
 
@@ -337,7 +347,7 @@ final class DocumentsWriterPerThread {
      * Anything that will add N docs to the index should reserve first to
      * make sure it's allowed.
      */
-    // 检测 doc数量是否超过限制
+    // 增加此时正在处理的doc
     private void reserveOneDoc() {
         // 增加 pendingNumDocs   如果超过了 max 则抛出异常
         if (pendingNumDocs.incrementAndGet() > IndexWriter.getActualMaxDocs()) {
@@ -348,6 +358,7 @@ final class DocumentsWriterPerThread {
     }
 
     /**
+     * 开始处理本次待写入的doc
      * @param docs               2层迭代器  外层代表多个doc  内层代表doc下的多个 field
      * @param deleteNode
      * @param flushNotifications 通过监听器触发响应钩子 就是IndexWriter
@@ -361,8 +372,9 @@ final class DocumentsWriterPerThread {
             if (INFO_VERBOSE && infoStream.isEnabled("DWPT")) {
                 infoStream.message("DWPT", Thread.currentThread().getName() + " update delTerm=" + deleteNode + " docID=" + docState.docID + " seg=" + segmentInfo.name);
             }
-            // 返回当前 docId
+            // 在处理前 内存中已经维护了多少doc
             final int docsInRamBefore = numDocsInRAM;
+            // 检测是否所有doc 都已经生成了索引结构数据
             boolean allDocsIndexed = false;
             try {
                 for (Iterable<? extends IndexableField> doc : docs) {
@@ -372,13 +384,14 @@ final class DocumentsWriterPerThread {
                     // document, so the counter will be "wrong" in that case, but
                     // it's very hard to fix (we can't easily distinguish aborting
                     // vs non-aborting exceptions):
-                    // 每个更新的文档 都会增加 pendingNumDoc
+                    // 当此时正在处理某个doc 时 会增加全局计数器 pendingNumDocs
                     reserveOneDoc();
-                    // 标记当前正在处理的 doc
+                    // 通过状态对象记录此时doc的信息
                     docState.doc = doc;
+                    // TODO 从这里可以推断 每次存储在内存中的docs id以0为起点   一旦刷盘后 numDocsInRAM变成0 之后写入的docId 又是从0开始
                     docState.docID = numDocsInRAM;
                     try {
-                        // 每个读取到的doc 都会通过consumer 进行处理
+                        // 开始处理当前doc
                         consumer.processDocument();
                     } finally {
                         numDocsInRAM++; // we count the doc anyway even in the case of an exception

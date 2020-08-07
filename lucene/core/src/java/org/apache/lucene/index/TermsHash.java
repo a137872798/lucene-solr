@@ -124,7 +124,7 @@ abstract class TermsHash {
   }
 
   /**
-   * 传入一个域对象 生成一个从 field中抽取属性的对象
+   * 从field中抽取 term信息
    * @param fieldInvertState
    * @param fieldInfo
    * @return

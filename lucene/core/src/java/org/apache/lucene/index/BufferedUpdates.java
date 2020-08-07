@@ -40,7 +40,7 @@ import org.apache.lucene.util.RamUsageEstimator;
 // NOTE: instances of this class are accessed either via a private
 // instance on DocumentWriterPerThread, or via sync'd code by
 // DocumentsWriterDeleteQueue
-// 该容器用于存储一些 删除 更新的数据    以 directory 为单位 每个segment都有一个专门的 BufferedUpdates 对象   同时还有一个全局的 BufferedUpdates 对象
+// 该容器用于存储一些 删除 更新的数据    每个writerPerThread对象在创建时 都会初始化该对象 记录在本线程中发生的doc删除 更新
 class BufferedUpdates implements Accountable {
 
     /* Rough logic: HashMap has an array[Entry] w/ varying

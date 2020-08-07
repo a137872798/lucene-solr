@@ -24,7 +24,7 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.IOUtils;
 
 /**
- * 该对象对外暴露了处理doc的 api  实际上存储doc内field的工作是交给 StoredFieldsWriter 对象
+ * 该对象专门负责存储 field的相关信息
  */
 class StoredFieldsConsumer {
   /**
@@ -32,6 +32,9 @@ class StoredFieldsConsumer {
    */
   final DocumentsWriterPerThread docWriter;
   StoredFieldsWriter writer;
+  /**
+   * 记录上一个处理的doc
+   */
   int lastDoc;
 
   StoredFieldsConsumer(DocumentsWriterPerThread docWriter) {
@@ -45,6 +48,7 @@ class StoredFieldsConsumer {
    */
   protected void initStoredFieldsWriter() throws IOException {
     if (writer == null) {
+      // 确保此时用于写入field信息的对象已经被初始化
       this.writer =
           docWriter.codec.storedFieldsFormat().fieldsWriter(docWriter.directory, docWriter.getSegmentInfo(),
               IOContext.DEFAULT);
@@ -52,14 +56,14 @@ class StoredFieldsConsumer {
   }
 
   /**
-   * 代表此时正在处理一个新的 doc
+   * 代表此时准备处理一个新的doc
    * @param docID  该doc对应的id
    * @throws IOException
    */
   void startDocument(int docID) throws IOException {
     assert lastDoc < docID;
     initStoredFieldsWriter();
-    // 因为 writer是按照 docId的顺序 写入doc的  这里会填充几个空的doc
+    // 当docId 不连续时 会写入空的doc
     while (++lastDoc < docID) {
       writer.startDocument();
       writer.finishDocument();

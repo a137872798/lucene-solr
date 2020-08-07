@@ -24,8 +24,7 @@ import org.apache.lucene.codecs.TermVectorsWriter;
 import org.apache.lucene.util.BytesRef;
 
 /**
- * 该对象从 term中抽取词向量信息 并保存
- * 每个域 对应一个该对象
+ * 该对象以field为单位 从中抽取term信息
  */
 final class TermVectorsConsumerPerField extends TermsHashPerField {
 

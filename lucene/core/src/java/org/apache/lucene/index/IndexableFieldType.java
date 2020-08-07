@@ -24,7 +24,7 @@ import org.apache.lucene.analysis.Analyzer; // javadocs
 /** 
  * Describes the properties of a field.
  * @lucene.experimental
- * 代表支持被索引的 域对象
+ * 用于描述被索引域
  */
 public interface IndexableFieldType {
 

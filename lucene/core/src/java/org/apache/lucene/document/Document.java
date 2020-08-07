@@ -43,7 +43,7 @@ import org.apache.lucene.util.BytesRef;
 public final class Document implements Iterable<IndexableField> {
 
   /**
-   * 内部存储了该文档相关的域
+   * 可以看到一个doc 内部存在非常多的field
    */
   private final List<IndexableField> fields = new ArrayList<>();
 

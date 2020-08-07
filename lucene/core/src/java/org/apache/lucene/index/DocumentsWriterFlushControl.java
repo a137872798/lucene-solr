@@ -560,11 +560,18 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         flushDeletes.set(true);
     }
 
+    /**
+     * 此时分配一个新的 docWriter线程 用于往索引文件中写入数据
+     * @return
+     * @throws IOException
+     */
     DocumentsWriterPerThread obtainAndLock() throws IOException {
+        // 确保此时 刷盘控制器还没有被关闭
         while (closed == false) {
             // 这里先尝试从空闲队列中重用 perThread 如果 无法重用就创建一个新的perThread 对象
             final DocumentsWriterPerThread perThread = perThreadPool.getAndLock();
-            // 直到找到批次相同的perThread 因为触发了 markForFullFlush 后  documentsWriter.deleteQueue 会更新 与之前创建的perThread 就会不一样
+            // 可以看到 从freeList 获取到的 perThread 可能是已经过期的  此时docWriter关联的deleteQueue可能已经替换过了
+            // 那么忽略这个线程 因为它的 更新/删除动作无法被 queue采集
             if (perThread.deleteQueue == documentsWriter.deleteQueue) {
                 // simply return the DWPT even in a flush all case since we already hold the lock and the DWPT is not stale
                 // since it has the current delete queue associated with it. This means we have established a happens-before

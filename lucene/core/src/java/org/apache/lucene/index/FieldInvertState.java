@@ -72,7 +72,11 @@ public final class FieldInvertState {
   TermFrequencyAttribute termFreqAttribute;
 
   /** Creates {code FieldInvertState} for the specified
-   *  field name. */
+   *  field name.
+   * @param indexCreatedVersionMajor 代表索引的版本号
+   * @param name fieldName
+   * @param indexOptions field中需要存储到索引文件中的信息
+   */
   public FieldInvertState(int indexCreatedVersionMajor, String name, IndexOptions indexOptions) {
     this.indexCreatedVersionMajor = indexCreatedVersionMajor;
     this.name = name;

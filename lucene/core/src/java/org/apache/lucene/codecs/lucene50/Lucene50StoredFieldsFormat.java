@@ -138,7 +138,7 @@ public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
   }
 
   /**
-   * 通过指定目录 创建向目录写入索引文件的writer对象
+   * 该对象负责写入 field信息
    * @param directory
    * @param si
    * @param context
@@ -147,7 +147,7 @@ public final class Lucene50StoredFieldsFormat extends StoredFieldsFormat {
    */
   @Override
   public StoredFieldsWriter fieldsWriter(Directory directory, SegmentInfo si, IOContext context) throws IOException {
-    // 这里将压缩模式信息 写入到 segment 中
+    // ！！！ 注意在创建用于写入field信息的 writer对象时 会往 perThread关联的segmentInfo 中填入压缩模式
     String previous = si.putAttribute(MODE_KEY, mode.name());
     if (previous != null && previous.equals(mode.name()) == false) {
       throw new IllegalStateException("found existing value for " + MODE_KEY + " for segment: " + si.name +

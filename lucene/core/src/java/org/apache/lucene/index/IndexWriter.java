@@ -224,7 +224,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     // We defensively subtract 128 to be well below the lowest
     // ArrayUtil.MAX_ARRAY_LENGTH on "typical" JVMs.  We don't just use
     // ArrayUtil.MAX_ARRAY_LENGTH here because this can vary across JVMs:
-    // 一次最多只允许插入这么多 doc
+    // 由同一个IndexWriter并发写入的 doc 在同一时间 只允许解析这么多doc  解析代表通过分词器处理 以及生成索引结构
     public static final int MAX_DOCS = Integer.MAX_VALUE - 128;
 
     /**
@@ -1461,7 +1461,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * for this operation
      * @throws CorruptIndexException if the index is corrupt
      * @throws IOException           if there is a low-level IO error
-     *                               将doc存储到writer中
+     *                               将doc通过 writer写入到 索引文件中  doc就体现为一组 支持被索引的field
      */
     public long addDocument(Iterable<? extends IndexableField> doc) throws IOException {
         return updateDocument(null, doc);
@@ -1831,8 +1831,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * for this operation
      * @throws CorruptIndexException if the index is corrupt
      * @throws IOException           if there is a low-level IO error
+     * 包含term的文档将会被删除 同时doc内部的所有 field 会被写入到索引文件
      */
     public long updateDocument(Term term, Iterable<? extends IndexableField> doc) throws IOException {
+        // 如果存在 term的情况 将term 包装成一个 termNode 该node被调用时 会将自己存储到一个 BufferedUpdates 结构中
         return updateDocuments(term == null ? null : DocumentsWriterDeleteQueue.newNode(term), List.of(doc));
     }
 

@@ -306,12 +306,15 @@ public class FieldInfos implements Iterable<FieldInfo> {
     }
 
     /**
-     * 存储了域相关的 映射信息
+     * 存储了域相关的 映射信息  以 IndexWriter为单位 共享
      */
     static final class FieldNumbers {
 
         private final Map<Integer, String> numberToName;
         private final Map<String, Integer> nameToNumber;
+        /**
+         * key 对应 fieldName  value 对应该field需要存储到索引文件的属性
+         */
         private final Map<String, IndexOptions> indexOptions;
         // We use this to enforce that a given field never
         // changes DV type, even across segments / IndexWriter
@@ -560,8 +563,8 @@ public class FieldInfos implements Iterable<FieldInfo> {
 
         /**
          * Create a new field, or return existing one.
+         * 从全局容器中根据该fieldName 找到fieldInfo对象 如果不存在 则新建
          */
-        // 创建一个使用该名字的 fieldInfo 对象
         public FieldInfo getOrAdd(String name) {
             FieldInfo fi = fieldInfo(name);
             if (fi == null) {
@@ -571,7 +574,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
                 // number for this field.  If the field was seen
                 // before then we'll get the same name and number,
                 // else we'll allocate a new one:
-                // 判断该 field 是否是软删除的域
+                // 判断该field 是否采用软删除 TODO 什么是软删除
                 final boolean isSoftDeletesField = name.equals(globalFieldNumbers.softDeletesFieldName);
                 // 既然是新建的 field 需要分配一个全局的 num
                 // 如果同名的field已经存在 共用一个number  否则重新分配一个num

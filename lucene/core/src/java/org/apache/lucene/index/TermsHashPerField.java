@@ -28,8 +28,7 @@ import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.IntBlockPool;
 
 /**
- * 对 TermsHash 调用 addField 时 会返回该对象的子类
- * 将词的信息 以 field为单位进行统计
+ * 这是一个基类 代表从field中抽取 term 信息
  */
 abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 

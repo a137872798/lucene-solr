@@ -68,7 +68,7 @@ import org.apache.lucene.util.InfoStream;
  * updated its delete slice which ensures the consistency of the update. If the
  * update fails before the DeleteSlice could have been updated the deleteTerm
  * will also not be added to its private deletes neither to the global deletes.
- * 存放已经被删除的元素
+ * 存放已经被删除的元素   所有 WriterPerThread 对象都会持有该对象 他会从各个thread中收集doc的更新/删除动作
  */
 final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
@@ -85,13 +85,16 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      */
     private final DeleteSlice globalSlice;
     /**
-     * 存储全局分片的 删除/更新信息
+     * 存储全局分片的 删除/更新信息    它会采集各个 thread收集到的 更新/删除信息
      */
     private final BufferedUpdates globalBufferedUpdates;
 
     // only acquired to update the global deletes, pkg-private for access by tests:
     final ReentrantLock globalBufferLock = new ReentrantLock();
 
+    /**
+     * 推测每当全局bufferedUpdate处理完内部的数据时 年代+1
+     */
     final long generation;
 
     /**

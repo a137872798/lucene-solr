@@ -159,12 +159,12 @@ final class DocumentsWriter implements Closeable, Accountable {
    *
    * @param flushNotifications  该对象负责监听 写入文档时 发生的各种情况 比如写入失败等  并作出对应的处理
    * @param indexCreatedVersionMajor   代表索引的主版本 用于判断文件是否兼容吧
-   * @param pendingNumDocs
+   * @param pendingNumDocs   有多少待写入的 doc 该值居然是被共享的
    * @param enableTestPoints
    * @param segmentNameSupplier   该对象创建 segment的名字
    * @param config
    * @param directoryOrig   这里指定了原始目录
-   * @param directory       该目录在原有的基础上增加了 额外的功能
+   * @param directory       在directoryOrig 的基础上增加了文件锁的检测 确保此时只有单进程能处理文件
    * @param globalFieldNumberMap   维护了全局范围内 fieldNum - fieldName 的映射关系  以及某个field的各个标识
    */
   DocumentsWriter(FlushNotifications flushNotifications, int indexCreatedVersionMajor, AtomicLong pendingNumDocs, boolean enableTestPoints,
@@ -172,7 +172,7 @@ final class DocumentsWriter implements Closeable, Accountable {
                   FieldInfos.FieldNumbers globalFieldNumberMap) {
     this.config = config;
     this.infoStream = config.getInfoStream();
-    // 该对象以 directory 为单位 一个目录只有一个
+    // 该对象以 docWriter为单位
     this.deleteQueue = new DocumentsWriterDeleteQueue(infoStream);
 
     this.perThreadPool = new DocumentsWriterPerThreadPool(() -> {
@@ -500,7 +500,7 @@ final class DocumentsWriter implements Closeable, Accountable {
 
   /**
    * 更新doc
-   * @param docs   本次要插入的新doc
+   * @param docs   本次要插入的新doc 支持批量处理多个doc
    * @param delNode  将满足条件的doc删除  允许为null
    * @return
    * @throws IOException
@@ -510,7 +510,8 @@ final class DocumentsWriter implements Closeable, Accountable {
     // 首先检测是否有待刷盘的任务  如果开启了自动刷盘功能 那么检测到需要执行刷盘操作时 就会触发刷盘
     boolean hasEvents = preUpdate();
 
-    // 申请一个 perThread 该对象负责解析doc 并生成便于写入索引文件的格式
+    // 在 preUpdate中 所有待刷盘任务都执行完成了 那么此时数据处于一个稳定的状态
+    // 试想一下每次打算写入数据时 如果发现之前删除任务还未执行  就有可能将本次写入的数据误删了 所以新增操作必须先等待之前的所有刷盘完成
     final DocumentsWriterPerThread dwpt = flushControl.obtainAndLock();
     final DocumentsWriterPerThread flushingDWPT;
     long seqNo;
@@ -519,7 +520,8 @@ final class DocumentsWriter implements Closeable, Accountable {
       // This must happen after we've pulled the DWPT because IW.close
       // waits for all DWPT to be released:
       ensureOpen();
-      // 检测当前还有多少 内存中的doc
+      // 此时的线程可能是从 freeList中获取的 所以可能记录了某些存在于内存的doc
+      // TODO 之前的刷盘没有将所有文档数据持久化么 ???
       final int dwptNumDocs = dwpt.getNumDocsInRAM();
       try {
         // 将本次所有文档转换成索引格式 暂存在内存中   同时返回一个 记录当前有多少node 的序列号
