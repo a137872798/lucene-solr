@@ -32,7 +32,7 @@ import org.apache.lucene.util.BytesRef;
 public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
 
   /**
-   * 负责存储临时数据的容器
+   * 存储的是 某个input  在lucene中存入fst的数据包含一个字面量(实际上就是term) 以及关联的权重值实际上就是(docId)
    */
   private final BytesRef current = new BytesRef(10);
   private final InputOutput<T> result = new InputOutput<>();
@@ -64,6 +64,7 @@ public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
   }
 
   /** Seeks to smallest term that's &gt;= target. */
+  // 查找大于等于target的最小值
   public InputOutput<T> seekCeil(BytesRef target) throws IOException {
     this.target = target;
     targetLength = target.length;
@@ -72,6 +73,7 @@ public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
   }
 
   /** Seeks to biggest term that's &lt;= target. */
+  // 找到<=target的最大值
   public InputOutput<T> seekFloor(BytesRef target) throws IOException {
     this.target = target;
     targetLength = target.length;
@@ -83,6 +85,7 @@ public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
    *  doesn't exist.  This is faster than using {@link
    *  #seekFloor} or {@link #seekCeil} because it
    *  short-circuits as soon the match is not found. */
+  // 从 fst中精确匹配 target的值
   public InputOutput<T> seekExact(BytesRef target) throws IOException {
     this.target = target;
     targetLength = target.length;
@@ -96,6 +99,7 @@ public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
 
   @Override
   protected int getTargetLabel() {
+    // 代表此时读取到末尾了
     if (upto-1 == target.length) {
       return FST.END_LABEL;
     } else {
@@ -109,6 +113,10 @@ public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
     return current.bytes[upto] & 0xFF;
   }
 
+  /**
+   * 设置字面量的值  字面量可以按 byte存储 或者int存储
+   * @param label
+   */
   @Override
   protected void setCurrentLabel(int label) {
     current.bytes[upto] = (byte) label;
@@ -123,7 +131,9 @@ public final class BytesRefFSTEnum<T> extends FSTEnum<T> {
     if (upto == 0) {
       return null;
     } else {
+      // result.current 就是term数据
       current.length = upto-1;
+      // 将权重信息设置到 result上
       result.output = output[upto];
       return result;
     }

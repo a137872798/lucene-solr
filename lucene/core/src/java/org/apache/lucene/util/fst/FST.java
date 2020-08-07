@@ -742,7 +742,7 @@ public final class FST<T> implements Accountable {
         //System.out.println("FST.addNode pos=" + bytes.getPosition() + " numArcs=" + nodeIn.numArcs);
         // 代表这个节点没有任何出度 一般就是最后一个节点
         if (nodeIn.numArcs == 0) {
-            // 在 builder.add()中 只要本次input与上次不相同 就会将isFinal设置成true
+            // 这里返回的值会作为 上个arc的 target
             if (nodeIn.isFinal) {
                 return FINAL_END_NODE;
             } else {
@@ -819,7 +819,7 @@ public final class FST<T> implements Accountable {
             // 代表下游节点有效  并不是空节点    返回的是存储在ByteStore的地址   如果整条链路中最后一个arc 它的target就是 <= 0
             boolean targetHasArcs = target.node > 0;
 
-            // 当下游节点无arc数据时 写入特殊标识  表示此边的目标节点是-1，已经遍历到了FST的末尾
+            // 代表此时到达某条链路的结尾
             if (!targetHasArcs) {
                 flags += BIT_STOP_NODE;
             }
@@ -1176,12 +1176,14 @@ public final class FST<T> implements Accountable {
      *
      * @return Returns the second argument
      * (<code>arc</code>).
+     * 读取follow下游 finalArc 的信息 并填充到arc中
      */
     Arc<T> readLastTargetArc(Arc<T> follow, Arc<T> arc, BytesReader in) throws IOException {
         //System.out.println("readLast");
-        // 返回arc下游节点的 address/ord  如果不存在的话  将arc的属性变成终止属性
+        // 如果下游没有arc
         if (!targetHasArcs(follow)) {
             //System.out.println("  end node");
+            // 创建一个 FSTEnum的终止arc
             assert follow.isFinal();
             arc.label = END_LABEL;
             arc.target = FINAL_END_NODE;
@@ -1194,6 +1196,7 @@ public final class FST<T> implements Accountable {
             in.setPosition(follow.target());
             // 读取数据并设置到 入参arc上
             byte flags = arc.nodeFlags = in.readByte();
+            // TODO 忽略等长arc
             if (flags == ARCS_FOR_BINARY_SEARCH || flags == ARCS_FOR_DIRECT_ADDRESSING) {
                 // Special arc which is actually a node header for fixed length arcs.
                 // Jump straight to end to find the last arc.
@@ -1215,6 +1218,7 @@ public final class FST<T> implements Accountable {
                 // non-array: linear scan
                 arc.bytesPerArc = 0;
                 //System.out.println("  scan");
+                // 只要此时 arc不是last 就切换到同一个node下的下一个arc  也就是连续读取  因为同一个节点下的多个arc是连续存储的
                 while (!arc.isLast()) {
                     // skip this arc:
                     readLabel(in);
@@ -1227,11 +1231,14 @@ public final class FST<T> implements Accountable {
                     if (arc.flag(BIT_STOP_NODE)) {
                     } else if (arc.flag(BIT_TARGET_NEXT)) {
                     } else {
+                        // 应该就是target 是一个long值 且 BIT_TARGET_NEXT 为0
                         readUnpackedNodeTarget(in);
                     }
+                    // 读取下一个arc的flags
                     arc.flags = in.readByte();
                 }
                 // Undo the byte flags we read:
+                // 定位当前 flag 并读取arc数据
                 in.skipBytes(-1);
                 arc.nextArc = in.getPosition();
                 readNextRealArc(arc, in);
@@ -1267,40 +1274,43 @@ public final class FST<T> implements Accountable {
             arc.output = follow.nextFinalOutput();
             // 标记该arc代表了某个input的结尾
             arc.flags = BIT_FINAL_ARC;
-            // 代表该follow 连接到的是 终止节点 (因为target是数组下标-1 终止节点的下标是0)
+            //  当出现比如 at/2  att/5 这种情况时  在迭代的时候会优先读取 at 之后读取 att 因为写入是反向的 tta 读取的时候会先发现第二个t上有终止符 就先获取了 at作为结果
+
+            // 在addNode 中传入某个下游arc为0的node时 会返回 0/-1 作为上个arc的 target 也就代表走到链尾
+            // 原本只有当该arc 是某个节点下最后一个arc时 才在addNode方法中设置该标识的
+            // 对应 att的情况
             if (follow.target() <= 0) {
                 arc.flags |= BIT_LAST_ARC;
             } else {
                 // NOTE: nextArc is a node (not an address!) in this case:
-                // 回填下一个arc的地址
+                // 代表还未走到当前arc链的链尾  但是中途遇到了终止的节点  对应at 这时 就会设置最后一个t的地址
                 arc.nextArc = follow.target();
             }
             // 因为本节点已经结束了 所以target 填了 一个 空值
             arc.target = FINAL_END_NODE;
-            // TODO 这个标识是???
             arc.nodeFlags = arc.flags;
             //System.out.println("    insert isFinal; nextArc=" + follow.target + " isLast=" + arc.isLast() + " output=" + outputs.outputToString(arc.output));
             return arc;
         } else {
-            // 通过第一个arc连接的 node的地址 以及另一个arc  读取数据
+            // 该方法总是以 target作为下一个读取的arc 与 readNext不同
+            // 根据follow的信息读取下一个arc数据  in是负责反向读取 编译完成的 FST的输入流
             return readFirstRealTargetArc(follow.target(), arc, in);
         }
     }
 
     /**
-     * @param nodeAddress  某个CompileNode的地址
-     * @param arc          数据会填充到该arc下
-     * @param in          该对象负责从fst中读取数据   (只携带地址信息无法读取数据 所以一般方法中要传入一个 输入流)
+     * @param nodeAddress
+     * @param arc
+     * @param in
      * @return
      * @throws IOException
      */
     public Arc<T> readFirstRealTargetArc(long nodeAddress, Arc<T> arc, final BytesReader in) throws IOException {
-        // 定位到目标位置
+        // 定位到目标位置  如果此时 arc是 firstArc 此时指向的地址就是 最后一个写入的arc对应的flag的下标
         in.setPosition(nodeAddress);
         //System.out.println("   flags=" + arc.flags);
 
-        // 在addNode 的最后  会将写入的数据顺序倒转  所以这里使用反向输入流 读取的数据反而是正向的
-        // 通过上个节点的某些信息 为本次的arc设置属性
+        // 读取flag信息
         byte flags = arc.nodeFlags = in.readByte();
         // TODO 只有当 arc以等长形式写入时 才会设置这2个值 先忽略
         if (flags == ARCS_FOR_BINARY_SEARCH || flags == ARCS_FOR_DIRECT_ADDRESSING) {
@@ -1317,6 +1327,7 @@ public final class FST<T> implements Accountable {
             arc.posArcsStart = in.getPosition();
             //System.out.println("  bytesPer=" + arc.bytesPerArc + " numArcs=" + arc.numArcs + " arcsStart=" + pos);
         } else {
+            // arc.nextArc 是用来定位自身 flag位置的么
             arc.nextArc = nodeAddress;
             arc.bytesPerArc = 0;
         }
@@ -1339,15 +1350,20 @@ public final class FST<T> implements Accountable {
 
     /**
      * In-place read; returns the arc.
+     * 将arc的数据替换成同一上游节点上 下一个arc的数据
      */
     public Arc<T> readNextArc(Arc<T> arc, BytesReader in) throws IOException {
+        // 代表本次传入的是终止arc(或者说 fake arc)  能够进入到这里时 nextArc 就对应下个arc边的flag位置
         if (arc.label() == END_LABEL) {
             // This was a fake inserted "final" arc
             if (arc.nextArc() <= 0) {
                 throw new IllegalArgumentException("cannot readNextArc when arc.isLast()=true");
             }
+            // 根据flag位置读取arc的数据覆盖回传入的终止arc上
             return readFirstRealTargetArc(arc.nextArc(), arc, in);
         } else {
+            // 传入某条 非 isLast 的边 某个节点下 isLast = false的arc数据是连续的 他们的下游arc数据才是通过target进行跳跃
+            // 核心就是将 arc.nextArc 作为下个arc的地址
             return readNextRealArc(arc, in);
         }
     }
@@ -1455,12 +1471,14 @@ public final class FST<T> implements Accountable {
     /**
      * Never returns null, but you should never call this if
      * arc.isLast() is true.
+     * 根据此时arc的描述信息 读取数据并填充
      */
     public Arc<T> readNextRealArc(Arc<T> arc, final BytesReader in) throws IOException {
 
         // TODO: can't assert this because we call from readFirstArc
         // assert !flag(arc.flags, BIT_LAST_ARC);
 
+        // 解析flag信息
         switch (arc.nodeFlags()) {
 
             case ARCS_FOR_BINARY_SEARCH:
@@ -1477,9 +1495,11 @@ public final class FST<T> implements Accountable {
                 int nextIndex = BitTable.nextBitSet(arc.arcIdx(), arc, in);
                 return readArcByDirectAddressing(arc, in, nextIndex, arc.presenceIndex + 1);
 
+                // 先忽略上面的2种情况 他们是为了快捷遍历某个node下所有arc的 对于功能实现本身没有影响
             default:
                 // Variable length arcs - linear search.
                 assert arc.bytesPerArc() == 0;
+                // 还原flag信息 因为这种情况下 nextArc 存储的还是当前arc对应的flag下标
                 in.setPosition(arc.nextArc());
                 arc.flags = in.readByte();
         }
@@ -1490,38 +1510,50 @@ public final class FST<T> implements Accountable {
      * Reads an arc.
      * <br>Precondition: The arc flags byte has already been read and set;
      * the given BytesReader is positioned just after the arc flags byte.
-     * 从容器中读取数据 并填充到arc 上
+     * 这里不需要考虑是否使用了 二分查找 或者 directAddress 查找
      */
     private Arc<T> readArc(Arc<T> arc, BytesReader in) throws IOException {
         if (arc.nodeFlags() == ARCS_FOR_DIRECT_ADDRESSING) {
             arc.label = arc.firstLabel() + arc.arcIdx();
         } else {
+            // 继 flag后下一个值就是字面量
             arc.label = readLabel(in);
         }
 
+        // 如果有携带 output 继续读取
         if (arc.flag(BIT_ARC_HAS_OUTPUT)) {
             arc.output = outputs.read(in);
         } else {
+            // 否则设置一个空值
             arc.output = outputs.getNoOutput();
         }
 
+        // 代表此时arc刚好是某个词的结束位置
         if (arc.flag(BIT_ARC_HAS_FINAL_OUTPUT)) {
             arc.nextFinalOutput = outputs.readFinalOutput(in);
         } else {
             arc.nextFinalOutput = outputs.getNoOutput();
         }
 
+        // BIT_STOP_NODE 代表此时走到了某条arc链的尾部
         if (arc.flag(BIT_STOP_NODE)) {
+            // 代表此时是某个input的终止位置
             if (arc.flag(BIT_FINAL_ARC)) {
                 arc.target = FINAL_END_NODE;
             } else {
+                // 虽然到了end 但是该input还没有结束 这种情况现在还没发现
                 arc.target = NON_FINAL_END_NODE;
             }
+            // 此时的nextArc 对应该arc的末尾位置  继续读取byte 就可以得到在 bytesStore中直接相连的下个arc.flag数据
+            // 注意 readNextRealArc 就是通过nextArc 来读取当前非isLast arc的下一条arc的
             arc.nextArc = in.getPosition(); // Only useful for list.
+        // 如果携带了该标识 代表arc没有存储target信息  直接连接到下个arc.flag
         } else if (arc.flag(BIT_TARGET_NEXT)) {
+            // 同上
             arc.nextArc = in.getPosition(); // Only useful for list.
             // TODO: would be nice to make this lazy -- maybe
             // caller doesn't need the target and is scanning arcs...
+            // 目前BIT_TARGET_NEXT 应该与 BIT_LAST_ARC 是一起设置的  只有当此时处理的arc是该node的最后一个arc 它的上一个arc才会与它相邻存储  可能固定长度存储的arc做了特殊处理吧 先忽略
             if (!arc.flag(BIT_LAST_ARC)) {
                 if (arc.bytesPerArc() == 0) {
                     // must scan
@@ -1531,8 +1563,10 @@ public final class FST<T> implements Accountable {
                     in.setPosition(arc.posArcsStart() - arc.bytesPerArc() * numArcs);
                 }
             }
+            // 还是会设置target值  使用方式就是先通过 in.setPosition(target) 定位后 再读取数据 就是flag信息
             arc.target = in.getPosition();
         } else {
+            // 就是读取一个long值 该long就是下一个target的起点位置
             arc.target = readUnpackedNodeTarget(in);
             arc.nextArc = in.getPosition(); // Only useful for list.
         }
@@ -1562,18 +1596,21 @@ public final class FST<T> implements Accountable {
     /**
      * Finds an arc leaving the incoming arc, replacing the arc in place.
      * This returns null if the arc was not found, else the incoming arc.
+     * @param follow 上游arc  从它出发
      * 找到与 label 匹配的arc 并将属性转移到  入参arc上
      */
     public Arc<T> findTargetArc(int labelToMatch, Arc<T> follow, Arc<T> arc, BytesReader in) throws IOException {
 
-        // 如果输入的 label是终止符 直接将arc的相关标识设置成终止状态
+        // 代表已经读取到末尾了
         if (labelToMatch == END_LABEL) {
+            // 代表当 label到末尾时 arc 刚好也到了末尾 也就是完全匹配 这时返回终止节点
             if (follow.isFinal()) {
                 if (follow.target() <= 0) {
                     arc.flags = BIT_LAST_ARC;
                 } else {
                     arc.flags = 0;
                     // NOTE: nextArc is a node (not an address!) in this case:
+                    // 对应 at att的情况 这时找到了 at 但是还没有走完链路 所以存储了通往最后一个t的地址  该终止arc确保了 FSTEnum的 doNext可以正常工作
                     arc.nextArc = follow.target();
                 }
                 arc.output = follow.nextFinalOutput();
@@ -1581,10 +1618,12 @@ public final class FST<T> implements Accountable {
                 arc.nodeFlags = arc.flags;
                 return arc;
             } else {
+                // 代表此时arc还没有结束 也就是没有完全匹配label 所以返回null
                 return null;
             }
         }
 
+        // 没有下游arc了 返回null 代表找不到符合条件的arc
         if (!targetHasArcs(follow)) {
             return null;
         }
@@ -1593,6 +1632,7 @@ public final class FST<T> implements Accountable {
 
         // System.out.println("fta label=" + (char) labelToMatch);
 
+        // TODO 忽略等长arc的逻辑
         byte flags = arc.nodeFlags = in.readByte();
         if (flags == ARCS_FOR_DIRECT_ADDRESSING) {
             arc.numArcs = in.readVInt(); // This is in fact the label range.
@@ -1636,6 +1676,7 @@ public final class FST<T> implements Accountable {
             return null;
         }
 
+        // 忽略 等长arc的逻辑
         // Linear scan
         readFirstRealTargetArc(follow.target(), arc, in);
 
