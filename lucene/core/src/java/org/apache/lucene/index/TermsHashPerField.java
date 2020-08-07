@@ -28,7 +28,7 @@ import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.IntBlockPool;
 
 /**
- * 这是一个基类 代表从field中抽取 term 信息
+ * 这是一个基类 代表以field为单位 从field中解析term 并设置到 TermsHash中
  */
 abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 
@@ -90,16 +90,18 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * E.g. doc(+freq) is 1 stream, prox+offset is a second. */
 
     /**
-     * @param streamCount  代表存储几种数据流  只有freq时是1   除此之外如果有 offset position 之类的就是2
-     * @param fieldState
-     * @param termsHash
+     * @param streamCount  代表要抽取几种维度的数据
+     * @param fieldState    抽取的结果会存储到该对象中
+     * @param termsHash    存储term信息的容器
      * @param nextPerField 该对象本身也是链式结构  目前只有 FreqProxTermsWriterPerField 有下游对象
      * @param fieldInfo
      */
     public TermsHashPerField(int streamCount, FieldInvertState fieldState, TermsHash termsHash, TermsHashPerField nextPerField, FieldInfo fieldInfo) {
         intPool = termsHash.intPool;
         bytePool = termsHash.bytePool;
+        // 该对象会在以链表形式连接的多个 TermsHash中共享
         termBytePool = termsHash.termBytePool;
+        // 获取描述本次正在被处理的doc的上下文信息
         docState = termsHash.docState;
         this.termsHash = termsHash;
         bytesUsed = termsHash.bytesUsed;
@@ -108,8 +110,9 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
         numPostingInt = 2 * streamCount;
         this.fieldInfo = fieldInfo;
         this.nextPerField = nextPerField;
+        // 该数组内除了存储 有关bytePool等的基础偏移量以外 还会根据子类生成定制化的array
         PostingsBytesStartArray byteStarts = new PostingsBytesStartArray(this, bytesUsed);
-        // 默认情况下 存储 bytesID(在这个场景下应该就是 termID) 与 pool偏移量关系的对象是  DirectBytesStartArray 对象 而这里替换成了 PostingsBytesStartArray
+        // 可以简单理解为一个hash桶  如果当前对象是 TermVectors的话 termBytePool 为null  因为TermVectors是下游对象 他只要和上游的 Freq对象共用一个hash桶就可以了
         bytesHash = new BytesRefHash(termBytePool, HASH_INIT_SIZE, byteStarts);
     }
 
@@ -330,9 +333,6 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      */
     private static final class PostingsBytesStartArray extends BytesStartArray {
 
-        /**
-         * 以field为单位存储term信息
-         */
         private final TermsHashPerField perField;
         private final Counter bytesUsed;
 
@@ -344,10 +344,12 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 
         @Override
         public int[] init() {
+            // postingsArray 存储3种描述位置信息的数组
             if (perField.postingsArray == null) {
-                // 创建的 该对象包含了 term内部的信息
+                // 子类会根据自己统计的数据维度 创建一个 拓展了更多数组以便存储数据的 ParallelPostingsArray对象 比如 TermVectorsPostingsArray
+                // 可以发现一般lucene创建的数组初始大小都是2 之后每次根据需要进行扩容
                 perField.postingsArray = perField.createPostingsArray(2);
-                // 为子对象 array 赋值
+                // 为子对象的array 赋值
                 perField.newPostingsArray();
                 bytesUsed.addAndGet(perField.postingsArray.size * perField.postingsArray.bytesPerPosting());
             }

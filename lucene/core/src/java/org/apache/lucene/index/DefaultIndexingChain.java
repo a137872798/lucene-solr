@@ -833,7 +833,7 @@ final class DefaultIndexingChain extends DocConsumer {
             // doc是 IndexableField的集合 那时候并没有生成 FieldInfo对象
             // 在getOrAdd方法上加了并发控制
             FieldInfo fi = fieldInfos.getOrAdd(name);
-            // 上面创建的FieldInfo 还是一个空对象  将需要存储到索引文件中的信息填充到 fieldInfo上
+            // 上面创建的FieldInfo 还是一个空对象  将需要存储到索引文件中的信息填充到 fieldInfo上  也就是除了 field需要被索引的选项能提前被确定外 其他信息都是不确定的
             initIndexOptions(fi, fieldType.indexOptions());
             // 如果fieldType 上设置了用户自定义的属性 会转移到 fieldInfo.attribute
             Map<String, String> attributes = fieldType.getAttributes();
@@ -963,7 +963,7 @@ final class DefaultIndexingChain extends DocConsumer {
             invertState = new FieldInvertState(indexCreatedVersionMajor, fieldInfo.name, fieldInfo.getIndexOptions());
             // 这里开始处理 field信息 并存储解析出来的term
             termsHashPerField = termsHash.addField(invertState, fieldInfo);
-            // 如果域信息存在 标准因子 那么需要初始化一个标准因子 writer
+            // 如果域信息存在 标准因子 那么需要初始化一个标准因子 writer   一开始通过 fieldInfos.getOrAdd 方法返回的对象标准因子是false
             if (fieldInfo.omitsNorms() == false) {
                 assert norms == null;
                 // Even if no documents actually succeed in setting a norm, we still write norms for this segment:

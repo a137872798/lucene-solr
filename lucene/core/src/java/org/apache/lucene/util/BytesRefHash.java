@@ -564,7 +564,6 @@ public final class BytesRefHash implements Accountable {
   }
 
   /** Manages allocation of the per-term addresses. */
-  // 类似于 hash桶的  bucket[] 也就是定位key 在 存储value的结构中的位置的  可以将hashMap存储value的结构看成是那个链表
   public abstract static class BytesStartArray {
     /**
      * Initializes the BytesStartArray. This call will allocate memory

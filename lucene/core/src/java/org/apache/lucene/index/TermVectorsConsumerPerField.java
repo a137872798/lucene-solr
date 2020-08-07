@@ -28,8 +28,14 @@ import org.apache.lucene.util.BytesRef;
  */
 final class TermVectorsConsumerPerField extends TermsHashPerField {
 
+    /**
+     * 存储term基础信息 以及词向量信息的数组集合
+     */
     private TermVectorsPostingsArray termVectorsPostingsArray;
 
+    /**
+     * 该对象关联的 词向量对象
+     */
     final TermVectorsConsumer termsWriter;
 
     boolean doVectors;
@@ -42,9 +48,9 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     boolean hasPayloads; // if enabled, and we actually saw any for this field
 
     /**
-     * @param invertState 记录field的某些信息
+     * @param invertState 该对象负责存储field的一些属性
      * @param termsWriter 该对象是由哪个对象创建的
-     * @param fieldInfo
+     * @param fieldInfo  此时fieldInfo还是一个空对象
      */
     public TermVectorsConsumerPerField(FieldInvertState invertState, TermVectorsConsumer termsWriter, FieldInfo fieldInfo) {
         super(2, invertState, termsWriter, null, fieldInfo);
@@ -321,7 +327,6 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     }
 
     /**
-     * 返回的对象 会为父类的 postingsArray 赋值
      * @param size
      * @return
      */
@@ -331,7 +336,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     }
 
     /**
-     * 该容器内部同样存储了很多数据
+     * 该容器在 父类的3种基础数组上又拓展了 3种数据
      */
     static final class TermVectorsPostingsArray extends ParallelPostingsArray {
         public TermVectorsPostingsArray(int size) {
