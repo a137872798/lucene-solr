@@ -68,7 +68,7 @@ public class AttributeSource {
 
     // These two maps must always be in sync!!!
     // So they are private, final and read-only from the outside (read-only iterators)
-    // 每个数据源 都会绑定一组 抽取数据用的 impl
+    // 多个 Attr对象可能会通过同一个impl对象实现功能 比如 PackedTokenAttributeImpl  它就实现了非常多的Attr
     private final Map<Class<? extends Attribute>, AttributeImpl> attributes;
     private final Map<Class<? extends AttributeImpl>, AttributeImpl> attributeImpls;
     // 数组  然后内部每个state 对象都是一个链表
@@ -221,6 +221,7 @@ public class AttributeSource {
             // Attribute is a superclass of this interface
             if (!attributes.containsKey(curInterface)) {
                 // invalidate state to force recomputation in captureState()
+                // 注意每次插入新的attr时 就会重置 currentState[0] 这样下次想要查看此时所有的attr  就会重新生成[0]
                 this.currentState[0] = null;
                 // 添加映射关系
                 attributes.put(curInterface, att);
@@ -234,7 +235,7 @@ public class AttributeSource {
      * This method first checks if an instance of that class is
      * already in this AttributeSource and returns it. Otherwise a
      * new instance is created, added to this AttributeSource and returned.
-     * 根据attr类型 获取实现类
+     * 从缓存中获取实现类
      */
     public final <T extends Attribute> T addAttribute(Class<T> attClass) {
         AttributeImpl attImpl = attributes.get(attClass);
@@ -308,10 +309,10 @@ public class AttributeSource {
     }
 
 
-    // 基于链式调用 触发每个元素的clear 和 end
     /**
      * Resets all Attributes in this AttributeSource by calling
      * {@link AttributeImpl#clear()} on each Attribute implementation.
+     * TODO 只清理[0]吗 那么为什么要用 state[] 呢
      */
     public final void clearAttributes() {
         for (State state = getCurrentState(); state != null; state = state.next) {
