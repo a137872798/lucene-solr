@@ -83,6 +83,9 @@ import org.apache.lucene.util.AttributeSource;
 public abstract class TokenStream extends AttributeSource implements Closeable {
   
   /** Default {@link AttributeFactory} instance that should be used for TokenStreams. */
+  // 该工厂相比于默认工厂的不同点就是 当传入的 attr是某些特定的类 比如 TypeAttribute, PositionIncrementAttribute,
+  //                              PositionLengthAttribute, OffsetAttribute,
+  //                              TermFrequencyAttribute 等一般都会使用到的attr时 就会使用整个已经组合了各种功能的impl类
   public static final AttributeFactory DEFAULT_TOKEN_ATTRIBUTE_FACTORY =
     AttributeFactory.getStaticImplementation(AttributeFactory.DEFAULT_ATTRIBUTE_FACTORY, PackedTokenAttributeImpl.class);
 

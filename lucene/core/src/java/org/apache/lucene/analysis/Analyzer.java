@@ -86,7 +86,7 @@ import org.apache.lucene.util.Version;
 public abstract class Analyzer implements Closeable {
 
   /**
-   * 代表一种重用策略
+   * 重用策略对象 根据fieldName 重用组件
    */
   private final ReuseStrategy reuseStrategy;
   /**
@@ -160,20 +160,21 @@ public abstract class Analyzer implements Closeable {
    * {@link #tokenStream(String, String)} which reuses a {@code StringReader}-like
    * instance internally.
    * 
-   * @param fieldName the name of the field the created TokenStream is used for
-   * @param reader the reader the streams source reads from
+   * @param fieldName the name of the field the created TokenStream is used for   本次处理的field名字
+   * @param reader the reader the streams source reads from                       待解析的数据流
    * @return TokenStream for iterating the analyzed content of <code>reader</code>
    * @throws AlreadyClosedException if the Analyzer is closed.
    * @see #tokenStream(String, String)
    */
   public final TokenStream tokenStream(final String fieldName,
                                        final Reader reader) {
-    // 先尝试获取之前缓存的component
+    // 分词器应该是 DocWriter 级别共享的   也就是field是docWriter共享的 TODO 但是以PerThread为维度创建的 PerField  那么频率这些就无法共享了  怎么理解???  这个就是段的合并吗
     TokenStreamComponents components = reuseStrategy.getReusableComponents(this, fieldName);
-    // 对子类开放钩子 强化reader
+    // 对子类开放钩子 强化reader  开放这个钩子的意义是什么  用户可以自定义数据是怎么被读取的
     final Reader r = initReader(fieldName, reader);
+    // 首次创建组件对象
     if (components == null) {
-      // 基于 field创建一个 components
+      // 基于 field创建一个 components     components 内部就包含了一系列的 attributes 用于从term中抽取属性   那么以field为单位创建component就很有必要了 就可以为不同的field定制自己的 attributes
       components = createComponents(fieldName);
       // 存储 以便重用
       reuseStrategy.setReusableComponents(this, fieldName, components);
@@ -384,6 +385,7 @@ public abstract class Analyzer implements Closeable {
    * instance of {@link TokenFilter} which also serves as the
    * {@link TokenStream} returned by
    * {@link Analyzer#tokenStream(String, Reader)}.
+   * 解析tokenStream 的组件对象
    */
   public static final class TokenStreamComponents {
     /**
@@ -481,6 +483,7 @@ public abstract class Analyzer implements Closeable {
      *        are to be retrieved
      * @return Reusable TokenStreamComponents for the field, or {@code null}
      *         if there was no previous components for the field
+     *         通过传入的 fieldName  准备重用某个组件
      */
     public abstract TokenStreamComponents getReusableComponents(Analyzer analyzer, String fieldName);
 
@@ -490,6 +493,7 @@ public abstract class Analyzer implements Closeable {
      *
      * @param fieldName Name of the field whose TokenStreamComponents are being set
      * @param components TokenStreamComponents which are to be reused for the field
+     *                   先以fieldName 为维度 设置某个可重用组件
      */
     public abstract void setReusableComponents(Analyzer analyzer, String fieldName, TokenStreamComponents components);
 
@@ -511,6 +515,7 @@ public abstract class Analyzer implements Closeable {
      *
      * @param storedValue Value to store
      * @throws AlreadyClosedException if the Analyzer is closed.
+     * 向子类开放了一个方法 就是利用 ThreadLocal 存储组件    analyzer本身是docWriter级别共享的 然后perThread 以线程为单位 存储field自己的组件 这样就避免并发问题
      */
     protected final void setStoredValue(Analyzer analyzer, Object storedValue) {
       if (analyzer.storedValue == null) {
@@ -524,7 +529,7 @@ public abstract class Analyzer implements Closeable {
   /**
    * A predefined {@link ReuseStrategy}  that reuses the same components for
    * every field.
-   * 这是一种默认的全局策略
+   * 全局策略   以线程为单位 所有field都使用同一个component
    */
   public static final ReuseStrategy GLOBAL_REUSE_STRATEGY = new ReuseStrategy() {
 
@@ -542,7 +547,7 @@ public abstract class Analyzer implements Closeable {
   /**
    * A predefined {@link ReuseStrategy} that reuses components per-field by
    * maintaining a Map of TokenStreamComponent per field name.
-   * 基于每个 field 进行重用
+   * 还是以线程为单位  但是使用了一个  <fieldName, component>  映射容器   当获取到本地线程存储容器后 再通过field 获取对应的 component
    */
   public static final ReuseStrategy PER_FIELD_REUSE_STRATEGY = new ReuseStrategy() {
 

@@ -39,7 +39,7 @@ public interface IndexableFieldType {
    * IndexOptions.NONE.
    */
   // TODO: shouldn't we remove this?  Whether/how a field is
-  // tokenized is an impl detail under Field?   是否需要被分词 如果支持被分词 就是每个分词都可以查询到数据 否则就是整体匹配
+  // tokenized is an impl detail under Field?   标识该field的 value属性 是否应当被分词器处理
   public boolean tokenized();
 
   /** 

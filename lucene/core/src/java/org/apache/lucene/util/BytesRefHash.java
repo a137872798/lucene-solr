@@ -107,7 +107,7 @@ public final class BytesRefHash implements Accountable {
 
   /**
    * Creates a new {@link BytesRefHash}
-   * @param pool 该对象负责存储数据
+   * @param pool 该对象负责存储数据  该对象可以为空
    * @param capacity hash桶的容量
    * @param bytesStartArray 该对象可以定位到每个term在 pool的位置
    */

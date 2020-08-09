@@ -89,7 +89,7 @@ final class DefaultIndexingChain extends DocConsumer {
     private int hashMask = 1;
 
     /**
-     * 应该是记录 总计处理了多少 field 注意只记录 fieldName 不同的field   (相同的name 看作一个field)
+     * 记录总计处理了多少field
      */
     private int totalFieldCount;
     /**
@@ -98,8 +98,7 @@ final class DefaultIndexingChain extends DocConsumer {
     private long nextFieldGen;
 
     // Holds fields seen in each document
-    // 只包含了当前正在处理的doc下所有的field
-    // 每当某个文档新添加了一个 field 设置到数组中 该数组会自动扩容
+    // 存储该对象处理的所有 field  并且每个对象内部包含了 通过docId 反向查找field的 invert信息
     private PerField[] fields = new PerField[1];
 
     /**
@@ -552,7 +551,7 @@ final class DefaultIndexingChain extends DocConsumer {
      * 在 processDocument中 会遍历doc下所有field 并进行处理
      *
      * @param field   因为field实现了 IndexableField接口 会记录field上哪些信息需要存储到索引文件
-     * @param fieldGen  代表该field是属于哪个年代被处理的  目前 gen = docId
+     * @param fieldGen  代表在docId为多少的doc时被处理
      * @param fieldCount  这个count是指处理某个doc时 总计遇到了几个field
      * @return
      * @throws IOException
@@ -569,15 +568,17 @@ final class DefaultIndexingChain extends DocConsumer {
         }
 
         // Invert indexed fields:
-        // 代表field的某些信息需要写入到索引文件中
+        // 代表field的某些信息需要写入到索引文件中   只有这种情况 才初始化 fp
         if (fieldType.indexOptions() != IndexOptions.NONE) {
             // 将内部信息抽取出来生成 perField 对象
+            // 当 IndexOptions 不为 NONE 的时候 才会创建invertState
             fp = getOrAddField(fieldName, fieldType, true);
             // 代表该field 在本次处理的doc中首次出现 就要生成 invert信息
             boolean first = fp.fieldGen != fieldGen;
-            // 这里应该就是生成倒排索引的地方
+            // 从这里可以看到 即使first为false 也要存储部分数据到 invert中 那么应该就是 freq position 等信息
             fp.invert(field, first);
 
+            // 首次处理 存储到数组中
             if (first) {
                 fields[fieldCount++] = fp;
                 fp.fieldGen = fieldGen;
@@ -843,23 +844,26 @@ final class DefaultIndexingChain extends DocConsumer {
 
             // 根据索引版本号,fieldInfo 创建 perField 对象
             fp = new PerField(docWriter.getIndexCreatedVersionMajor(), fi, invert);
-            // 链表操作  这里有必要刻意弄成一个 hash桶吗
+            // 存储到hash桶中 这样 当处理下一批doc时 发现了相同的 field 就可以共用了
             fp.next = fieldHash[hashPos];
             fieldHash[hashPos] = fp;
             totalFieldCount++;
 
             // At most 50% load factor:
+            // 当存储的field 量比较多了 就对hash桶进行扩容
             if (totalFieldCount >= fieldHash.length / 2) {
                 rehash();
             }
 
+            // 预先对数组扩容 确保之后能正常插入 field   这里只所以不直接设置到 fields的原因是 需要在外面检测该field是否之前已经存储过了
             if (totalFieldCount > fields.length) {
                 PerField[] newFields = new PerField[ArrayUtil.oversize(totalFieldCount, RamUsageEstimator.NUM_BYTES_OBJECT_REF)];
                 System.arraycopy(fields, 0, newFields, 0, fields.length);
                 fields = newFields;
             }
 
-            // 当 fp对象已经存在时  如果invert 为true 并且该state 还没有初始化 那么创建 invert 对象
+            // 代表在hash结构中已经存在该field的信息   此时发现invert为 true 且之前的fieldInfo中并没有设置反向信息
+            // 那么根据此时fieldInfo内的反向索引信息  初始化NormWriter,perFieldWriter,Invert
         } else if (invert && fp.invertState == null) {
             initIndexOptions(fp.fieldInfo, fieldType.indexOptions());
             fp.setInvertState();
@@ -881,7 +885,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // This is the first time we are seeing this field indexed, so we now
         // record the index options so that any future attempt to (illegally)
         // change the index options of this field, will throw an IllegalArgExc:
-        // 存储映射关系到全局容器
+        // 覆盖之前的   indexOptions  TODO 多次存储相同fieldName的 field  并且他们的 IndexOptions 不同 ，这样是可行的吗
         fieldInfos.globalFieldNumbers.setIndexOptions(info.number, info.name, indexOptions);
         info.setIndexOptions(indexOptions);
     }
@@ -909,7 +913,7 @@ final class DefaultIndexingChain extends DocConsumer {
          */
         FieldInvertState invertState;
         /**
-         * 该对象存储了这个 field 下所有的 term
+         * 该对象负责存储field下面的term信息
          */
         TermsHashPerField termsHashPerField;
 
@@ -925,6 +929,7 @@ final class DefaultIndexingChain extends DocConsumer {
         /**
          * We use this to know when a PerField is seen for the
          * first time in the current document.
+         * 代表首次发现该field时处理的是  docId为多少的doc
          */
         long fieldGen = -1;
 
@@ -936,8 +941,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // 写入标准因子
         NormValuesWriter norms;
 
-        // reused
-        // token 是term 通过处理后生成的词元
+        // reused  该对象在处理 fieldName相同的 field时会被共用 减少GC的发生
         TokenStream tokenStream;
 
         /**
@@ -948,9 +952,9 @@ final class DefaultIndexingChain extends DocConsumer {
         public PerField(int indexCreatedVersionMajor, FieldInfo fieldInfo, boolean invert) {
             this.indexCreatedVersionMajor = indexCreatedVersionMajor;
             this.fieldInfo = fieldInfo;
-            // 每个doc 有自己的打分规则
+            // TODO 该属性是什么时候设置的  在 perThread.updateDocument 中没有设置该属性
             similarity = docState.similarity;
-            // 如果需要反转的话 存储反转信息
+            // 如果需要反转的话 存储反转信息   这个反转信息的含义 好像是通过 docId 反向查询field???
             if (invert) {
                 setInvertState();
             }
@@ -961,9 +965,9 @@ final class DefaultIndexingChain extends DocConsumer {
          */
         void setInvertState() {
             invertState = new FieldInvertState(indexCreatedVersionMajor, fieldInfo.name, fieldInfo.getIndexOptions());
-            // 这里开始处理 field信息 并存储解析出来的term
+            // 生成一个 基于 field抽取term信息的对象
             termsHashPerField = termsHash.addField(invertState, fieldInfo);
-            // 如果域信息存在 标准因子 那么需要初始化一个标准因子 writer   一开始通过 fieldInfos.getOrAdd 方法返回的对象标准因子是false
+            // 如果域信息存在 标准因子 那么需要初始化一个标准因子 writer   一开始通过 fieldInfos.getOrAdd 方法返回的对象 该属性是false
             if (fieldInfo.omitsNorms() == false) {
                 assert norms == null;
                 // Even if no documents actually succeed in setting a norm, we still write norms for this segment:
@@ -1003,9 +1007,9 @@ final class DefaultIndexingChain extends DocConsumer {
          * if this is the first time we are seeing this field
          * name in this document.
          * <p>
-         *     生成倒排索引的逻辑
+         *     解析field的信息 并存储到 invertState 中
          *
-         * @param first 代表该field 在该doc中首次出现
+         * @param first 代表该field 在本次处理的所有doc中 首次出现
          */
         public void invert(IndexableField field, boolean first) throws IOException {
             if (first) {
@@ -1017,23 +1021,25 @@ final class DefaultIndexingChain extends DocConsumer {
             IndexableFieldType fieldType = field.fieldType();
 
             IndexOptions indexOptions = fieldType.indexOptions();
-            // 重置 fieldInfo 内部的索引选项
+            // 更新索引存储选项
             fieldInfo.setIndexOptions(indexOptions);
 
+            // 当设置了 忽略标准因子时 修改状态  当PerField对象首次被创建时 一般都会先创建 NormWriter 对象
             if (fieldType.omitNorms()) {
                 fieldInfo.setOmitsNorms();
             }
 
-            // 代表已经通过词法解析器处理过
+            // tokenized() 标识 该field相关的value信息是否应当被分词器处理   TODO docState的分词器是啥时候设置的???
             final boolean analyzed = fieldType.tokenized() && docState.analyzer != null;
 
             /*
              * To assist people in tracking down problems in analysis components, we wish to write the field name to the infostream
              * when we fail. We expect some caller to eventually deal with the real exception, so we don't want any 'catch' clauses,
              * but rather a finally that takes note of the problem.
+             * 确定本次处理是否成功
              */
             boolean succeededInProcessingField = false;
-            // 相同fieldName 的token流对象可能会被复用
+            // 当首次调用时 tokenStream还未初始化 每次调用完invert后会生成一个新的tokenStream 并且当下次处理相同的field时 又会以这个tokenStream为基础 形成一种loop
             try (TokenStream stream = tokenStream = field.tokenStream(docState.analyzer, tokenStream)) {
                 // reset the TokenStream to the first token
                 stream.reset();

@@ -29,7 +29,7 @@ import org.apache.lucene.util.IOUtils;
  *
  *
  * @since 3.1
- * 该对象可以解析出 停词   stopword 也就是无法作为查询关键字的词
+ * 该对象可以解析出 停词   stopword 也就是无法作为查询关键字的词  比如 is a  这种频繁出现又没有具体含义的词
  */
 public abstract class StopwordAnalyzerBase extends Analyzer {
 

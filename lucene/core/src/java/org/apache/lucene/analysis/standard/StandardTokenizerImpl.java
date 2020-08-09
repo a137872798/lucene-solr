@@ -42,9 +42,9 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
  */
 @SuppressWarnings("fallthrough")
 // 标准token解析器实现类  基于UTF-16 进行解码
-// java.String 使用的默认编码方式 就是UTF-16
 // UTF-16 是一种变长字符集  如果字符范围在  0x0000~ 0xD800 或者 0xDFFF~ 0xFFFF 就代表这2个相邻的 byte 对应一个字符集的某个字
 // 如果第一个代码单元(2byte 高位代理)在 0xD800~0xDBFF 之间 就代表该字符使用了4个byte来表示    第二个代码单元 (低位代理)在0xDC00~0xDFFF 之间
+// 这个类就不细看了
 public final class StandardTokenizerImpl {
 
     /**

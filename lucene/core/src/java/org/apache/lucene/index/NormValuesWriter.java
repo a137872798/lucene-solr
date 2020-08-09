@@ -27,8 +27,9 @@ import org.apache.lucene.util.packed.PackedInts;
 import org.apache.lucene.util.packed.PackedLongValues;
 
 /** Buffers up pending long per doc, then flushes when
- *  segment flushes. */
-// 该对象负责将 标准因子写入到 索引文件中   跟 普通的docValueWriter类似
+ *  segment flushes.
+ *  该对象负责写入 标准因子信息
+ */
 class NormValuesWriter {
 
   private DocsWithFieldSet docsWithField;
@@ -39,11 +40,13 @@ class NormValuesWriter {
   private int lastDocID = -1;
 
   /**
-   * @param fieldInfo   是否忽略标准因子的信息是携带在 field 上的  当 omitNorm 为false时 才会创建对应的对象
+   * @param fieldInfo
    * @param iwBytesUsed   多个对象共用这个计数器 用来统计内存开销
    */
   public NormValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed) {
+    // 存储该field 关联的所有 docId
     docsWithField = new DocsWithFieldSet();
+    // 该对象就是基于位存储数据
     pending = PackedLongValues.deltaPackedBuilder(PackedInts.COMPACT);
     bytesUsed = pending.ramBytesUsed() + docsWithField.ramBytesUsed();
     this.fieldInfo = fieldInfo;

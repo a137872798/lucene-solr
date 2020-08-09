@@ -89,6 +89,7 @@ public final class StandardTokenizer extends Tokenizer {
    * 
    * @throws IllegalArgumentException if the given length is outside of the
    *  range [1, {@value #MAX_TOKEN_LENGTH_LIMIT}].
+   *  设置token的最大长度 也就是一次最多允许读取多少数据
    */ 
   public void setMaxTokenLength(int length) {
     if (length < 1) {

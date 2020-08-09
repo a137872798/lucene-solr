@@ -112,7 +112,8 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
         this.nextPerField = nextPerField;
         // 该数组内除了存储 有关bytePool等的基础偏移量以外 还会根据子类生成定制化的array
         PostingsBytesStartArray byteStarts = new PostingsBytesStartArray(this, bytesUsed);
-        // 可以简单理解为一个hash桶  如果当前对象是 TermVectors的话 termBytePool 为null  因为TermVectors是下游对象 他只要和上游的 Freq对象共用一个hash桶就可以了
+        // 可以简单理解为一个hash桶  如果termsHash对象是 TermVectorsConsumer的话 termBytePool 为null
+        // 因为TermVectors是下游对象 他只要和上游的 Freq对象共用一个hash桶就可以了
         bytesHash = new BytesRefHash(termBytePool, HASH_INIT_SIZE, byteStarts);
     }
 

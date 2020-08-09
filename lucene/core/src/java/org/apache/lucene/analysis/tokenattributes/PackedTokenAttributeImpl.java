@@ -28,6 +28,7 @@ import org.apache.lucene.util.AttributeReflector;
  * <li>{@link OffsetAttribute}
  * <li>{@link TermFrequencyAttribute}
  * </ul>*/
+// 该对象已经组合了多种默认的 attr
 public class PackedTokenAttributeImpl extends CharTermAttributeImpl   // 该对象就是 char[] 的包装类
                    implements TypeAttribute, PositionIncrementAttribute,
                               PositionLengthAttribute, OffsetAttribute,

@@ -23,7 +23,7 @@ package org.apache.lucene.util;
  * <p>
  * Attributes are used to add data in a dynamic, yet type-safe way to a source
  * of usually streamed objects, e. g. a {@link org.apache.lucene.analysis.TokenStream}.
- * Attribute 是一个空的接口
+ * 抽象出一个 获取属性 清除属性的对象
  */
 public abstract class AttributeImpl implements Cloneable, Attribute {  
   /**
@@ -40,6 +40,7 @@ public abstract class AttributeImpl implements Cloneable, Attribute {
    * it clears all.
    * <p>
    * The default implementation simply calls {@link #clear()}
+   * 处理完整个AttributeSource 后执行
    */
   public void end() {
     clear();
@@ -60,6 +61,7 @@ public abstract class AttributeImpl implements Cloneable, Attribute {
     final StringBuilder buffer = new StringBuilder();
     // 该方法负责从 attClass 获取key的属性
     reflectWith((attClass, key, value) -> {
+      // 当容器内部已经有数据时 自动补上 "，"
       if (buffer.length() > 0) {
         buffer.append(',');
       }

@@ -38,9 +38,17 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
    * 该对象内部有多个 int[]  每个数组应该就是用来存储描述term的某个属性
    */
   private FreqProxPostingsArray freqProxPostingsArray;
-  // 根据之前索引的配置确定是否要存储这些信息
+  /**
+   * 根据field的 IndexOptional 确定是否要存储频率
+   */
   final boolean hasFreq;
+  /**
+   * 是否要存储 position信息
+   */
   final boolean hasProx;
+  /**
+   * 是否要存储offset信息
+   */
   final boolean hasOffsets;
   PayloadAttribute payloadAttribute;
   OffsetAttribute offsetAttribute;
@@ -55,7 +63,15 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
   // 代表还存储了 payload信息   从存储position的逻辑中可以看到
   boolean sawPayloads;
 
+  /**
+   *
+   * @param invertState
+   * @param termsHash  该对象绑定的 存储term的容器
+   * @param fieldInfo  代表从哪个field 中抽取属性
+   * @param nextPerField  下游对象
+   */
   public FreqProxTermsWriterPerField(FieldInvertState invertState, TermsHash termsHash, FieldInfo fieldInfo, TermsHashPerField nextPerField) {
+    // 当该field 需要存储的属性枚举 大于该值时 代表需要存储2种数据 频率和position 否则只存储频率
     super(fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0 ? 2 : 1, invertState, termsHash, nextPerField, fieldInfo);
     IndexOptions indexOptions = fieldInfo.getIndexOptions();
     assert indexOptions != IndexOptions.NONE;

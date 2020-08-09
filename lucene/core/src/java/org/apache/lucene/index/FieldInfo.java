@@ -50,7 +50,7 @@ public final class FieldInfo {
 
   private IndexOptions indexOptions = IndexOptions.NONE;
   /**
-   * 标识 该field 在记录 term的position时 有没有携带 payload
+   * 代表是否要存储field携带的 payload信息 只有 IndexOptional 超过某个值时 才会存储
    */
   private boolean storePayloads; // whether this field stores payloads together with term positions
 
@@ -264,6 +264,7 @@ public final class FieldInfo {
   // 填充索引相关选项
   public void setIndexOptions(IndexOptions newIndexOptions) {
     if (indexOptions != newIndexOptions) {
+      // 只允许 A->NONE NONE->A  A->A  禁止其他情况
       if (indexOptions == IndexOptions.NONE) {
         indexOptions = newIndexOptions;
       } else if (newIndexOptions != IndexOptions.NONE) {

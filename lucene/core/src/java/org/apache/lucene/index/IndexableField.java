@@ -51,7 +51,7 @@ public interface IndexableField {
    *              check.
    * @return TokenStream value for indexing the document.  Should always return
    *         a non-null value if the field is to be indexed
-   *         将该字段转换成一个 token流
+   *         将field.value 通过分词器 加工成一个token流  并且返回结果会作为下一次的 reuse
    */
   public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse);
 

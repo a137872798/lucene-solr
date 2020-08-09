@@ -149,7 +149,7 @@ final class FreqProxTermsWriter extends TermsHash {
    */
   @Override
   public TermsHashPerField addField(FieldInvertState invertState, FieldInfo fieldInfo) {
-    // 先调用下游存储词向量的 TermHash.addField 之后将结果作为 返回的 perField的属性
+    // 先调用下游存储词向量的 TermHash.addField   这时会返回一个 perField 对象  将它作为nextPerField 并初始化 以field为单位存储词频率信息的 writer
     return new FreqProxTermsWriterPerField(invertState, this, fieldInfo, nextTermsHash.addField(invertState, fieldInfo));
   }
 }

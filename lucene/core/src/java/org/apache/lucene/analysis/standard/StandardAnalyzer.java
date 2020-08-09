@@ -32,7 +32,7 @@ import org.apache.lucene.analysis.WordlistLoader;
  * {@link StopFilter}, using a configurable list of stop words.
  *
  * @since 3.1
- * 标准分词器对象  会找到内部的停词 以及统一成小写
+ * 标准分词器对象 这是lucene使用的默认分词器 会找到内部的停词 以及统一成小写
  */
 public final class StandardAnalyzer extends StopwordAnalyzerBase {
   
@@ -59,7 +59,7 @@ public final class StandardAnalyzer extends StopwordAnalyzerBase {
   /** Builds an analyzer with the stop words from the given reader.
    * @see WordlistLoader#getWordSet(Reader)
    * @param stopwords Reader to read stop words from */
-  // 停词从 reader中获取
+  // 从reader中读取停词
   public StandardAnalyzer(Reader stopwords) throws IOException {
     this(loadStopwordSet(stopwords));
   }
@@ -88,10 +88,12 @@ public final class StandardAnalyzer extends StopwordAnalyzerBase {
    *          {@link TokenStreamComponents} sink as a reader
 
    * @return
+   * 为某个field 创建token流组件 内部包含一组attributes对象 抽取term的属性
+   * 可以看到 fieldName参数是被忽略的 因为默认情况 Analyzer.reuseStrategy 是全局共享component的 所以跟field无关
    */
   @Override
   protected TokenStreamComponents createComponents(final String fieldName) {
-    // 该对象通过读取输入流 解析内部的token
+    // 该对象通过读取输入流 解析内部的token  它本身就是一个 AttributeSource
     final StandardTokenizer src = new StandardTokenizer();
     src.setMaxTokenLength(maxTokenLength);
     // 包装成一个新的token流

@@ -32,19 +32,19 @@ import org.apache.lucene.util.BytesRef;
 
 /**
  * Expert: directly create a field for a document.  Most
- * users should use one of the sugar subclasses: 
+ * users should use one of the sugar subclasses:
  * <ul>
- *    <li>{@link TextField}: {@link Reader} or {@link String} indexed for full-text search
- *    <li>{@link StringField}: {@link String} indexed verbatim as a single token
- *    <li>{@link IntPoint}: {@code int} indexed for exact/range queries.
- *    <li>{@link LongPoint}: {@code long} indexed for exact/range queries.
- *    <li>{@link FloatPoint}: {@code float} indexed for exact/range queries.
- *    <li>{@link DoublePoint}: {@code double} indexed for exact/range queries.
- *    <li>{@link SortedDocValuesField}: {@code byte[]} indexed column-wise for sorting/faceting
- *    <li>{@link SortedSetDocValuesField}: {@code SortedSet<byte[]>} indexed column-wise for sorting/faceting
- *    <li>{@link NumericDocValuesField}: {@code long} indexed column-wise for sorting/faceting
- *    <li>{@link SortedNumericDocValuesField}: {@code SortedSet<long>} indexed column-wise for sorting/faceting
- *    <li>{@link StoredField}: Stored-only value for retrieving in summary results
+ * <li>{@link TextField}: {@link Reader} or {@link String} indexed for full-text search
+ * <li>{@link StringField}: {@link String} indexed verbatim as a single token
+ * <li>{@link IntPoint}: {@code int} indexed for exact/range queries.
+ * <li>{@link LongPoint}: {@code long} indexed for exact/range queries.
+ * <li>{@link FloatPoint}: {@code float} indexed for exact/range queries.
+ * <li>{@link DoublePoint}: {@code double} indexed for exact/range queries.
+ * <li>{@link SortedDocValuesField}: {@code byte[]} indexed column-wise for sorting/faceting
+ * <li>{@link SortedSetDocValuesField}: {@code SortedSet<byte[]>} indexed column-wise for sorting/faceting
+ * <li>{@link NumericDocValuesField}: {@code long} indexed column-wise for sorting/faceting
+ * <li>{@link SortedNumericDocValuesField}: {@code SortedSet<long>} indexed column-wise for sorting/faceting
+ * <li>{@link StoredField}: Stored-only value for retrieving in summary results
  * </ul>
  *
  * <p> A field is a section of a Document. Each field has three
@@ -61,589 +61,623 @@ import org.apache.lucene.util.BytesRef;
  * IndexableField 接口 表示field  支持一个返回 IndexableFieldType 的方法
  * Field 有很多子类 他们都固化了自己的 IndexableFieldType
  * 如果用户手动创建 Field 可以自己指定索引存储信息
- * */
+ */
 public class Field implements IndexableField {
 
-  /**
-   * Field's type
-   * 描述哪些属性支持被索引
-   */
-  protected final IndexableFieldType type;
-
-  /**
-   * Field's name
-   * 域的名字
-   */
-  protected final String name;
-
-  /** Field's value */
-  // 域所携带的数据
-  protected Object fieldsData;
-
-  /** Pre-analyzed tokenStream for indexed fields; this is
-   * separate from fieldsData because you are allowed to
-   * have both; eg maybe field has a String value but you
-   * customize how it's tokenized */
-  // field 要么以fieldsData 作为数据体 要么以tokenStream 作为数据体
-  protected TokenStream tokenStream;
-
-  /**
-   * Expert: creates a field with no initial value.
-   * Intended only for custom Field subclasses.
-   * @param name field name
-   * @param type field type
-   * @throws IllegalArgumentException if either the name or type
-   *         is null.
-   *         通过一个字段名 和 字段类型来初始化
-   */
-  protected Field(String name, IndexableFieldType type) {
-    if (name == null) {
-      throw new IllegalArgumentException("name must not be null");
-    }
-    this.name = name;
-    if (type == null) {
-      throw new IllegalArgumentException("type must not be null");
-    }
-    this.type = type;
-  }
-
-  /**
-   * Create field with Reader value.
-   * @param name field name
-   * @param reader reader value
-   * @param type field type
-   * @throws IllegalArgumentException if either the name or type
-   *         is null, or if the field's type is stored(), or
-   *         if tokenized() is false.
-   * @throws NullPointerException if the reader is null
-   * 代表着该字段的值从reader中获取
-   */
-  public Field(String name, Reader reader, IndexableFieldType type) {
-    if (name == null) {
-      throw new IllegalArgumentException("name must not be null");
-    }
-    if (type == null) {
-      throw new IllegalArgumentException("type must not be null");
-    }
-    if (reader == null) {
-      throw new NullPointerException("reader must not be null");
-    }
-    if (type.stored()) {
-      throw new IllegalArgumentException("fields with a Reader value cannot be stored");
-    }
-    if (type.indexOptions() != IndexOptions.NONE && !type.tokenized()) {
-      throw new IllegalArgumentException("non-tokenized fields must use String values");
-    }
-    
-    this.name = name;
-    this.fieldsData = reader;
-    this.type = type;
-  }
-
-  /**
-   * Create field with TokenStream value.
-   * @param name field name
-   * @param tokenStream TokenStream value
-   * @param type field type
-   * @throws IllegalArgumentException if either the name or type
-   *         is null, or if the field's type is stored(), or
-   *         if tokenized() is false, or if indexed() is false.
-   * @throws NullPointerException if the tokenStream is null
-   */
-  public Field(String name, TokenStream tokenStream, IndexableFieldType type) {
-    if (name == null) {
-      throw new IllegalArgumentException("name must not be null");
-    }
-    if (tokenStream == null) {
-      throw new NullPointerException("tokenStream must not be null");
-    }
-    if (type.indexOptions() == IndexOptions.NONE || !type.tokenized()) {
-      throw new IllegalArgumentException("TokenStream fields must be indexed and tokenized");
-    }
-    if (type.stored()) {
-      throw new IllegalArgumentException("TokenStream fields cannot be stored");
-    }
-    
-    this.name = name;
-    this.fieldsData = null;
-    this.tokenStream = tokenStream;
-    this.type = type;
-  }
-  
-  /**
-   * Create field with binary value.
-   * 
-   * <p>NOTE: the provided byte[] is not copied so be sure
-   * not to change it until you're done with this field.
-   * @param name field name
-   * @param value byte array pointing to binary content (not copied)
-   * @param type field type
-   * @throws IllegalArgumentException if the field name, value or type
-   *         is null, or the field's type is indexed().
-   */
-  public Field(String name, byte[] value, IndexableFieldType type) {
-    this(name, value, 0, value.length, type);
-  }
-
-  /**
-   * Create field with binary value.
-   * 
-   * <p>NOTE: the provided byte[] is not copied so be sure
-   * not to change it until you're done with this field.
-   * @param name field name
-   * @param value byte array pointing to binary content (not copied)
-   * @param offset starting position of the byte array
-   * @param length valid length of the byte array
-   * @param type field type
-   * @throws IllegalArgumentException if the field name, value or type
-   *         is null, or the field's type is indexed().
-   */
-  public Field(String name, byte[] value, int offset, int length, IndexableFieldType type) {
-    this(name, value != null ? new BytesRef(value, offset, length) : null, type);
-  }
-
-  /**
-   * Create field with binary value.
-   *
-   * <p>NOTE: the provided BytesRef is not copied so be sure
-   * not to change it until you're done with this field.
-   * @param name field name
-   * @param bytes BytesRef pointing to binary content (not copied)
-   * @param type field type
-   * @throws IllegalArgumentException if the field name, bytes or type
-   *         is null, or the field's type is indexed().
-   */
-  public Field(String name, BytesRef bytes, IndexableFieldType type) {
-    if (name == null) {
-      throw new IllegalArgumentException("name must not be null");
-    }
-    if (bytes == null) {
-      throw new IllegalArgumentException("bytes must not be null");
-    }
-    if (type == null) {
-      throw new IllegalArgumentException("type must not be null");
-    }
-    this.name = name;
-    this.fieldsData = bytes;
-    this.type = type;
-  }
-
-  // TODO: allow direct construction of int, long, float, double value too..?
-
-  /**
-   * Create field with String value.
-   * @param name field name
-   * @param value string value
-   * @param type field type
-   * @throws IllegalArgumentException if either the name, value or type
-   *         is null, or if the field's type is neither indexed() nor stored(), 
-   *         or if indexed() is false but storeTermVectors() is true.
-   *         创建一个域对象
-   */
-  public Field(String name, CharSequence value, IndexableFieldType type) {
-    if (name == null) {
-      throw new IllegalArgumentException("name must not be null");
-    }
-    if (value == null) {
-      throw new IllegalArgumentException("value must not be null");
-    }
-    if (type == null) {
-      throw new IllegalArgumentException("type must not be null");
-    }
-    if (!type.stored() && type.indexOptions() == IndexOptions.NONE) {
-      throw new IllegalArgumentException("it doesn't make sense to have a field that "
-        + "is neither indexed nor stored");
-    }
-    this.name = name;
-    this.fieldsData = value;
-    this.type = type;
-  }
-
-  /**
-   * The value of the field as a String, or null. If null, the Reader value or
-   * binary value is used. Exactly one of stringValue(), readerValue(), and
-   * binaryValue() must be set.
-   */
-  @Override
-  public String stringValue() {
-    if (fieldsData instanceof CharSequence || fieldsData instanceof Number) {
-      return fieldsData.toString();
-    } else {
-      return null;
-    }
-  }
-
-  @Override
-  public CharSequence getCharSequenceValue() {
-    return fieldsData instanceof CharSequence ?
-        (CharSequence) fieldsData : stringValue();
-  }
-
-  /**
-   * The value of the field as a Reader, or null. If null, the String value or
-   * binary value is used. Exactly one of stringValue(), readerValue(), and
-   * binaryValue() must be set.
-   */
-  @Override
-  public Reader readerValue() {
-    return fieldsData instanceof Reader ? (Reader) fieldsData : null;
-  }
-  
-  /**
-   * The TokenStream for this field to be used when indexing, or null. If null,
-   * the Reader value or String value is analyzed to produce the indexed tokens.
-   */
-  public TokenStream tokenStreamValue() {
-    return tokenStream;
-  }
-  
-  /**
-   * <p>
-   * Expert: change the value of this field. This can be used during indexing to
-   * re-use a single Field instance to improve indexing speed by avoiding GC
-   * cost of new'ing and reclaiming Field instances. Typically a single
-   * {@link Document} instance is re-used as well. This helps most on small
-   * documents.
-   * </p>
-   * 
-   * <p>
-   * Each Field instance should only be used once within a single
-   * {@link Document} instance. See <a
-   * href="http://wiki.apache.org/lucene-java/ImproveIndexingSpeed"
-   * >ImproveIndexingSpeed</a> for details.
-   * </p>
-   */
-  public void setStringValue(String value) {
-    if (!(fieldsData instanceof String)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to String");
-    }
-    if (value == null) {
-      throw new IllegalArgumentException("value must not be null");
-    }
-    fieldsData = value;
-  }
-  
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setReaderValue(Reader value) {
-    if (!(fieldsData instanceof Reader)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Reader");
-    }
-    fieldsData = value;
-  }
-  
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setBytesValue(byte[] value) {
-    setBytesValue(new BytesRef(value));
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   *
-   * <p>NOTE: the provided BytesRef is not copied so be sure
-   * not to change it until you're done with this field.
-   */
-  public void setBytesValue(BytesRef value) {
-    if (!(fieldsData instanceof BytesRef)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to BytesRef");
-    }
-    if (type.indexOptions() != IndexOptions.NONE) {
-      throw new IllegalArgumentException("cannot set a BytesRef value on an indexed field");
-    }
-    if (value == null) {
-      throw new IllegalArgumentException("value must not be null");
-    }
-    fieldsData = value;
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setByteValue(byte value) {
-    if (!(fieldsData instanceof Byte)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Byte");
-    }
-    fieldsData = Byte.valueOf(value);
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setShortValue(short value) {
-    if (!(fieldsData instanceof Short)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Short");
-    }
-    fieldsData = Short.valueOf(value);
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setIntValue(int value) {
-    if (!(fieldsData instanceof Integer)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Integer");
-    }
-    fieldsData = Integer.valueOf(value);
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setLongValue(long value) {
-    if (!(fieldsData instanceof Long)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Long");
-    }
-    fieldsData = Long.valueOf(value);
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setFloatValue(float value) {
-    if (!(fieldsData instanceof Float)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Float");
-    }
-    fieldsData = Float.valueOf(value);
-  }
-
-  /**
-   * Expert: change the value of this field. See 
-   * {@link #setStringValue(String)}.
-   */
-  public void setDoubleValue(double value) {
-    if (!(fieldsData instanceof Double)) {
-      throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Double");
-    }
-    fieldsData = Double.valueOf(value);
-  }
-
-  /**
-   * Expert: sets the token stream to be used for indexing and causes
-   * isIndexed() and isTokenized() to return true. May be combined with stored
-   * values from stringValue() or binaryValue()
-   */
-  public void setTokenStream(TokenStream tokenStream) {
-    if (type.indexOptions() == IndexOptions.NONE || !type.tokenized()) {
-      throw new IllegalArgumentException("TokenStream fields must be indexed and tokenized");
-    }
-    this.tokenStream = tokenStream;
-  }
-  
-  @Override
-  public String name() {
-    return name;
-  }
-
-  @Override
-  public Number numericValue() {
-    if (fieldsData instanceof Number) {
-      return (Number) fieldsData;
-    } else {
-      return null;
-    }
-  }
-
-  @Override
-  public BytesRef binaryValue() {
-    if (fieldsData instanceof BytesRef) {
-      return (BytesRef) fieldsData;
-    } else {
-      return null;
-    }
-  }
-
-  /** Prints a Field for human consumption. */
-  @Override
-  public String toString() {
-    StringBuilder result = new StringBuilder();
-    result.append(type.toString());
-    result.append('<');
-    result.append(name);
-    result.append(':');
-
-    if (fieldsData != null) {
-      result.append(fieldsData);
-    }
-
-    result.append('>');
-    return result.toString();
-  }
-  
-  /** Returns the {@link FieldType} for this field. */
-  @Override
-  public IndexableFieldType fieldType() {
-    return type;
-  }
-
-  /**
-   * @param analyzer Analyzer that should be used to create the TokenStreams from
-   * @param reuse TokenStream for a previous instance of this field <b>name</b>. This allows
-   *              custom field types (like StringField and NumericField) that do not use
-   *              the analyzer to still have good performance. Note: the passed-in type
-   *              may be inappropriate, for example if you mix up different types of Fields
-   *              for the same field name. So it's the responsibility of the implementation to
-   *              check.
-   *              尝试复用上一个 field对应的tokenStream
-   * @return
-   */
-  @Override
-  public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
-    // 如果该field 本身不需要存储信息 不需要生成token 流   在lucene流程中 DefaultIndexingChain 已经确保了能进入该方法的 时候必然设置了 索引选项
-    if (fieldType().indexOptions() == IndexOptions.NONE) {
-      // Not indexed
-      return null;
-    }
-
-    // 如果已经设置了值的情况 选择复用上一个对象
-    if (!fieldType().tokenized()) {
-      // 如果该field 内部的属性已经被设置   将结果设置到上游对象 并直接返回上游对象 这样该对象占用的内存就可以释放
-      if (stringValue() != null) {
-        if (!(reuse instanceof StringTokenStream)) {
-          // lazy init the TokenStream as it is heavy to instantiate
-          // (attributes,...) if not needed
-          reuse = new StringTokenStream();
-        }
-        ((StringTokenStream) reuse).setValue(stringValue());
-        return reuse;
-      } else if (binaryValue() != null) {
-        if (!(reuse instanceof BinaryTokenStream)) {
-          // lazy init the TokenStream as it is heavy to instantiate
-          // (attributes,...) if not needed
-          reuse = new BinaryTokenStream();
-        }
-        ((BinaryTokenStream) reuse).setValue(binaryValue());
-        return reuse;
-      } else {
-        throw new IllegalArgumentException("Non-Tokenized Fields must have a String value");
-      }
-    }
-
-    // 已经生成token流 返回 否则使用分析器 分析后 返回结果
-    if (tokenStream != null) {
-      return tokenStream;
-    // 选择将该field 包装成 tokenStream
-    } else if (readerValue() != null) {
-      return analyzer.tokenStream(name(), readerValue());
-    } else if (stringValue() != null) {
-      return analyzer.tokenStream(name(), stringValue());
-    }
-
-    throw new IllegalArgumentException("Field must have either TokenStream, String, Reader or Number value; got " + this);
-  }
-  
-  private static final class BinaryTokenStream extends TokenStream {
-    private final BytesTermAttribute bytesAtt = addAttribute(BytesTermAttribute.class);
-    private boolean used = true;
-    private BytesRef value;
-  
-    /** Creates a new TokenStream that returns a BytesRef as single token.
-     * <p>Warning: Does not initialize the value, you must call
-     * {@link #setValue(BytesRef)} afterwards!
-     */
-    BinaryTokenStream() {
-    }
-
-    public void setValue(BytesRef value) {
-      this.value = value;
-    }
-  
-    @Override
-    public boolean incrementToken() {
-      if (used) {
-        return false;
-      }
-      clearAttributes();
-      bytesAtt.setBytesRef(value);
-      used = true;
-      return true;
-    }
-  
-    @Override
-    public void reset() {
-      used = false;
-    }
-
-    @Override
-    public void close() {
-      value = null;
-    }
-  }
-
-  private static final class StringTokenStream extends TokenStream {
-    private final CharTermAttribute termAttribute = addAttribute(CharTermAttribute.class);
     /**
-     * 有关偏移量的 属性就是记录一个起点offset 和一个 终止offset 刚好对应的string的长度(0,length)
+     * Field's type
+     * 描述哪些属性支持被索引
      */
-    private final OffsetAttribute offsetAttribute = addAttribute(OffsetAttribute.class);
-    private boolean used = true;
-    private String value = null;
-    
-    /** Creates a new TokenStream that returns a String as single token.
-     * <p>Warning: Does not initialize the value, you must call
-     * {@link #setValue(String)} afterwards!
+    protected final IndexableFieldType type;
+
+    /**
+     * Field's name
+     * 域的名字
      */
-    StringTokenStream() {
-    }
-    
-    /** Sets the string value. */
-    void setValue(String value) {
-      this.value = value;
-    }
+    protected final String name;
 
-    @Override
-    public boolean incrementToken() {
-      if (used) {
-        return false;
-      }
-      clearAttributes();
-      termAttribute.append(value);
-      offsetAttribute.setOffset(0, value.length());
-      used = true;
-      return true;
-    }
-
-    @Override
-    public void end() throws IOException {
-      super.end();
-      final int finalOffset = value.length();
-      offsetAttribute.setOffset(finalOffset, finalOffset);
-    }
-    
-    @Override
-    public void reset() {
-      used = false;
-    }
-
-    @Override
-    public void close() {
-      value = null;
-    }
-  }
-
-  /** Specifies whether and how a field should be stored. */
-  // 描述是否需要存储 域信息
-  public static enum Store {
-
-    /** Store the original field value in the index. This is useful for short texts
-     * like a document's title which should be displayed with the results. The
-     * value is stored in its original form, i.e. no analyzer is used before it is
-     * stored.
-     * 将域的值存储到 索引中
+    /**
+     * Field's value
      */
-    YES,
+    // 域所携带的数据  也许被分词器处理后的单词就是 term
+    protected Object fieldsData;
 
-    /** Do not store the field value in the index. */
-    NO
-  }
+    /**
+     * Pre-analyzed tokenStream for indexed fields; this is
+     * separate from fieldsData because you are allowed to
+     * have both; eg maybe field has a String value but you
+     * customize how it's tokenized
+     */
+    // field 要么以fieldsData 作为数据体 要么以tokenStream 作为数据体
+    protected TokenStream tokenStream;
+
+    /**
+     * Expert: creates a field with no initial value.
+     * Intended only for custom Field subclasses.
+     *
+     * @param name field name
+     * @param type field type
+     * @throws IllegalArgumentException if either the name or type
+     *                                  is null.
+     *                                  通过一个字段名 和 字段类型来初始化
+     */
+    protected Field(String name, IndexableFieldType type) {
+        if (name == null) {
+            throw new IllegalArgumentException("name must not be null");
+        }
+        this.name = name;
+        if (type == null) {
+            throw new IllegalArgumentException("type must not be null");
+        }
+        this.type = type;
+    }
+
+    /**
+     * Create field with Reader value.
+     *
+     * @param name   field name
+     * @param reader reader value
+     * @param type   field type
+     * @throws IllegalArgumentException if either the name or type
+     *                                  is null, or if the field's type is stored(), or
+     *                                  if tokenized() is false.
+     * @throws NullPointerException     if the reader is null
+     *                                  代表着该字段的值从reader中获取
+     */
+    public Field(String name, Reader reader, IndexableFieldType type) {
+        if (name == null) {
+            throw new IllegalArgumentException("name must not be null");
+        }
+        if (type == null) {
+            throw new IllegalArgumentException("type must not be null");
+        }
+        if (reader == null) {
+            throw new NullPointerException("reader must not be null");
+        }
+        if (type.stored()) {
+            throw new IllegalArgumentException("fields with a Reader value cannot be stored");
+        }
+        if (type.indexOptions() != IndexOptions.NONE && !type.tokenized()) {
+            throw new IllegalArgumentException("non-tokenized fields must use String values");
+        }
+
+        this.name = name;
+        this.fieldsData = reader;
+        this.type = type;
+    }
+
+    /**
+     * Create field with TokenStream value.
+     *
+     * @param name        field name
+     * @param tokenStream TokenStream value
+     * @param type        field type
+     * @throws IllegalArgumentException if either the name or type
+     *                                  is null, or if the field's type is stored(), or
+     *                                  if tokenized() is false, or if indexed() is false.
+     * @throws NullPointerException     if the tokenStream is null
+     */
+    public Field(String name, TokenStream tokenStream, IndexableFieldType type) {
+        if (name == null) {
+            throw new IllegalArgumentException("name must not be null");
+        }
+        if (tokenStream == null) {
+            throw new NullPointerException("tokenStream must not be null");
+        }
+        if (type.indexOptions() == IndexOptions.NONE || !type.tokenized()) {
+            throw new IllegalArgumentException("TokenStream fields must be indexed and tokenized");
+        }
+        if (type.stored()) {
+            throw new IllegalArgumentException("TokenStream fields cannot be stored");
+        }
+
+        this.name = name;
+        this.fieldsData = null;
+        this.tokenStream = tokenStream;
+        this.type = type;
+    }
+
+    /**
+     * Create field with binary value.
+     *
+     * <p>NOTE: the provided byte[] is not copied so be sure
+     * not to change it until you're done with this field.
+     *
+     * @param name  field name
+     * @param value byte array pointing to binary content (not copied)
+     * @param type  field type
+     * @throws IllegalArgumentException if the field name, value or type
+     *                                  is null, or the field's type is indexed().
+     */
+    public Field(String name, byte[] value, IndexableFieldType type) {
+        this(name, value, 0, value.length, type);
+    }
+
+    /**
+     * Create field with binary value.
+     *
+     * <p>NOTE: the provided byte[] is not copied so be sure
+     * not to change it until you're done with this field.
+     *
+     * @param name   field name
+     * @param value  byte array pointing to binary content (not copied)
+     * @param offset starting position of the byte array
+     * @param length valid length of the byte array
+     * @param type   field type
+     * @throws IllegalArgumentException if the field name, value or type
+     *                                  is null, or the field's type is indexed().
+     */
+    public Field(String name, byte[] value, int offset, int length, IndexableFieldType type) {
+        this(name, value != null ? new BytesRef(value, offset, length) : null, type);
+    }
+
+    /**
+     * Create field with binary value.
+     *
+     * <p>NOTE: the provided BytesRef is not copied so be sure
+     * not to change it until you're done with this field.
+     *
+     * @param name  field name
+     * @param bytes BytesRef pointing to binary content (not copied)
+     * @param type  field type
+     * @throws IllegalArgumentException if the field name, bytes or type
+     *                                  is null, or the field's type is indexed().
+     */
+    public Field(String name, BytesRef bytes, IndexableFieldType type) {
+        if (name == null) {
+            throw new IllegalArgumentException("name must not be null");
+        }
+        if (bytes == null) {
+            throw new IllegalArgumentException("bytes must not be null");
+        }
+        if (type == null) {
+            throw new IllegalArgumentException("type must not be null");
+        }
+        this.name = name;
+        this.fieldsData = bytes;
+        this.type = type;
+    }
+
+    // TODO: allow direct construction of int, long, float, double value too..?
+
+    /**
+     * Create field with String value.
+     *
+     * @param name  field name
+     * @param value string value
+     * @param type  field type
+     * @throws IllegalArgumentException if either the name, value or type
+     *                                  is null, or if the field's type is neither indexed() nor stored(),
+     *                                  or if indexed() is false but storeTermVectors() is true.
+     *                                  创建一个域对象
+     */
+    public Field(String name, CharSequence value, IndexableFieldType type) {
+        if (name == null) {
+            throw new IllegalArgumentException("name must not be null");
+        }
+        if (value == null) {
+            throw new IllegalArgumentException("value must not be null");
+        }
+        if (type == null) {
+            throw new IllegalArgumentException("type must not be null");
+        }
+        if (!type.stored() && type.indexOptions() == IndexOptions.NONE) {
+            throw new IllegalArgumentException("it doesn't make sense to have a field that "
+                    + "is neither indexed nor stored");
+        }
+        this.name = name;
+        this.fieldsData = value;
+        this.type = type;
+    }
+
+    /**
+     * The value of the field as a String, or null. If null, the Reader value or
+     * binary value is used. Exactly one of stringValue(), readerValue(), and
+     * binaryValue() must be set.
+     */
+    @Override
+    public String stringValue() {
+        if (fieldsData instanceof CharSequence || fieldsData instanceof Number) {
+            return fieldsData.toString();
+        } else {
+            return null;
+        }
+    }
+
+    @Override
+    public CharSequence getCharSequenceValue() {
+        return fieldsData instanceof CharSequence ?
+                (CharSequence) fieldsData : stringValue();
+    }
+
+    /**
+     * The value of the field as a Reader, or null. If null, the String value or
+     * binary value is used. Exactly one of stringValue(), readerValue(), and
+     * binaryValue() must be set.
+     */
+    @Override
+    public Reader readerValue() {
+        return fieldsData instanceof Reader ? (Reader) fieldsData : null;
+    }
+
+    /**
+     * The TokenStream for this field to be used when indexing, or null. If null,
+     * the Reader value or String value is analyzed to produce the indexed tokens.
+     */
+    public TokenStream tokenStreamValue() {
+        return tokenStream;
+    }
+
+    /**
+     * <p>
+     * Expert: change the value of this field. This can be used during indexing to
+     * re-use a single Field instance to improve indexing speed by avoiding GC
+     * cost of new'ing and reclaiming Field instances. Typically a single
+     * {@link Document} instance is re-used as well. This helps most on small
+     * documents.
+     * </p>
+     *
+     * <p>
+     * Each Field instance should only be used once within a single
+     * {@link Document} instance. See <a
+     * href="http://wiki.apache.org/lucene-java/ImproveIndexingSpeed"
+     * >ImproveIndexingSpeed</a> for details.
+     * </p>
+     */
+    public void setStringValue(String value) {
+        if (!(fieldsData instanceof String)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to String");
+        }
+        if (value == null) {
+            throw new IllegalArgumentException("value must not be null");
+        }
+        fieldsData = value;
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setReaderValue(Reader value) {
+        if (!(fieldsData instanceof Reader)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Reader");
+        }
+        fieldsData = value;
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setBytesValue(byte[] value) {
+        setBytesValue(new BytesRef(value));
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     *
+     * <p>NOTE: the provided BytesRef is not copied so be sure
+     * not to change it until you're done with this field.
+     */
+    public void setBytesValue(BytesRef value) {
+        if (!(fieldsData instanceof BytesRef)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to BytesRef");
+        }
+        if (type.indexOptions() != IndexOptions.NONE) {
+            throw new IllegalArgumentException("cannot set a BytesRef value on an indexed field");
+        }
+        if (value == null) {
+            throw new IllegalArgumentException("value must not be null");
+        }
+        fieldsData = value;
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setByteValue(byte value) {
+        if (!(fieldsData instanceof Byte)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Byte");
+        }
+        fieldsData = Byte.valueOf(value);
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setShortValue(short value) {
+        if (!(fieldsData instanceof Short)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Short");
+        }
+        fieldsData = Short.valueOf(value);
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setIntValue(int value) {
+        if (!(fieldsData instanceof Integer)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Integer");
+        }
+        fieldsData = Integer.valueOf(value);
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setLongValue(long value) {
+        if (!(fieldsData instanceof Long)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Long");
+        }
+        fieldsData = Long.valueOf(value);
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setFloatValue(float value) {
+        if (!(fieldsData instanceof Float)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Float");
+        }
+        fieldsData = Float.valueOf(value);
+    }
+
+    /**
+     * Expert: change the value of this field. See
+     * {@link #setStringValue(String)}.
+     */
+    public void setDoubleValue(double value) {
+        if (!(fieldsData instanceof Double)) {
+            throw new IllegalArgumentException("cannot change value type from " + fieldsData.getClass().getSimpleName() + " to Double");
+        }
+        fieldsData = Double.valueOf(value);
+    }
+
+    /**
+     * Expert: sets the token stream to be used for indexing and causes
+     * isIndexed() and isTokenized() to return true. May be combined with stored
+     * values from stringValue() or binaryValue()
+     */
+    public void setTokenStream(TokenStream tokenStream) {
+        if (type.indexOptions() == IndexOptions.NONE || !type.tokenized()) {
+            throw new IllegalArgumentException("TokenStream fields must be indexed and tokenized");
+        }
+        this.tokenStream = tokenStream;
+    }
+
+    @Override
+    public String name() {
+        return name;
+    }
+
+    @Override
+    public Number numericValue() {
+        if (fieldsData instanceof Number) {
+            return (Number) fieldsData;
+        } else {
+            return null;
+        }
+    }
+
+    @Override
+    public BytesRef binaryValue() {
+        if (fieldsData instanceof BytesRef) {
+            return (BytesRef) fieldsData;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Prints a Field for human consumption.
+     */
+    @Override
+    public String toString() {
+        StringBuilder result = new StringBuilder();
+        result.append(type.toString());
+        result.append('<');
+        result.append(name);
+        result.append(':');
+
+        if (fieldsData != null) {
+            result.append(fieldsData);
+        }
+
+        result.append('>');
+        return result.toString();
+    }
+
+    /**
+     * Returns the {@link FieldType} for this field.
+     */
+    @Override
+    public IndexableFieldType fieldType() {
+        return type;
+    }
+
+    /**
+     * @param analyzer Analyzer that should be used to create the TokenStreams from
+     * @param reuse    TokenStream for a previous instance of this field <b>name</b>. This allows
+     *                 custom field types (like StringField and NumericField) that do not use
+     *                 the analyzer to still have good performance. Note: the passed-in type
+     *                 may be inappropriate, for example if you mix up different types of Fields
+     *                 for the same field name. So it's the responsibility of the implementation to
+     *                 check.
+     *                 在多个文档中出现的 同一fieldName的 field 会共享一个 perField对象 它们会共用一个 tokenStream
+     * @return
+     */
+    @Override
+    public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
+        // 如果该field 没有数据需要被存储 那么就不需要解析它了  (正因为有数据要存储 才会需要解析 抽取信息)
+        if (fieldType().indexOptions() == IndexOptions.NONE) {
+            // Not indexed
+            return null;
+        }
+
+        // 代表该field.value 不需要被解析  所以就不需要analyzer的参与了  直接使用value
+        // 先明确一点 多个fieldName会对应到同一perField对象  但是每个field可以有自己的value  也许这个value就是term
+        if (!fieldType().tokenized()) {
+            // 如果 value(fieldData) 是string/number类型 那么直接设置到token流中返回
+            if (stringValue() != null) {
+                if (!(reuse instanceof StringTokenStream)) {
+                    // 延迟初始化  厉害了 因为传入的 reuse 可能是null 但是它是 TokenStream类型 所以下面2个判断都是false 这时就会自动初始化
+                    // lazy init the TokenStream as it is heavy to instantiate
+                    // (attributes,...) if not needed
+                    reuse = new StringTokenStream();
+                }
+                ((StringTokenStream) reuse).setValue(stringValue());
+                return reuse;
+                // 如果是二进制格式的数据
+            } else if (binaryValue() != null) {
+                if (!(reuse instanceof BinaryTokenStream)) {
+                    // lazy init the TokenStream as it is heavy to instantiate
+                    // (attributes,...) if not needed
+                    reuse = new BinaryTokenStream();
+                }
+                ((BinaryTokenStream) reuse).setValue(binaryValue());
+                return reuse;
+            } else {
+                throw new IllegalArgumentException("Non-Tokenized Fields must have a String value");
+            }
+        }
+
+        // 已经生成token流 返回 否则使用分析器 分析后 返回结果
+        if (tokenStream != null) {
+            return tokenStream;
+            // 代表数据流是 Reader 类型
+        } else if (readerValue() != null) {
+            return analyzer.tokenStream(name(), readerValue());
+            // 数据是 string 类型
+        } else if (stringValue() != null) {
+            return analyzer.tokenStream(name(), stringValue());
+        }
+
+        throw new IllegalArgumentException("Field must have either TokenStream, String, Reader or Number value; got " + this);
+    }
+
+    /**
+     * 标明内部的数据类型是 byte[]
+     */
+    private static final class BinaryTokenStream extends TokenStream {
+        private final BytesTermAttribute bytesAtt = addAttribute(BytesTermAttribute.class);
+        private boolean used = true;
+        private BytesRef value;
+
+        /**
+         * Creates a new TokenStream that returns a BytesRef as single token.
+         * <p>Warning: Does not initialize the value, you must call
+         * {@link #setValue(BytesRef)} afterwards!
+         */
+        BinaryTokenStream() {
+        }
+
+        public void setValue(BytesRef value) {
+            this.value = value;
+        }
+
+        @Override
+        public boolean incrementToken() {
+            if (used) {
+                return false;
+            }
+            clearAttributes();
+            bytesAtt.setBytesRef(value);
+            used = true;
+            return true;
+        }
+
+        @Override
+        public void reset() {
+            used = false;
+        }
+
+        @Override
+        public void close() {
+            value = null;
+        }
+    }
+
+    /**
+     * 代表内部的属性类型是 string
+     */
+    private static final class StringTokenStream extends TokenStream {
+        private final CharTermAttribute termAttribute = addAttribute(CharTermAttribute.class);
+        /**
+         * 有关偏移量的 属性就是记录一个起点offset 和一个 终止offset 刚好对应的string的长度(0,length)
+         */
+        private final OffsetAttribute offsetAttribute = addAttribute(OffsetAttribute.class);
+        private boolean used = true;
+        private String value = null;
+
+        /**
+         * Creates a new TokenStream that returns a String as single token.
+         * <p>Warning: Does not initialize the value, you must call
+         * {@link #setValue(String)} afterwards!
+         */
+        StringTokenStream() {
+        }
+
+        /**
+         * Sets the string value.
+         */
+        void setValue(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public boolean incrementToken() {
+            if (used) {
+                return false;
+            }
+            clearAttributes();
+            termAttribute.append(value);
+            offsetAttribute.setOffset(0, value.length());
+            used = true;
+            return true;
+        }
+
+        @Override
+        public void end() throws IOException {
+            super.end();
+            final int finalOffset = value.length();
+            offsetAttribute.setOffset(finalOffset, finalOffset);
+        }
+
+        @Override
+        public void reset() {
+            used = false;
+        }
+
+        @Override
+        public void close() {
+            value = null;
+        }
+    }
+
+    /**
+     * Specifies whether and how a field should be stored.
+     */
+    // 描述是否需要存储 域信息
+    public static enum Store {
+
+        /**
+         * Store the original field value in the index. This is useful for short texts
+         * like a document's title which should be displayed with the results. The
+         * value is stored in its original form, i.e. no analyzer is used before it is
+         * stored.
+         * 将域的值存储到 索引中
+         */
+        YES,
+
+        /**
+         * Do not store the field value in the index.
+         */
+        NO
+    }
 }

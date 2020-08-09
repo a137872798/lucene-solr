@@ -19,7 +19,7 @@ package org.apache.lucene.util;
 
 /**
  * This interface is used to reflect contents of {@link AttributeSource} or {@link AttributeImpl}.
- * 该对象通过反射的方式获取 AttributeSource 或者 AttributeImpl的属性
+ * 通过反射的方式 为某个attr类设置属性
  */
 @FunctionalInterface
 public interface AttributeReflector {

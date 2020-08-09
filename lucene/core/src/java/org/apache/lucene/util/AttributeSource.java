@@ -37,6 +37,7 @@ import org.apache.lucene.analysis.TokenStream; // for javadocs
  * the {@link #addAttribute(Class)}, which then checks if an instance of
  * that type is already present. If yes, it returns the instance, otherwise
  * it creates a new instance and returns it.
+ * 可以理解为 提供可被抽取attribute 的数据源  实际上就是tokenStream
  */
 public class AttributeSource {
 
@@ -45,12 +46,13 @@ public class AttributeSource {
      *
      * @see #captureState
      * @see #restoreState
-     * 这是一个链表结构
+     * 每个具备抽取attr能力的 impl对象被包装成链表
      */
     public static final class State implements Cloneable {
         AttributeImpl attribute;
         State next;
 
+        // 拷贝时 会同时拷贝后面节点的数据
         @Override
         public State clone() {
             State clone = new State();
@@ -65,7 +67,8 @@ public class AttributeSource {
     }
 
     // These two maps must always be in sync!!!
-    // So they are private, final and read-only from the outside (read-only iterators)  该source相关的所有attrImpl
+    // So they are private, final and read-only from the outside (read-only iterators)
+    // 每个数据源 都会绑定一组 抽取数据用的 impl
     private final Map<Class<? extends Attribute>, AttributeImpl> attributes;
     private final Map<Class<? extends AttributeImpl>, AttributeImpl> attributeImpls;
     // 数组  然后内部每个state 对象都是一个链表
@@ -96,6 +99,7 @@ public class AttributeSource {
 
     /**
      * An AttributeSource using the supplied {@link AttributeFactory} for creating new {@link Attribute} instances.
+     * 使用指定的工厂进行初始化  TokenStream 有自己的定制工厂
      */
     public AttributeSource(AttributeFactory factory) {
         this.attributes = new LinkedHashMap<>();
@@ -114,6 +118,7 @@ public class AttributeSource {
     /**
      * Returns a new iterator that iterates the attribute classes
      * in the same order they were added in.
+     * 返回此时已经创建的所有attr
      */
     public final Iterator<Class<? extends Attribute>> getAttributeClassesIterator() {
         return Collections.unmodifiableSet(attributes.keySet()).iterator();
@@ -155,16 +160,17 @@ public class AttributeSource {
                 }
             };
         } else {
+            // 代表此时没有attr
             return Collections.<AttributeImpl>emptySet().iterator();
         }
     }
 
     /**
      * a cache that stores all interfaces for known implementation classes for performance (slow reflection)
-     * ClassValue  该类好像是用来缓存类的
+     * 简单来讲就是将传入的class 对应的所有Attr子类的接口存储起来 比如 CharTermAttribute 接口
      */
     private static final ClassValue<Class<? extends Attribute>[]> implInterfaces = new ClassValue<Class<? extends Attribute>[]>() {
-        // 根据传入的 类型生成一个派生类
+
         @Override
         protected Class<? extends Attribute>[] computeValue(Class<?> clazz) {
             final Set<Class<? extends Attribute>> intfSet = new LinkedHashSet<>();
@@ -188,7 +194,7 @@ public class AttributeSource {
     };
 
     /**
-     * 根据某个类 直接返回对应的派生类
+     * 返回该类实现的 各种 XXXAttribute 接口
      * @param clazz
      * @return
      */
@@ -204,13 +210,13 @@ public class AttributeSource {
      * with this method and cast to your class.
      * The recommended way to use custom implementations is using an {@link AttributeFactory}.
      * </p>
-     * 追加某个实现类
      */
     public final void addAttributeImpl(final AttributeImpl att) {
         final Class<? extends AttributeImpl> clazz = att.getClass();
         if (attributeImpls.containsKey(clazz)) return;
 
         // add all interfaces of this AttributeImpl to the maps
+        // 获取该impl类实现的各种 XXXAttr 接口
         for (final Class<? extends Attribute> curInterface : getAttributeInterfaces(clazz)) {
             // Attribute is a superclass of this interface
             if (!attributes.containsKey(curInterface)) {
@@ -282,12 +288,14 @@ public class AttributeSource {
      * @return
      */
     private State getCurrentState() {
-        // 每当插入了一个新的 impl 会强制将currentState[0] 置null 这样下次调用该方法 就会重新生成一次s
+        // 它这个套路就是 第一个元素存储了所有 impl 之后的state只存储了一个impl
         State s = currentState[0];
+        // 前半段的意思是首个元素不为null 那么代表已经发生过一次拷贝了  所以可以直接返回
+        // 后半段的意思是 当前确实没有attr 所以返回null
         if (s != null || !hasAttributes()) {
             return s;
         }
-        // 如果 attributeMap中有数据  拷贝到 state后返回
+        // 创建一个新的 state 并将所有impl设置进去，把state设置在[0]的位置
         State c = s = currentState[0] = new State();
         final Iterator<AttributeImpl> it = attributeImpls.values().iterator();
         c.attribute = it.next();

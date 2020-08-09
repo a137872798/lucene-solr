@@ -280,7 +280,6 @@ public class PackedLongValues extends LongValues implements Accountable {
             // 生成掩码
             pageMask = pageSize - 1;
             this.acceptableOverheadRatio = acceptableOverheadRatio;
-            // 每个reader 对象应该是有一个读取的范围  这里通过创建16 个对象将读取范围 扩大到16倍
             values = new PackedInts.Reader[INITIAL_PAGE_COUNT];
             pending = new long[pageSize];
             valuesOff = 0;

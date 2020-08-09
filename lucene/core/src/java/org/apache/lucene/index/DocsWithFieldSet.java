@@ -23,18 +23,25 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RamUsageEstimator;
 
 /** Accumulator for documents that have a value for a field. This is optimized
- *  for the case that all documents have a value. */
-// 每个field 可能会出现在多个doc中  这里是一个容器对象 与field一一对应的关系  标记了该field所关联的所有docId
-// 通过位图来存储 docId 是非常节省空间的  一个long 可以表示 64个docId
+ *  for the case that all documents have a value.
+ *  该对象记录了 field 存在于哪些doc下
+ */
 final class DocsWithFieldSet extends DocIdSet {
 
   private static long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(DocsWithFieldSet.class);
 
+  /**
+   * 使用位图存储docId
+   */
   private FixedBitSet set;
+  /**
+   * 记录此时一共写入了多少doc
+   */
   private int cost = 0;
   private int lastDocId = -1;
 
   void add(int docID) {
+    // 必须单调递增
     if (docID <= lastDocId) {
       throw new IllegalArgumentException("Out of order doc ids: last=" + lastDocId + ", next=" + docID);
     }
@@ -43,10 +50,11 @@ final class DocsWithFieldSet extends DocIdSet {
       // 进行扩容
       set = FixedBitSet.ensureCapacity(set, docID);
       set.set(docID);
+    // 此时位图还未被初始化
     } else if (docID != cost) {
       // migrate to a sparse encoding using a bit set
       set = new FixedBitSet(docID + 1);
-      // 这里是填写连续的位  docId 又不一定是连续的
+      // 位图的第一位 存储的是总数
       set.set(0, cost);
       set.set(docID);
     }

@@ -429,6 +429,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
                 throw new IllegalArgumentException("field name \"" + name + "\" is already mapped to field number \"" + nameToNumber.get(name) + "\", not \"" + number + "\"");
             }
             IndexOptions currentIndexOptions = this.indexOptions.get(name);
+            // 只允许3种情况   A->NONE   NONE->A   以及 A->A 禁止直接从 A->B
             if (indexOptions != IndexOptions.NONE && currentIndexOptions != null && currentIndexOptions != IndexOptions.NONE && indexOptions != currentIndexOptions) {
                 throw new IllegalArgumentException("cannot change field \"" + name + "\" from index options=" + currentIndexOptions + " to inconsistent index options=" + indexOptions);
             }

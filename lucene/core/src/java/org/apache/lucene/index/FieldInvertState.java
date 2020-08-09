@@ -97,7 +97,6 @@ public final class FieldInvertState {
 
   /**
    * Re-initialize the state
-   * 每当在一个新的 doc中处理之前出现过的 field 会通过该方法重置内部属性
    */
   void reset() {
     position = -1;
