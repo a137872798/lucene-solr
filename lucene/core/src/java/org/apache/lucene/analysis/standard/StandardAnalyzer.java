@@ -96,7 +96,7 @@ public final class StandardAnalyzer extends StopwordAnalyzerBase {
     // 该对象通过读取输入流 解析内部的token  它本身就是一个 AttributeSource
     final StandardTokenizer src = new StandardTokenizer();
     src.setMaxTokenLength(maxTokenLength);
-    // 包装成一个新的token流
+    // 包装成一个新的token流  会在每次读取数据到buffer中时  先统一转换成小写 (屏蔽大小写区别)
     TokenStream tok = new LowerCaseFilter(src);
     // 追加停词过滤器
     tok = new StopFilter(tok, stopwords);

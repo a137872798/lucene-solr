@@ -361,6 +361,7 @@ public class AttributeSource {
      * the value of the OffsetAttribute remains unchanged. It might be desirable to
      * reset its value to the default, in which case the caller should first
      * call {@link TokenStream#clearAttributes()} on the targetStream.
+     * 将state 内部的所有impl对象设置到本对象中
      */
     public final void restoreState(State state) {
         if (state == null) return;

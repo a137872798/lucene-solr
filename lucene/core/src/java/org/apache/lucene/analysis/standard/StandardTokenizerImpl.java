@@ -837,7 +837,7 @@ public final class StandardTokenizerImpl {
      * Internal scan buffer is resized down to its initial length, if it has grown.
      *
      * @param reader the new input stream
-     *               从一个新的输入流中读取数据
+     *              重置内部属性 并设置一个新的reader
      */
     public final void yyreset(java.io.Reader reader) {
         zzReader = reader;

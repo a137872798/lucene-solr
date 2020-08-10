@@ -1039,16 +1039,17 @@ final class DefaultIndexingChain extends DocConsumer {
              * 确定本次处理是否成功
              */
             boolean succeededInProcessingField = false;
-            // 当首次调用时 tokenStream还未初始化 每次调用完invert后会生成一个新的tokenStream 并且当下次处理相同的field时 又会以这个tokenStream为基础 形成一种loop
+            // 当首次调用时 tokenStream还未初始化 只有当tokenStream 是 StringTokenStream/ByteRefTokenStream 类型才会尝试复用
+            // 一般就是返回 StandardTokenizer
             try (TokenStream stream = tokenStream = field.tokenStream(docState.analyzer, tokenStream)) {
                 // reset the TokenStream to the first token
+                // 重置内部的 StandardTokenizerImpl 开始解析一个新的数据流
                 stream.reset();
-                // stream 内部包含了某个 field下所有term 的相关信息 这些信息就是用来生成倒排索引的
                 invertState.setAttributeSource(stream);
-                // 这里就是做一些清理工作 同时将 perField 内部的 attr 赋值 (从invertState中获取属性)
+                // 设置 perField内部的 attr属性
                 termsHashPerField.start(field, first);
 
-                // 不断解析 token 并且根据每次解析的token信息 设置attr内部的属性
+                // 解析field.value 抽取出来的token就叫做term  每当解析到一个token时 会更新内部的 positionIncreaseAttr  offsetAttr termAttr 等属性
                 while (stream.incrementToken()) {
 
                     // If we hit an exception in stream.next below
@@ -1058,10 +1059,11 @@ final class DefaultIndexingChain extends DocConsumer {
                     // will be marked as deleted, but still
                     // consume a docID
 
-                    // 这是有关指针增量的属性
+                    // 获取位置的增量信息  position 相当于是token的逻辑偏移量 就像是存储到kafka的每条批消息都有自己的逻辑偏移量  而且这里只存储增量值 相当于使用更小的内存
                     int posIncr = invertState.posIncrAttribute.getPositionIncrement();
                     // 通过attr 修改state 内部的值
                     invertState.position += posIncr;
+                    // 异常情况
                     if (invertState.position < invertState.lastPosition) {
                         if (posIncr == 0) {
                             throw new IllegalArgumentException("first position increment must be > 0 (got 0) for field '" + field.name() + "'");
@@ -1070,25 +1072,28 @@ final class DefaultIndexingChain extends DocConsumer {
                         } else {
                             throw new IllegalArgumentException("position overflowed Integer.MAX_VALUE (got posIncr=" + posIncr + " lastPosition=" + invertState.lastPosition + " position=" + invertState.position + ") for field '" + field.name() + "'");
                         }
-                    // 解析的数据量异常
+                    // 代表该field下解析出来的 token数量超过一开始的限定值  抛出异常
                     } else if (invertState.position > IndexWriter.MAX_POSITION) {
                         throw new IllegalArgumentException("position " + invertState.position + " is too large for field '" + field.name() + "': max allowed position is " + IndexWriter.MAX_POSITION);
                     }
                     invertState.lastPosition = invertState.position;
+                    // TODO 为什么可以出现0啊  先忽略
                     if (posIncr == 0) {
                         invertState.numOverlap++;
                     }
 
-                    // 更新本次解析后的 startOff 和 endOff
+                    // 本次token 在整个reader流中的起始位置和终止位置   看来在多个doc中处理同一个field  fieldInvertState的信息是全局累加的
                     int startOffset = invertState.offset + invertState.offsetAttribute.startOffset();
                     int endOffset = invertState.offset + invertState.offsetAttribute.endOffset();
                     if (startOffset < invertState.lastStartOffset || endOffset < startOffset) {
                         throw new IllegalArgumentException("startOffset must be non-negative, and endOffset must be >= startOffset, and offsets must not go backwards "
                                 + "startOffset=" + startOffset + ",endOffset=" + endOffset + ",lastStartOffset=" + invertState.lastStartOffset + " for field '" + field.name() + "'");
                     }
+                    // 校验完毕后更新 lastStartOffset
                     invertState.lastStartOffset = startOffset;
 
                     try {
+                        // 在StandardAnalyzer中 并没有看到抽取 termFreq的逻辑   默认情况下getTermFrequency() 就是1  也就是length每次累加1
                         invertState.length = Math.addExact(invertState.length, invertState.termFreqAttribute.getTermFrequency());
                     } catch (ArithmeticException ae) {
                         throw new IllegalArgumentException("too many tokens for field \"" + field.name() + "\"");

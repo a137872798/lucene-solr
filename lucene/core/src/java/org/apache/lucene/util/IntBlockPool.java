@@ -173,7 +173,6 @@ public final class IntBlockPool {
      * 切换到下个buffer
      */
     public void nextBuffer() {
-        // 一维数组每个元素连接到一个一个大的 buffer 对象  这里的拷贝实际上 只是拷贝了buffer的地址 所以比起直接拷贝buffer的数据 会减少很多的性能开销
         if (1 + bufferUpto == buffers.length) {
             int[][] newBuffers = new int[(int) (buffers.length * 1.5)][];
             System.arraycopy(buffers, 0, newBuffers, 0, buffers.length);

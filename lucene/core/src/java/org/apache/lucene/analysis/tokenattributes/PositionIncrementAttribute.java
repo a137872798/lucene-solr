@@ -53,13 +53,13 @@ public interface PositionIncrementAttribute extends Attribute {
    * @throws IllegalArgumentException if <code>positionIncrement</code> 
    *         is negative.
    * @see #getPositionIncrement()
-   * 移动光标
+   * 这是position的增量数据
    */
   public void setPositionIncrement(int positionIncrement);
 
   /** Returns the position increment of this Token.
    * @see #setPositionIncrement(int)
-   * 返回当前光标的位置
+   * 返回当前的增量值
    */
   public int getPositionIncrement();
 }

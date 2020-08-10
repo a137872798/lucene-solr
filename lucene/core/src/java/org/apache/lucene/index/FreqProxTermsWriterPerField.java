@@ -110,6 +110,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
   boolean start(IndexableField f, boolean first) {
     // super 方法会先触发下游的 start
     super.start(f, first);
+    // 这里额外读取2个attr
     payloadAttribute = fieldState.payloadAttribute;
     offsetAttribute = fieldState.offsetAttribute;
     return true;

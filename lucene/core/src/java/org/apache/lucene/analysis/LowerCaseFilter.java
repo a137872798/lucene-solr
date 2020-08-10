@@ -26,6 +26,10 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
  * 该对象在处理数据前都会转换成小写
  */
 public class LowerCaseFilter extends TokenFilter {
+
+  /**
+   * 在 super(in) 中 termAtt 会复用in.termAtt 所以      CharacterUtils.toLowerCase(termAtt.buffer(), 0, termAtt.length()); 实际上termAtt.buffer() 读取的是被包装的in解析的后填充token的容器
+   */
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
   
   /**
@@ -39,6 +43,7 @@ public class LowerCaseFilter extends TokenFilter {
   
   @Override
   public final boolean incrementToken() throws IOException {
+    // 当下游解析到token后
     if (input.incrementToken()) {
       CharacterUtils.toLowerCase(termAtt.buffer(), 0, termAtt.length());
       return true;

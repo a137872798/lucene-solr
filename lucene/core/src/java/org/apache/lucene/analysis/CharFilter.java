@@ -41,7 +41,8 @@ import java.io.Reader;
 // 开放钩子 便于子类拓展
 public abstract class CharFilter extends Reader {
   /** 
-   * The underlying character-input stream. 
+   * The underlying character-input stream.
+   * 装饰器模式  这个是实际工作的输入流
    */
   protected final Reader input;
 

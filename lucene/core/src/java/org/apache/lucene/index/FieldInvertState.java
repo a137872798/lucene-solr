@@ -37,17 +37,20 @@ public final class FieldInvertState {
   final String name;
   final IndexOptions indexOptions;
   /**
-   * 代表当前指向的偏移量   每当解析token流时
+   * 当前解析的term 对应的位置信息
    */
   int position;
   /**
-   * 这个长度信息  每次会叠加 termFreq      长度信息跟 freq应该没关系吧???
+   * 记录token总数 (不包含过大的token)   计算方式是每解析一个token 将length+freq  并且freq总是1
    */
   int length;
   /**
-   * 当解析某个token时   pos 没有变化  则numOverlap++   代表一种重复现象???
+   * 当某次解析token时 positionIncrease 为0 该值会+1
    */
   int numOverlap;
+  /**
+   * 推测每当处理完某个doc下的field 后该值才会被设置 然后处理下一个doc上同一个field时 以该offset为基础 生成 startOff endOff
+   */
   int offset;
   int maxTermFrequency;
   /**
@@ -56,15 +59,14 @@ public final class FieldInvertState {
    */
   int uniqueTermCount;
   // we must track these across field instances (multi-valued case)
-  // 每当解析完某个token时  在 OffsetAttr中会记录新的 start 之后会设置到该属性中
+  // 记录处理上一个term时 最后的startOff 主要是检测解析某个token获取的startOffset/endOffset是否合法
   int lastStartOffset = 0;
   /**
-   * 每当解析某个 term后 该值会与 position 同步
+   * 在对position与lastPosition的合法性进行校验后 会将该值与position同步
    */
   int lastPosition = 0;
   AttributeSource attributeSource;
 
-  // 下面是 域携带的一些相关属性
   OffsetAttribute offsetAttribute;
   PositionIncrementAttribute posIncrAttribute;
   PayloadAttribute payloadAttribute;
@@ -111,12 +113,13 @@ public final class FieldInvertState {
 
   /**
    * Sets attributeSource to a new instance.
-   * 传入一个可以提供属性的  属性源   从中抽取属性并赋值
-   * 一般传入的就是 tokenStream
+   * 传入一个可以提供属性的  属性源 从中抽取属性并赋值
+   * 一般传入的就是 StandardTokenizer
    */
   void setAttributeSource(AttributeSource attributeSource) {
     if (this.attributeSource != attributeSource) {
       this.attributeSource = attributeSource;
+      // 一般情况下 这些 attr 都是 PackedTokenAttributeImpl
       termAttribute = attributeSource.getAttribute(TermToBytesRefAttribute.class);
       termFreqAttribute = attributeSource.addAttribute(TermFrequencyAttribute.class);
       posIncrAttribute = attributeSource.addAttribute(PositionIncrementAttribute.class);

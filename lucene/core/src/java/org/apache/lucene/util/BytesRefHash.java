@@ -235,7 +235,7 @@ public final class BytesRefHash implements Accountable {
     while (newSize >= 8 && newSize / 4 > targetSize) {
       newSize /= 2;
     }
-    // 这里长度发生了变化  重新调整内部的结构
+    // 重新调整内部的大小
     if (newSize != hashSize) {
       bytesUsed.addAndGet(Integer.BYTES * -(hashSize - newSize));
       hashSize = newSize;
@@ -266,7 +266,7 @@ public final class BytesRefHash implements Accountable {
       // shrink clears the hash entries
       return;
     }
-    // 将内部数据都置成 -1  上面返回true的时候 同时对ids 做了清理操作
+    // 将内部数据都置成 -1  上面shrink()返回true的时候 同时对ids 做了清理操作
     Arrays.fill(ids, -1);
   }
 
@@ -327,7 +327,7 @@ public final class BytesRefHash implements Accountable {
         assert count < bytesStart.length + 1 : "count: " + count + " len: "
             + bytesStart.length;
       }
-      // count++ 其实就是id
+      // e其实就是termId 从0开始  相同的term会共用一个id
       e = count++;
 
       // 设置绝对偏移量
@@ -362,10 +362,11 @@ public final class BytesRefHash implements Accountable {
       if (count == hashHalfSize) {
         rehash(2 * hashSize, true);
       }
+      // 此时返回的是正数 代表首次写入该term
       return e;
     }
 
-    // 代表当前值已经写入过了
+    // e就是termId 从0开始  这里如果返回负数就代表之前已经存在
     return -(e + 1);
   }
   

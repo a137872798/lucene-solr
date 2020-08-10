@@ -38,6 +38,9 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
      */
     final TermVectorsConsumer termsWriter;
 
+    /**
+     * 是否存储词向量信息  我对词向量的理解就是一些描述term的信息 而position/offset/payload就是具体的信息类型
+     */
     boolean doVectors;
     boolean doVectorPositions;
     boolean doVectorOffsets;
@@ -145,7 +148,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     }
 
     /**
-     * 代表预备读取一个新的 field
+     * 代表预备读取一个新的 field   XXXPerField.start() 会最先调用该对象的start 之后调用  freqProxTermsWriterPerField.start()
      * @param field
      * @param first
      * @return
@@ -155,10 +158,10 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
         super.start(field, first);
         assert field.fieldType().indexOptions() != IndexOptions.NONE;
 
-        // 代表该doc 首次加载该field的数据
+        // 代表该 perField 关联的 perThread 首次处理该field
         if (first) {
 
-            // 如果首次读取一个 field 那么需要清除之前 hash桶中的数据
+            // 先清理之前的数据   该对象的 bytesHash和FreqProxTermsWriterPerField 共用同一个bytesPool
             if (bytesHash.size() != 0) {
                 // Only necessary if previous doc hit a
                 // non-aborting exception while writing vectors in
@@ -171,25 +174,28 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
 
             hasPayloads = false;
 
-            // 是否要存储相关数据 都是根据 fieldType 的属性
+            // 是否要存储词向量信息  在用户创建field时 可以自定义fieldType
             doVectors = field.fieldType().storeTermVectors();
 
-            // 当需要存储向量信息时
+            // 当需要存储向量信息时 查看需要存储词向量的哪些具体信息
             if (doVectors) {
 
                 termsWriter.hasVectors = true;
 
+                // 是否要存储 position 信息
                 doVectorPositions = field.fieldType().storeTermVectorPositions();
 
                 // Somewhat confusingly, unlike postings, you are
                 // allowed to index TV offsets without TV positions:
+                // 是否要存储 offset 信息
                 doVectorOffsets = field.fieldType().storeTermVectorOffsets();
 
-                // 当需要存储 position时  检查一下是否携带了 payload
+                // 只有当需要存储position时 才检测是否需要存储payload信息
                 if (doVectorPositions) {
                     doVectorPayloads = field.fieldType().storeTermVectorPayloads();
                 } else {
                     doVectorPayloads = false;
+                    // 如果设置了 不存储position的话 是不能单独设置 storeTermVectorPayloads = true的
                     if (field.fieldType().storeTermVectorPayloads()) {
                         // TODO: move this check somewhere else, and impl the other missing ones
                         throw new IllegalArgumentException("cannot index term vector payloads without term vector positions (field=\"" + field.name() + "\")");
@@ -223,9 +229,10 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
                 throw new IllegalArgumentException("all instances of a given field name must have the same term vectors settings (storeTermVectorPayloads changed for field=\"" + field.name() + "\")");
             }
         }
+        // 上面就是检测field需要存储的各种词向量信息  确保一致性或者进行初始化
 
-        // 这里获取各种 attr  attr 都是从 attrSource 中获取的  而attrSource 是field通过解析器解析后生成的tokenStream中获得的
         if (doVectors) {
+            // 根据需要设置相关 attr
             if (doVectorOffsets) {
                 offsetAttribute = fieldState.offsetAttribute;
                 assert offsetAttribute != null;

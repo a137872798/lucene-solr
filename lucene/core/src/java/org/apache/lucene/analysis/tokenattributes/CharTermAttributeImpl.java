@@ -33,8 +33,7 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
   private static int MIN_BUFFER_SIZE = 10;
 
   /**
-   * char 占2个 byte
-   * 在扩容后 会让数组内元素总长度是 8byte的倍数  应该是方便使用 packed64 这种进行压缩
+   * 默认使用UTF-16存储数据
    */
   private char[] termBuffer = new char[ArrayUtil.oversize(MIN_BUFFER_SIZE, Character.BYTES)];
   private int termLength = 0;
@@ -46,6 +45,12 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
   /** Initialize this attribute with empty term text */
   public CharTermAttributeImpl() {}
 
+  /**
+   * 从入参数组中拷贝数据到内部数组
+   * @param buffer the buffer to copy
+   * @param offset the index in the buffer of the first character to copy
+   * @param length the number of characters to copy
+   */
   @Override
   public final void copyBuffer(char[] buffer, int offset, int length) {
     // 扩容

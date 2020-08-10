@@ -24,7 +24,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 
 /**
  * Removes stop words from a token stream.
- * 将停词 从token流中移除
+ * 忽略停词的解析  停词字典应该只能存储小写字符把 因为在下层 LowerCaseFilter 会将字符都转换成小写
  */
 public class StopFilter extends FilteringTokenFilter {
 

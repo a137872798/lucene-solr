@@ -21,7 +21,7 @@ import org.apache.lucene.util.Attribute;
 
 /**
  * The term text of a Token.
- * 声明使用 char[] 存储数据
+ * 就是一个存储token的容器  比如 LowerCaseFilter 可能会利用这个容器暂存数据 并转换成小写后 发送到下游
  */
 public interface CharTermAttribute extends Attribute, CharSequence, Appendable {
   
@@ -30,7 +30,7 @@ public interface CharTermAttribute extends Attribute, CharSequence, Appendable {
    *  @param buffer the buffer to copy
    *  @param offset the index in the buffer of the first character to copy
    *  @param length the number of characters to copy
-   *                将数据拷贝到 buffer 中
+   *
    */
   public void copyBuffer(char[] buffer, int offset, int length);
   

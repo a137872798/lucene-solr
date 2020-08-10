@@ -69,6 +69,9 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     final ByteBlockPool termBytePool;
 
     final int streamCount;
+    /**
+     * 代表要存储几种数据  每个streamCount 对应 2
+     */
     final int numPostingInt;
 
     protected final FieldInfo fieldInfo;
@@ -99,7 +102,6 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     public TermsHashPerField(int streamCount, FieldInvertState fieldState, TermsHash termsHash, TermsHashPerField nextPerField, FieldInfo fieldInfo) {
         intPool = termsHash.intPool;
         bytePool = termsHash.bytePool;
-        // 该对象会在以链表形式连接的多个 TermsHash中共享
         termBytePool = termsHash.termBytePool;
         // 获取描述本次正在被处理的doc的上下文信息
         docState = termsHash.docState;
@@ -112,8 +114,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
         this.nextPerField = nextPerField;
         // 该数组内除了存储 有关bytePool等的基础偏移量以外 还会根据子类生成定制化的array
         PostingsBytesStartArray byteStarts = new PostingsBytesStartArray(this, bytesUsed);
-        // 可以简单理解为一个hash桶  如果termsHash对象是 TermVectorsConsumer的话 termBytePool 为null
-        // 因为TermVectors是下游对象 他只要和上游的 Freq对象共用一个hash桶就可以了
+        // 上下游 termsHash 会共用一个termBytePool
         bytesHash = new BytesRefHash(termBytePool, HASH_INIT_SIZE, byteStarts);
     }
 
@@ -223,13 +224,13 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * Called once per inverted token.  This is the primary
      * entry point (for first TermsHash); postings use this
      * API.
-     * 在此前已经解析了一个token 现在要将解析出来的结果存起来
+     * 此时已经解析了一个token信息(在lucene中被称为 term) 将解析它时产生的XXXAttr存储到索引文件中
      */
     void add() throws IOException {
         // We are first in the chain so we must "intern" the
         // term text into textStart address
         // Get the text & hash of this term.
-        // 将 term 写入到 hash桶中
+        // 将 term 写入到 hash桶中  注意 该hash桶与上游的 hash桶连接到同一个bytesPool上
         int termID = bytesHash.add(termAtt.getBytesRef());
 
         //System.out.println("add term=" + termBytesRef.utf8ToString() + " doc=" + docState.docID + " termID=" + termID);
@@ -239,11 +240,12 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
             // 这里实际上只是做一个校验  因为没有利用返回值
             bytesHash.byteStart(termID);
             // Init stream slices
-            // 开始为 slice 创建足够空间
+            // term本身存储在 BytesPool中  而一些position/offset等信息 就存储到 IntPool中
             if (numPostingInt + intPool.intUpto > IntBlockPool.INT_BLOCK_SIZE) {
                 intPool.nextBuffer();
             }
 
+            // 这里空间如果不足以存放分片
             if (ByteBlockPool.BYTE_BLOCK_SIZE - bytePool.byteUpto < numPostingInt * ByteBlockPool.FIRST_LEVEL_SIZE) {
                 bytePool.nextBuffer();
             }
@@ -402,9 +404,12 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
      * Start adding a new field instance; first is true if
      * this is the first time this field name was seen in the
      * document.
-     * 此时 fieldState中已经设置了 attrSource 可以获取各种 attr
+     *
+     * @param field 本次解析的field信息
+     * @param first 代表是否是该 perThread下首次解析  该field的信息
      */
     boolean start(IndexableField field, boolean first) {
+        // 此前 已经为 invertState对象设置了 attr
         termAtt = fieldState.termAttribute;
         termFreqAtt = fieldState.termFreqAttribute;
         if (nextPerField != null) {

@@ -48,6 +48,10 @@ public class PackedTokenAttributeImpl extends CharTermAttributeImpl   // 该对�
   /**
    * {@inheritDoc}
    * @see PositionIncrementAttribute
+   * 记录某个token相比上一个token position的增量信息 (太长的token 会跳过)
+   * 比如 token1 positionIncrement=1 相比token0 增量值为1
+   *      token2 太长不记录position
+   *      token3 相比token1 增量值就是2  (因为中间还有个token2被跳过了)
    */
   @Override
   public void setPositionIncrement(int positionIncrement) {
@@ -108,6 +112,7 @@ public class PackedTokenAttributeImpl extends CharTermAttributeImpl   // 该对�
   /**
    * {@inheritDoc}
    * @see OffsetAttribute
+   * 记录当前token 的偏移量信息 同时包含起始位置和终止位置
    */
   @Override
   public void setOffset(int startOffset, int endOffset) {
@@ -131,6 +136,7 @@ public class PackedTokenAttributeImpl extends CharTermAttributeImpl   // 该对�
   /**
    * {@inheritDoc}
    * @see TypeAttribute
+   * 记录本次token对应的类型
    */
   @Override
   public final void setType(String type) {

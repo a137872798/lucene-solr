@@ -54,7 +54,7 @@ class TermVectorsConsumer extends TermsHash {
   final ByteSliceReader vectorSliceReaderOff = new ByteSliceReader();
 
   /**
-   * 标记是否存储了向量信息
+   * 标记是否存储了向量信息  只要处理的perField中 有至少一个fieldType 设置了storeTermVectors=true就会将该值设置成true
    */
   boolean hasVectors;
   /**

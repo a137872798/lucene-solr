@@ -20,7 +20,7 @@ import java.io.Reader;
 
 
 /** Internal class to enable reuse of the string reader by {@link Analyzer#tokenStream(String,String)} */
-// 将一个string 包装成reader
+// 将一个string 包装成reader   具体怎么分词的细节就先不看了
 final class ReusableStringReader extends Reader {
   private int pos = 0, size = 0;
   private String s = null;
@@ -31,6 +31,7 @@ final class ReusableStringReader extends Reader {
    */
   void setValue(String s) {
     this.s = s;
+    // string 的长度实际跟字符集有关
     this.size = s.length();
     this.pos = 0;
   }
@@ -42,6 +43,7 @@ final class ReusableStringReader extends Reader {
   @Override
   public int read() {
     if (pos < size) {
+      // 根据字符集读取一个char （内部会自动检测需要读取多少个byte）
       return s.charAt(pos++);
     } else {
       s = null;

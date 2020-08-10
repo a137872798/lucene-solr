@@ -39,7 +39,7 @@ import org.apache.lucene.util.AttributeFactory;
 
 public final class StandardTokenizer extends Tokenizer {
   /** A private instance of the JFlex-constructed scanner */
-  // 该对象负责扫描文本
+  // 该对象负责扫描文本 以及解析token
   private StandardTokenizerImpl scanner;
 
   // 代表是什么语言类型  对应 scanner 通过dfa扫描出来的类型  scanner本身可以简易的理解成一个正则表达式 然后每种字符都必然要符合某种规则
@@ -75,7 +75,10 @@ public final class StandardTokenizer extends Tokenizer {
   
   /** Absolute maximum sized token */
   public static final int MAX_TOKEN_LENGTH_LIMIT = 1024 * 1024;
-  
+
+  /**
+   * 记录一个标记位 便于之后回到该位置
+   */
   private int skippedPositions;
 
   private int maxTokenLength = StandardAnalyzer.DEFAULT_MAX_TOKEN_LENGTH;
@@ -139,19 +142,18 @@ public final class StandardTokenizer extends Tokenizer {
 
   // this tokenizer generates three attributes:
   // term offset, positionIncrement and type
-  // 通过 attr工厂创建 attr 对象
+  // 标准token解析器有自己固定的一套 attribute对象   实际上在TokenStream这层已经确定了这些attr 会统一返回 PackedTokenAttributeImpl 作为实现类
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
   private final OffsetAttribute offsetAtt = addAttribute(OffsetAttribute.class);
   private final PositionIncrementAttribute posIncrAtt = addAttribute(PositionIncrementAttribute.class);
   private final TypeAttribute typeAtt = addAttribute(TypeAttribute.class);
 
 
-  // 下面的一些方法是用来协调 StandardTokenizerImpl的
   /*
    * (non-Javadoc)
    *
    * @see org.apache.lucene.analysis.TokenStream#next()
-   * 代表需要读取下一个token
+   * 解析出下一个token
    */
   @Override
   public final boolean incrementToken() throws IOException {
@@ -168,17 +170,18 @@ public final class StandardTokenizer extends Tokenizer {
         return false;
       }
 
-      // 这里代表批处理
+      // 读取到一个合理的token后 设置token的位置
       if (scanner.yylength() <= maxTokenLength) {
         posIncrAtt.setPositionIncrement(skippedPositions+1);
-        // 将数据拷贝到 一个临时数组中 待满足条件后批量处理
+        // 将解析出来的token 转存到 termAtt 中
         scanner.getText(termAtt);
         final int start = scanner.yychar();
-        // 记录偏移量
+        // 记录起始/终止偏移量
         offsetAtt.setOffset(correctOffset(start), correctOffset(start+termAtt.length()));
         // 找到本次的token类型
         typeAtt.setType(StandardTokenizer.TOKEN_TYPES[tokenType]);
         return true;
+      // 太长的token 会被忽略
       } else
         // When we skip a too-long term, we still increment the
         // position increment

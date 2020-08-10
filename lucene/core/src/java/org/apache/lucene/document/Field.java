@@ -547,11 +547,12 @@ public class Field implements IndexableField {
             }
         }
 
-        // 已经生成token流 返回 否则使用分析器 分析后 返回结果
+        // 如果该对象已经设置了 tokenStream 那么直接使用这个对象
         if (tokenStream != null) {
             return tokenStream;
             // 代表数据流是 Reader 类型
         } else if (readerValue() != null) {
+            // 一般就是返回 StandardTokenizer
             return analyzer.tokenStream(name(), readerValue());
             // 数据是 string 类型
         } else if (stringValue() != null) {

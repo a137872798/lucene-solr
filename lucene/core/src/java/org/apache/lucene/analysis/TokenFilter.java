@@ -23,7 +23,7 @@ import java.io.IOException;
   <p>
   This is an abstract class; subclasses must override {@link #incrementToken()}.
   @see TokenStream
- 该对象更像是一个代理对象  实际方法都会转发给 内部的 input
+  这些filter实现了装饰器模式   这只是一个模板,子类根据自己的需要进行拓展
   */
 public abstract class TokenFilter extends TokenStream {
   /** The source of tokens for this filter. */
