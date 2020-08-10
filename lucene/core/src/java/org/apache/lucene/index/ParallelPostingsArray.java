@@ -30,11 +30,11 @@ class ParallelPostingsArray {
    */
   final int[] textStarts;
   /**
-   * 以 termId 作为下标 存储的是  TermsHashPerField 内 IntBlock的绝对偏移量
+   * 下标就是termId 存储的是TermsHashPerField内IntBlock的绝对偏移量
    */
   final int[] intStarts;
   /**
-   * 这个数组 将 termId 映射到 term在某个 byteBlockPool的绝对偏移量  (实际上还需要加上 stream作为一个影响因子)
+   * 下标就是termId 存储的是byteBlockPool的绝对偏移量
    */
   final int[] byteStarts;
 

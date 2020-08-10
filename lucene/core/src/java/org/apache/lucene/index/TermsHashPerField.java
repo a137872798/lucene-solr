@@ -70,7 +70,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
 
     final int streamCount;
     /**
-     * 代表要存储几种数据  每个streamCount 对应 2
+     * 记录写入的 stream信息 总计需要占用多少int
      */
     final int numPostingInt;
 
@@ -171,15 +171,18 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     // because token text has already been "interned" into
     // textStart, so we hash by textStart.  term vectors use
     // this API.
+    // 这是传播到下游时 使用的api
     public void add(int textStart) throws IOException {
-        // 这里在  pool 中提前预定一个偏移量  并返回此时已经写入的数据量  那么 term就是写入到 bytesHash中 并且 内部的entry 按照添加顺序生成对应的id
+        // 因为上游和下游使用的 bytesHash内部的 termPool指向同一地址 所以数据是可以共用的(但是指针是各自维护的)  这里是在初始化该hash的指针
         int termID = bytesHash.addByPoolOffset(textStart);
+        // 代表指针首次被设置 也就是对应下游首次解析某个term
+
+        // 之后的套路基本跟 add() 一样
         if (termID >= 0) {      // New posting
             // First time we are seeing this token since we last
             // flushed the hash.
             // Init stream slices
 
-            // 下面为了简化逻辑 让每次分配的所有 stream在同一个block中  这样通过某个termId 定位到block时 不需要再考虑下一个stream是否会切换到下一个block
             if (numPostingInt + intPool.intUpto > IntBlockPool.INT_BLOCK_SIZE) {
                 // 代表此时没有足够的空间了  切换到下个block
                 intPool.nextBuffer();
@@ -241,32 +244,40 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
             bytesHash.byteStart(termID);
             // Init stream slices
             // term本身存储在 BytesPool中  而一些position/offset等信息 就存储到 IntPool中
+
+            // 检查是否有足够的空间写入 后面的数据
             if (numPostingInt + intPool.intUpto > IntBlockPool.INT_BLOCK_SIZE) {
                 intPool.nextBuffer();
             }
-
-            // 这里空间如果不足以存放分片
             if (ByteBlockPool.BYTE_BLOCK_SIZE - bytePool.byteUpto < numPostingInt * ByteBlockPool.FIRST_LEVEL_SIZE) {
                 bytePool.nextBuffer();
             }
 
+            // .buffer 对应此时正在写入的数组
             intUptos = intPool.buffer;
+            // 对应下一个要写入的偏移量  相对于此时的buffer 是一个相对偏移量
             intUptoStart = intPool.intUpto;
             intPool.intUpto += streamCount;
 
+            // intUptoStart + intPool.intOffset 对应绝对偏移量
             postingsArray.intStarts[termID] = intUptoStart + intPool.intOffset;
 
             for (int i = 0; i < streamCount; i++) {
                 final int upto = bytePool.newSlice(ByteBlockPool.FIRST_LEVEL_SIZE);
+                // 接下来记录2个 stream信息在 bytePool的偏移量
                 intUptos[intUptoStart + i] = upto + bytePool.byteOffset;
             }
+            // 记录 bytePool的绝对偏移量
             postingsArray.byteStarts[termID] = intUptos[intUptoStart];
 
             newTerm(termID);
 
         } else {
+            // 代表该term之前出现过 就在原来的数据分片上继续写入数据   原termID为0时 返回-1 原termID为1时 返回-2  所以这里是还原
             termID = (-termID) - 1;
+            // 找到上次 intPool的绝对偏移量
             int intStart = postingsArray.intStarts[termID];
+            // 还原偏移量 此时存储的值就是 termID 对应的上个term  bytePool存储的最后指针位置
             intUptos = intPool.buffers[intStart >> IntBlockPool.INT_BLOCK_SHIFT];
             intUptoStart = intStart & IntBlockPool.INT_BLOCK_MASK;
             addTerm(termID);
@@ -278,34 +289,37 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
         }
     }
 
+    /**
+     * 对应此时正在使用的 IntPool.current
+     */
     int[] intUptos;
 
     /**
-     * 每次打算写入数据时 会携带2个参数  一个是 stream   一个是要写入的数据byte
-     * 该偏移量是一个基准偏移量  每次 [intUptoStart+stream]   才能对应到  byteBlock的某个偏移量  (这个偏移量就是写入byte的偏移量)
+     * 对应IntPool 当前正写入的位置
      */
     int intUptoStart;
 
     /**
-     * @param stream 根据stream的数量 提前空出多少空位 每个stream相关的数据收集对象 会将数据设置到 空位中
+     * @param stream 每个stream 代表一种数据
      * @param b
      */
     void writeByte(int stream, byte b) {
-        // 通过映射 变成 bytePool当前要写入的下标
+        // 对应 bytePool 此时分片的起始偏移量
         int upto = intUptos[intUptoStart + stream];
         byte[] bytes = bytePool.buffers[upto >> ByteBlockPool.BYTE_BLOCK_SHIFT];
         assert bytes != null;
         int offset = upto & ByteBlockPool.BYTE_BLOCK_MASK;
 
-        // 在匹配的位置写入数据   这里代表分片没有空位了 需要创建下一个分片
+        // 定位到分片的位置 开始写入数据
         if (bytes[offset] != 0) {
             // End of slice; allocate a new one
             offset = bytePool.allocSlice(bytes, offset);
             bytes = bytePool.buffer;
-            // 这里更新了 之前存储的偏移量 下一次就会直接定位到 可写入的位置
+            // 这里更新了之前存储的偏移量 下一次就会直接定位到可写入的位置
             intUptos[intUptoStart + stream] = offset + bytePool.byteOffset;
         }
         bytes[offset] = b;
+        // 因为写入了一个值 所以往后移动
         (intUptos[intUptoStart + stream])++;
     }
 

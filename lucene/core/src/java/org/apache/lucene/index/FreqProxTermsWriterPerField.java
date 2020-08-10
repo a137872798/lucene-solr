@@ -163,7 +163,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
   }
 
   /**
-   * 当首次添加某个term时    可以看到需要写入的属性都是从 docState，termState 这种直接获取的
+   * 当首次添加某个term时   从attr抽取属性 并设置到bytePool中
    * @param termID
    */
   @Override
@@ -172,9 +172,9 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
     // flush
     final FreqProxPostingsArray postings = freqProxPostingsArray;
 
-    // 记录该词 属于哪个 doc
+    // 记录该词 属于哪个 doc   每次调用PerThread.updateDocuments时 会为正在处理的doc分配一个docId
     postings.lastDocIDs[termID] = docState.docID;
-    // 如果不需要记录 频率信息
+    // 从 fieldIndexOptional 可以知道是否要s存储频率信息     在TermVectorsConsumerPerField中不是自动存储了 频率信息吗???
     if (!hasFreq) {
       assert postings.termFreqs == null;
       postings.lastDocCodes[termID] = docState.docID;
@@ -185,6 +185,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       postings.lastDocCodes[termID] = docState.docID << 1;
       // 获取频率信息 并记录
       postings.termFreqs[termID] = getTermFreq();
+      // 如果携带了 位置信息和偏移量信息 写入到 BytePool中    TODO 这里的存储逻辑跟TermVectorsConsumerPerField 很相似 为什么又存储了 一遍 position 和 offset呢???
       if (hasProx) {
         writeProx(termID, fieldState.position);
         if (hasOffsets) {
@@ -216,9 +217,9 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       if (docState.docID != postings.lastDocIDs[termID]) {
         // New document; now encode docCode for previous doc:
         assert docState.docID > postings.lastDocIDs[termID];
-        // 该值就是 lastDoc 经过处理后的值
+        // 在不需要写入频率的情况下 lastDocCodes 就是 lastDocIDs
         writeVInt(0, postings.lastDocCodes[termID]);
-        // 这里修改成 docId的差值
+        // lastDocCodes 实际上存储的是docID的增量
         postings.lastDocCodes[termID] = docState.docID - postings.lastDocIDs[termID];
         postings.lastDocIDs[termID] = docState.docID;
         fieldState.uniqueTermCount++;
@@ -337,11 +338,14 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
      */
     int termFreqs[];                                   // # times this term occurs in the current doc
 
-    // 这些last属性 都是以 termId 为下标  相同的term可能会在一个doc中出现多次 下面的数组就是记录某个term 最近一次相关的值
-
+    /**
+     * 记录某个term最后一次出现对应的docId
+     */
     int lastDocIDs[];                                  // Last docID where this term occurred
     /**
-     * 当不需要记录频率信息的时候 就是 （docId - lastDocId)   否则是 (docId - lastDocId) << 1
+     * 当 hasFreq=false时 该值不需要空出最低位
+     * 当需要存储频率信息时 该值的最低位为0
+     * 并且该值存储的是 上次docId 与上上次 docId的差值
      */
     int lastDocCodes[];                                // Code for prior doc
     // 同样只有需要存储时 才初始化容器

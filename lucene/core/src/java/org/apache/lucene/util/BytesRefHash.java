@@ -416,7 +416,6 @@ public final class BytesRefHash implements Accountable {
    *  directly and instead reference the byte[] term
    *  already stored by the postings BytesRefHash.  See
    *  add(int textStart) in TermsHashPerField. */
-  // 通过指定pool的偏移量 提前预定一个 bytesRef  (虽然并没有写入数据)  在lucene的应用场景中就是 为term开辟空间 当term已经存在时 就会返回    return -(e + 1);
   public int addByPoolOffset(int offset) {
     assert bytesStart != null : "Bytesstart is null - not initialized";
     // final position
@@ -424,7 +423,7 @@ public final class BytesRefHash implements Accountable {
     int hashPos = offset & hashMask;
     int e = ids[hashPos];
 
-    // 先解决hash冲突
+    // 先解决hash冲突 bytesStart 是使用id作为映射容器的key
     if (e != -1 && bytesStart[e] != offset) {
       // Conflict; use linear probe to find an open slot
       // (see LUCENE-5604):

@@ -250,32 +250,38 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     }
 
     /**
-     * addTerm 和 newTerm 会触发该方法
+     * addTerm 和 newTerm 会触发该方法   将term的信息填充到 postings 中
      * @param postings
-     * @param termID
+     * @param termID  相同内容的term不会重复写入 会使用同一个 termID
      */
     void writeProx(TermVectorsPostingsArray postings, int termID) {
-        // 下面2种属性属于不同的维度  (2个stream不同 它们会在不同的slice中写数据)
 
-        // 代表需要记录偏移量信息
+        // 代表需要记录 term对应的起点和长度
         if (doVectorOffsets) {
             int startOffset = fieldState.offset + offsetAttribute.startOffset();
             int endOffset = fieldState.offset + offsetAttribute.endOffset();
 
+            // 如果此时是该termID对应的第一个term 那么第一个值就是 startOffset-0   之后的term 写入的就是 本次startOff - 上次term.endOffset
+            // 第二个是长度信息
+            // offset 是第二个stream
             writeVInt(1, startOffset - postings.lastOffsets[termID]);
             writeVInt(1, endOffset - startOffset);
             postings.lastOffsets[termID] = endOffset;
         }
 
+        // 代表需要记录 逻辑偏移量的信息
         if (doVectorPositions) {
             final BytesRef payload;
+            // 首先检查一下是否有携带 payload 默认的标准分词器是不携带这些 Attr的
             if (payloadAttribute == null) {
                 payload = null;
             } else {
                 payload = payloadAttribute.getPayload();
             }
 
+            // 类似的套路 因为一个term可能会出现多次 那么共用
             final int pos = fieldState.position - postings.lastPositions[termID];
+            // 第一个值的最后一位标记了是否携带 payload 信息
             if (payload != null && payload.length > 0) {
                 writeVInt(0, (pos << 1) | 1);
                 writeVInt(0, payload.length);
@@ -289,32 +295,43 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
     }
 
     /**
-     * 代表要处理一个新的 term
+     * 通过 termId 找到term 并写入信息
      * @param termID
      */
     @Override
     void newTerm(final int termID) {
         TermVectorsPostingsArray postings = termVectorsPostingsArray;
 
-        // 这里记录数据
+        // 设置频率信息
         postings.freqs[termID] = getTermFreq();
         // 这里先设置了默认值  在writeProx 中可能会覆盖内部的属性
         postings.lastOffsets[termID] = 0;
         postings.lastPositions[termID] = 0;
 
+        // 主要就是将attr的信息抽出来 写入到 BytePool中
         writeProx(postings, termID);
     }
 
+    /**
+     * 代表某个term 第二次出现
+     * @param termID
+     */
     @Override
     void addTerm(final int termID) {
         TermVectorsPostingsArray postings = termVectorsPostingsArray;
 
+        // 这里开始加频率了  也就是在标准分词器中 实际上没有记录频率信息 而是转移到之类
         postings.freqs[termID] += getTermFreq();
 
         writeProx(postings, termID);
     }
 
+    /**
+     * 获取词的频率信息  在标准分词器中 并没有看到freq的相关逻辑
+     * @return
+     */
     private int getTermFreq() {
+        // 默认情况下总是返回1   这个值代表着重复出现term时 freq的增值是多少
         int freq = termFreqAtt.getTermFrequency();
         if (freq != 1) {
             if (doVectorPositions) {
@@ -353,9 +370,15 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
             lastPositions = new int[size];
         }
 
-        // 这里需要额外3个数组来存储数据
+        // 频率信息
         int[] freqs;                                       // How many times this term occurred in the current doc
+        /**
+         * 记录上一次偏移量的 endOffset
+         */
         int[] lastOffsets;                                 // Last offset we saw
+        /**
+         * 记录上一次逻辑偏移量的信息
+         */
         int[] lastPositions;                               // Last position where this term occurred
 
         @Override

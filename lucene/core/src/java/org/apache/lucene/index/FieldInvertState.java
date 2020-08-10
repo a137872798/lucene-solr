@@ -52,10 +52,13 @@ public final class FieldInvertState {
    * 推测每当处理完某个doc下的field 后该值才会被设置 然后处理下一个doc上同一个field时 以该offset为基础 生成 startOff endOff
    */
   int offset;
+
+  /**
+   * 记录下面所有term中 频率最大的值
+   */
   int maxTermFrequency;
   /**
-   * 就是该域下词去重后的数量   因为一个域下可能有多个相同的 term
-   * 相同的term 在不同doc重复时 认为是出现了2次
+   * 在同一个field下出现多次的term 被认为是同一个term   而当该term出现在不同的doc时 该值会增加
    */
   int uniqueTermCount;
   // we must track these across field instances (multi-valued case)
