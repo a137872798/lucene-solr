@@ -114,7 +114,7 @@ final class FrozenBufferedUpdates {
     assert privateSegment == null || updates.deleteTerms.isEmpty() : "segment private packet should only have del queries";
     // 代表包含这些 term的doc都需要被删除
     Term termsArray[] = updates.deleteTerms.keySet().toArray(new Term[updates.deleteTerms.size()]);
-    // 有关term的排序  field相同的 会优先放在一起
+    // 排序  同一field情况下 按照bytes内容进行排序 如果不同field 则按照fieldName排序
     ArrayUtil.timSort(termsArray);
     // 构建公共前缀对象
     PrefixCodedTerms.Builder builder = new PrefixCodedTerms.Builder();
@@ -126,6 +126,7 @@ final class FrozenBufferedUpdates {
 
     // 这里代表命中哪些 query 的doc会被删除
     deleteQueries = new Query[updates.deleteQueries.size()];
+    // 对应每个query在命中时 允许删除多少doc  默认情况下都是不做限制的
     deleteQueryLimits = new int[updates.deleteQueries.size()];
     int upto = 0;
     for(Map.Entry<Query,Integer> ent : updates.deleteQueries.entrySet()) {
@@ -138,9 +139,10 @@ final class FrozenBufferedUpdates {
     // that Term only once, applying the update to all fields that still need to be
     // updated.
 
-    // 冻结内部的 fieldUpdateBuffer
+    // 冻结内部的 fieldUpdateBuffer   该容器内记录的是有关更新的信息   在BufferedUpdates中 已经按照field进行分组了
     updates.fieldUpdates.values().forEach(FieldUpdatesBuffer::finish);
     this.fieldUpdates = Map.copyOf(updates.fieldUpdates);
+    // 内部总共产生了多少 更新数据
     this.fieldUpdatesCount = updates.numFieldUpdates.get();
 
     bytesUsed = (int) ((deleteTerms.ramBytesUsed() + deleteQueries.length * BYTES_PER_DEL_QUERY)

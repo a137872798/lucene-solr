@@ -391,13 +391,14 @@ final class DocumentsWriterPerThread {
                     // TODO 从这里可以推断 每次存储在内存中的docs id以0为起点   一旦刷盘后 numDocsInRAM变成0 之后写入的docId 又是从0开始
                     docState.docID = numDocsInRAM;
                     try {
-                        // 开始处理当前doc
+                        // 开始处理当前doc 主要流程就是遍历doc下所有field  将field.value通过分词器拆解后 将term的position/offset/payload/freq等信息写入到writer中
+                        // 还有 field.value/norm 等信息  不一定刷盘 要看此时是否在内存中写入了很多term 或者已经处理了很多doc
                         consumer.processDocument();
                     } finally {
                         numDocsInRAM++; // we count the doc anyway even in the case of an exception
                     }
                 }
-                // 代表已经为所有插入的doc 生成了索引
+                // 代表成功为这些doc 生成了索引
                 allDocsIndexed = true;
                 return finishDocuments(deleteNode, docsInRamBefore);
             } finally {
@@ -417,10 +418,10 @@ final class DocumentsWriterPerThread {
     }
 
     /**
-     *
+     * 这里是找到符合条件的doc 并尝试删除
      * @param deleteNode    代表一个删除条件   稍后满足该条件的doc 都会被删除
-     * @param docIdUpTo   本次处理前 doc的数量   同时也是 本次会删除的doc 上限
-     * @return
+     * @param docIdUpTo   处理本批 待生成索引的doc前  内存中已经包含了多少doc
+     * @return  这里返回的是 DeleteQueue的序列号
      */
     private long finishDocuments(DocumentsWriterDeleteQueue.Node<?> deleteNode, int docIdUpTo) {
         /*
@@ -436,22 +437,23 @@ final class DocumentsWriterPerThread {
         // this batch started:
         long seqNo;
         if (deleteNode != null) {
-            // 使用自己的分片同步 deleteQueue的 节点信息
+            // 自己的分片会记录每次删除的节点 并尝试将全局分片的 node转移到 BufferedUpdates中
             seqNo = deleteQueue.add(deleteNode, deleteSlice);
             assert deleteSlice.isTail(deleteNode) : "expected the delete term as the tail item";
-            // 只针对本线程的分片 存储这些node信息
+            // 每个分片都可以看到这段时间内 其他线程 写入到 queue中的node  这里是将上次node 到本次node之前所有数据写入到自己的 bufferedUpdates中
             deleteSlice.apply(pendingUpdates, docIdUpTo);
             return seqNo;
         } else {
             // 代表本次更新doc 操作 不涉及到删除
             // 同样将自己的分片与 deleteQueue的节点做同步
             seqNo = deleteQueue.updateSlice(deleteSlice);
-            // 代表分片发生了更新  做同步操作
+            // 代表此时该线程记录的 节点与全局队列不一致 将那些node信息也记录下来
             if (seqNo < 0) {
                 seqNo = -seqNo;
                 deleteSlice.apply(pendingUpdates, docIdUpTo);
             } else {
                 //  sliceHead = sliceTail;
+                // 代表这段时间内没有新的node写入 实际上此时 head就应该是tail
                 deleteSlice.reset();
             }
         }
@@ -838,7 +840,7 @@ final class DocumentsWriterPerThread {
 
     /**
      * Sets this DWPT as flush pending. This can only be set once.
-     * 标记当前处在刷盘状态
+     * 标记当前处在待刷盘状态
      */
     void setFlushPending() {
         flushPending.set(Boolean.TRUE);

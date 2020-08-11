@@ -142,12 +142,13 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
                 // 这里将 pos 和 off 写入到索引文件中
                 tv.addProx(freq, posReader, offReader);
             }
-            // 代表该term的相关数据采集完了
+            // 此时写完了某个term的信息   默认情况下是 NOOP
             tv.finishTerm();
         }
-        // 代表这个 field 的数据采集完了
+        // 代表这个 field 的数据采集完了 此时将 curField指针置空
         tv.finishField();
 
+        // 重置bytesHash的指针
         reset();
 
         fieldInfo.setStoreTermVectors();

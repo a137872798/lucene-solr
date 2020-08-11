@@ -541,7 +541,7 @@ final class DefaultIndexingChain extends DocConsumer {
         }
 
         try {
-            // termsHash 本身是一个链表结构 会将 TermVectors 和 FreqProxTerms 的信息都写入
+            // 将bytePool中的数据转移到 writer中 并释放之前bytePool的数据 此时不一定会刷盘
             termsHash.finishDocument();
         } catch (Throwable th) {
             // Must abort, on the possibility that on-disk term

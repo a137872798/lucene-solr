@@ -189,7 +189,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
      * 分别存储 某term出现的频率  与前一个term的公共前缀长度 后缀长度
      */
     final int[] freqs, prefixLengths, suffixLengths;
+    /**
+     * 起始偏移量
+     */
     final int posStart, offStart, payStart;
+    /**
+     * 记录此时写入了多少term的位置信息  比如一个term出现了2次 就要存储2次位置信息
+     */
     int totalPositions;
     /**
      * 记录写入到第几个term
@@ -287,9 +293,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   private final BytesRef lastTerm;
 
   /**
-   * 每当出现一个 term 都会有自己的 position startOff 等信息 (包括那些重复的term)‘
-   * startOffsetsBuf 记录每个term的起始偏移量
-   * lengthsBuf 记录 startOffset 到 endOffset 的长度
+   * 这些容器用于存储 每个term对应的offset/position/payload信息
    */
   private int[] positionsBuf, startOffsetsBuf, lengthsBuf, payloadLengthsBuf;
 
@@ -379,15 +383,15 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 当某个 doc内部所有的数据 都写完的时候 触发该方法
+   * 当该doc下所有field对应的term都写入完成后触发
    * @throws IOException
    */
   @Override
   public void finishDocument() throws IOException {
     // append the payload bytes of the doc after its terms
-    // 将 term携带的 payload信息写入到 termSuffixes中
+    // 将payload数据追加到 只存储term后缀信息的容器中
     payloadBytes.copyTo(termSuffixes);
-    // 每写完一个 payload 就重置
+    // 之后将payload 置空
     payloadBytes.reset();
     ++numDocs;
     // 检测是否满足刷盘条件了
@@ -468,12 +472,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
   /**
    * 检测此时是否满足刷盘条件
+   * 2种情况
+   * 1.此时写入的term数据已经超过指定大小
+   * 2.此时已经处理了很多doc
    * @return
    */
   private boolean triggerFlush() {
-    // 此时存储的 后缀内容超过一定数量
     return termSuffixes.size() >= chunkSize
-            // 代表悬置了太多doc
         || pendingDocs.size() >= MAX_DOCUMENTS_PER_CHUNK;
   }
 
@@ -914,7 +919,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
   /**
    * 写入term相关的向量信息
-   * @param numProx
+   * @param numProx  代表该term的频率  也可以理解为该term出现了多少次 那么对应的就要在input中读取几次数据
    * @param positions   存储了 position信息
    * @param offsets   存储了offset信息
    * @throws IOException
@@ -925,21 +930,22 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     assert (curField.hasPositions) == (positions != null);
     assert (curField.hasOffsets) == (offsets != null);
 
-    // 如果field 要求记录 position信息
+    // 如果确实记录了 position 信息     position是一个增量数据 并且该对象维护了所有doc下该field的信息 它们会在逻辑上连续存储
     if (curField.hasPositions) {
+      // 通过追加本次的 totalPosition 生成起点  看来posStart也是一个逻辑偏移量
       final int posStart = curField.posStart + curField.totalPositions;
-      // 扩容
+      // 如果存储position的容器空间不足了  进行扩容
       if (posStart + numProx > positionsBuf.length) {
         positionsBuf = ArrayUtil.grow(positionsBuf, posStart + numProx);
       }
       int position = 0;
+      // 如果需要存储 payload信息
       if (curField.hasPayloads) {
         final int payStart = curField.payStart + curField.totalPositions;
         if (payStart + numProx > payloadLengthsBuf.length) {
           payloadLengthsBuf = ArrayUtil.grow(payloadLengthsBuf, payStart + numProx);
         }
-        // 先写入 payload 信息
-        // 同一个 term 会按照出现的频率 连续存储
+        // 按照频率读取对应的次数
         for (int i = 0; i < numProx; ++i) {
           final int code = positions.readVInt();
           // 最低位不为0 代表包含 payload 信息
@@ -948,16 +954,18 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
             // 下一个值就是长度  这里的逻辑完全对应 TermVectorsConsumerPerField.writeProx
             final int payloadLength = positions.readVInt();
             payloadLengthsBuf[payStart + i] = payloadLength;
+            // 读取payload并存储到 payloadBytes中
             payloadBytes.copyBytes(positions, payloadLength);
           } else {
             // 这里代表payload 为空
             payloadLengthsBuf[payStart + i] = 0;
           }
-          // 真正的位置信息 实际上要 右移一位  注意这个position 可能就是差值存储的  所以这里开始叠加
+          // 真正的位置信息 实际上要 右移一位  position是差值存储的
           position += code >>> 1;
           positionsBuf[posStart + i] = position;
         }
       } else {
+        // 没有payload的情况下 只要写入position就好
         for (int i = 0; i < numProx; ++i) {
           position += (positions.readVInt() >>> 1);
           positionsBuf[posStart + i] = position;
@@ -967,7 +975,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
     // 这里是存储 offset 的信息
     if (curField.hasOffsets) {
-      // 应该也是差值存储  所以 需要 += 进行还原
+      // 差值存储  所以 需要 += 进行还原
       final int offStart = curField.offStart + curField.totalPositions;
       if (offStart + numProx > startOffsetsBuf.length) {
         final int newLength = ArrayUtil.oversize(offStart + numProx, 4);

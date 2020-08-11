@@ -47,6 +47,9 @@ import org.apache.lucene.util.ThreadInterruptedException;
  */
 final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
+    /**
+     * 单个PerThread 如果占用的内存超过该值 会强制刷盘
+     */
     private final long hardMaxBytesPerDWPT;
 
     /**
@@ -62,6 +65,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      */
     private volatile int numPending = 0;
     private int numDocsSinceStalled = 0; // only with assert
+    /**
+     * 代表在本次刷盘中 需要执行一些删除操作
+     */
     private final AtomicBoolean flushDeletes = new AtomicBoolean(false);
     private boolean fullFlush = false;
     private boolean fullFlushMarkDone = false; // only for assertion that we don't get stale DWPTs from the pool
@@ -215,29 +221,32 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      * 在某个 perThread 执行完 updateDocument 后触发  (此时只是在内存结构中生成了便于存储到索引中的数据格式)
      *
      * @param perThread 处理本次写入的 perThread对象
-     * @param isUpdate  本次更新是否携带了   Node  (node代表删除某些doc 或者更新doc的信息)
+     * @param isUpdate  本次更新是否携带了   Node  (node代表删除某些doc 或者更新doc的信息)   如果node的类型是 DocValuesUpdatesNode 该值也是false
      * @return
      */
     synchronized DocumentsWriterPerThread doAfterDocument(DocumentsWriterPerThread perThread, boolean isUpdate) {
         try {
             // 更新此时 activeBytes/flushBytes
             commitPerThreadBytes(perThread);
-            // 此时线程还未处于刷盘阶段
+            // 此时线程还未处于刷盘阶段才进行下面的处理  也就是如果已经在刷盘中了 必然已经将该更新的都更新掉了
             if (!perThread.isFlushPending()) {
                 // 如果此时发生了更新操作 那么会删除一些doc
                 if (isUpdate) {
+                    // 实际上就是连续触发 OnInsert 和OnDelete
+                    // 在lucene的默认实现中 FlushPolicy 会在当前线程待写入的doc过多 或者此时总的内存占用过大时 将当前线程/待写入doc最多的线程标记成待刷盘状态
+                    // 在onDelete中 如果发现此时待删除的数据过多 就会设置flushDeletes为true
                     flushPolicy.onUpdate(this, perThread);
                 } else {
                     // 只有插入操作
                     flushPolicy.onInsert(this, perThread);
                 }
-                // 代表此时单个 DWPT使用的byte 已经超过了预计值  需要触发刷盘
                 if (!perThread.isFlushPending() && perThread.bytesUsed() > hardMaxBytesPerDWPT) {
                     // Safety check to prevent a single DWPT exceeding its RAM limit. This
                     // is super important since we can not address more than 2048 MB per DWPT
                     setFlushPending(perThread);
                 }
             }
+            // 将待刷盘线程移动到刷盘中线程 以及从pool中移除
             return checkout(perThread, false);
         } finally {
             boolean stalled = updateStallState();
@@ -252,20 +261,25 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      */
     private DocumentsWriterPerThread checkout(DocumentsWriterPerThread perThread, boolean markPending) {
         assert Thread.holdsLock(this);
+        // 从下面的逻辑可以推断 当一个perThread 将要刷盘前 会将自身从 pool中移除 避免被使用者再次获取 并写入doc
+
         // 如果本次打算将所有 perThread 都进行刷盘
         if (fullFlush) {
             if (perThread.isFlushPending()) {
+                // 将 perThread转移到一个 block容器中 同时从pool中移除该线程
                 checkoutAndBlock(perThread);
+                // TODO
                 return nextPendingFlush();
             }
         } else {
+            // 将该线程标记成 待刷盘
             if (markPending) {
                 assert perThread.isFlushPending() == false;
                 setFlushPending(perThread);
             }
 
-            // 将 perThread从待刷盘改成刷盘中
             if (perThread.isFlushPending()) {
+                // 将线程从 待刷盘移动到刷盘中 同时从 pool中移除
                 return checkOutForFlush(perThread);
             }
         }
@@ -376,7 +390,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      */
     public synchronized void setFlushPending(DocumentsWriterPerThread perThread) {
         assert !perThread.isFlushPending();
+        // 只有此时线程中确实有未刷盘的doc时 才会处理
         if (perThread.getNumDocsInRAM() > 0) {
+            // 状态先变成待刷盘中
             perThread.setFlushPending(); // write access synced
             // 代表本次会将多少byte 写入到磁盘中
             final long bytes = perThread.getLastCommittedBytesUsed();
@@ -550,8 +566,10 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         return flushingWriters.size();
     }
 
-    // flushDelete标识的作用是???
-
+    /**
+     * 当 flushPolicy 发现有很多待删除的数据时 会将该标识设置为true
+     * @return
+     */
     public boolean getAndResetApplyAllDeletes() {
         return flushDeletes.getAndSet(false);
     }
@@ -824,7 +842,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 这里遍历所有的线程 找到写入doc最多的线程
+     * 这里遍历所有的线程 找到待刷盘doc最多的 perThread
      *
      * @return
      */

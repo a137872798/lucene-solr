@@ -109,7 +109,7 @@ abstract class FlushPolicy {
       DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
     assert perThread.getNumDocsInRAM() > 0;
     // the dwpt which needs to be flushed eventually
-    // 通过总控对象找到 最后一个 写入线程 并返回
+    // 找到某个非待刷盘状态 且 最多待刷盘的doc的perThread对象
     DocumentsWriterPerThread maxRamUsingWriter = control.findLargestNonPendingWriter();
     assert assertMessage("set largest ram consuming thread pending on lower watermark");
     return maxRamUsingWriter;

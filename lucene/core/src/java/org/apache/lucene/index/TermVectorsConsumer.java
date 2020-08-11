@@ -155,14 +155,14 @@ class TermVectorsConsumer extends TermsHash {
     for (int i = 0; i < numVectorFields; i++) {
       perFields[i].finishDocument();
     }
-    // 代表处理完毕了
+    // 当每个field下的term都写入到writer后执行  也是非立即刷盘 除非满足某些条件
     writer.finishDocument();
 
     assert lastDocID == docState.docID: "lastDocID=" + lastDocID + " docState.docID=" + docState.docID;
 
     lastDocID++;
 
-    // 重置相关属性  (因为数据已经持久化成功了所以可以释放内存)
+    // 这里将 pool的内存释放   也就是每次处理一个新的doc时 初始化一次 bytePool/intPool/bytesHash  当数据写入到writer后 清空之前的数据
     super.reset();
     resetFields();
   }

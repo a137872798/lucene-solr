@@ -79,7 +79,7 @@ class BufferedUpdates implements Accountable {
     final Map<Query, Integer> deleteQueries = new HashMap<>();
 
     /**
-     * 维护field 下数据的变化
+     * 该容器用于存储更新信息
      */
     final Map<String, FieldUpdatesBuffer> fieldUpdates = new HashMap<>();
 
@@ -182,6 +182,7 @@ class BufferedUpdates implements Accountable {
     void addNumericUpdate(NumericDocValuesUpdate update, int docIDUpto) {
         // 共用计数器
         FieldUpdatesBuffer buffer = fieldUpdates.computeIfAbsent(update.field, k -> new FieldUpdatesBuffer(fieldUpdatesBytesUsed, update, docIDUpto));
+        // 代表更新成新的值 还是删除原来的值
         if (update.hasValue) {
             buffer.addUpdate(update.term, update.getValue(), docIDUpto);
         } else {

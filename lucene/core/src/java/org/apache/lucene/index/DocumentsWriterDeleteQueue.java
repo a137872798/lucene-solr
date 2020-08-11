@@ -189,9 +189,11 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     /**
      * invariant for document update
-     * 将新节点加入到 deleteQueue的链表结构(能够同步到globalSlice上)   的同时 还追加到了本次传入的分片链表上
+     * @param deleteNode 代表本次满足该node条件的doc将会被删除
+     * @param slice 代表会从该分片中抽取删除信息
      */
     long add(Node<?> deleteNode, DeleteSlice slice) {
+        // 将节点加到链表尾部 并增加seq
         long seqNo = add(deleteNode);
         /*
          * this is an update request where the term is the updated documents
@@ -203,8 +205,10 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
          * will apply this delete next time we update our slice and one of the two
          * competing updates wins!
          */
+        // 将分片的尾节点也指向该节点
         slice.sliceTail = deleteNode;
         assert slice.sliceHead != slice.sliceTail : "slice head and tail must differ after add";
+        // 尝试更新全局分片 在激烈竞争时 忽略失败
         tryApplyGlobalSlice(); // TODO doing this each time is not necessary maybe
         // we can do it just every n times or so?
 
@@ -246,7 +250,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     /**
      * 当多线程并发调用各种 add() 方法时 global 不一定会立即更新 因为此时可能会竞争失败 这里的选择是 如果竞争失败 先忽略本次slice的同步操作
-     * 因为在一些最终确认的方法中还要进行一次同步
+     * 因为在一些最终确认的方法中还要进行一次同步  也就是并非强一致 而是选择最终一致
      */
     void tryApplyGlobalSlice() {
         if (globalBufferLock.tryLock()) {
@@ -259,7 +263,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
              */
             try {
                 if (updateSliceNoSeqNo(globalSlice)) {
-                    // 在全局buffer中记录发生的变化
+                    // 在全局buffer中记录发生的变化   默认情况下对 docIDUpto是没有限制的
                     globalSlice.apply(globalBufferedUpdates, BufferedUpdates.MAX_INT);
                 }
             } finally {
@@ -328,14 +332,15 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      */
     private FrozenBufferedUpdates freezeGlobalBufferInternal(final Node<?> currentTail) {
         assert globalBufferLock.isHeldByCurrentThread();
-        // 将未同步的节点信息存储到 bufferedUpdate中
+        // 因为之前都是 尝试性同步 所以要在这里强制同步一次
         if (globalSlice.sliceTail != currentTail) {
             globalSlice.sliceTail = currentTail;
             globalSlice.apply(globalBufferedUpdates, BufferedUpdates.MAX_INT);
         }
 
+        // 代表此时有待删除/更新的节点
         if (globalBufferedUpdates.any()) {
-            // 生成一个 frozen 对象
+            // 通过 bufferedUpdate内部的数据去填充  FrozenBufferedUpdates
             final FrozenBufferedUpdates packet = new FrozenBufferedUpdates(infoStream, globalBufferedUpdates, null);
             // 因为信息已经转移到 frozen中了 所以可以清空全局容器了
             globalBufferedUpdates.clear();
@@ -415,8 +420,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      */
     static class DeleteSlice {
         // No need to be volatile, slices are thread captive (only accessed by one thread)!
-        // 代表链表中的一部分
+        // 创建该分片的那一刻 queue的tail节点
         Node<?> sliceHead; // we don't apply this one
+        // 该分片添加某个node到queue中时 该字段与 queue.tail 会指向新的node
         Node<?> sliceTail;
 
         DeleteSlice(Node<?> currentTail) {

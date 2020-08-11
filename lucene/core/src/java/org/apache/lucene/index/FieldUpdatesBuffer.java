@@ -99,11 +99,13 @@ final class FieldUpdatesBuffer {
         this.bytesUsed.addAndGet(SELF_SHALLOW_SIZE);
         // BytesRefArray 就可以简单的看作是  byte[]  不过每次写入的是一个bytesRef
         termValues = new BytesRefArray(bytesUsed);
-        // 这里存储了 更新的数值
+        // 这里存储了 每次update对象关联的term 和 field
         termValues.append(initialValue.term.bytes);
         fields = new String[]{initialValue.term.field};
         bytesUsed.addAndGet(sizeOfString(initialValue.term.field));
+        // 记录每次删除/更新动作对应的doc上限
         docsUpTo = new int[]{docUpTo};
+        // 只要有值就不需要设置位图
         if (initialValue.hasValue == false) {
             hasValues = new FixedBitSet(1);
             bytesUsed.addAndGet(hasValues.ramBytesUsed());
@@ -117,13 +119,13 @@ final class FieldUpdatesBuffer {
     }
 
     /**
-     * 代表某个field  产生了一次有关 numDocValue的更新
      * @param bytesUsed
-     * @param initialValue
-     * @param docUpTo
+     * @param initialValue  描述本次更新的信息
+     * @param docUpTo  影响到的 doc上限值  一般是Int最大值 也就是无限制
      */
     FieldUpdatesBuffer(Counter bytesUsed, DocValuesUpdate.NumericDocValuesUpdate initialValue, int docUpTo) {
         this(bytesUsed, initialValue, docUpTo, true);
+        // 填充数字
         if (initialValue.hasValue()) {
             numericValues = new long[]{initialValue.getValue()};
             maxNumeric = minNumeric = initialValue.getValue();
@@ -135,6 +137,7 @@ final class FieldUpdatesBuffer {
 
     FieldUpdatesBuffer(Counter bytesUsed, DocValuesUpdate.BinaryDocValuesUpdate initialValue, int docUpTo) {
         this(bytesUsed, initialValue, docUpTo, false);
+        // 填充二进制数据
         if (initialValue.hasValue()) {
             byteValues.append(initialValue.getValue());
         }
@@ -165,15 +168,16 @@ final class FieldUpdatesBuffer {
      * @param field    代表本次更新的 term关联的field
      * @param docUpTo  对应的文档号上限
      * @param ord      代表是第几个插入的 term
-     * @param hasValue 本次更新是否有携带数值   (可能某次更新不携带数值)
+     * @param hasValue 本次更新是否有携带数值  如果不携带数值就代表删除
      */
     void add(String field, int docUpTo, int ord, boolean hasValue) {
         assert finished == false : "buffer was finished already";
+        // 这里的意思是 如果field可以复用 就不继续往fields中设置值  如果不可以复用 或者此时数组内部已经有不止一个field了 那么一个下标就只能对应一次更新的field
         if (fields[0].equals(field) == false || fields.length != 1) {
             // 需要扩容
             if (fields.length <= ord) {
                 String[] array = ArrayUtil.grow(fields, ord + 1);
-                // 将所有值都填充成 field[0]
+                // 代表之前的 field 都是一样的  所以这里要填充成一样的值
                 if (fields.length == 1) {
                     Arrays.fill(array, 1, ord, fields[0]);
                 }
@@ -181,6 +185,7 @@ final class FieldUpdatesBuffer {
                 bytesUsed.addAndGet((array.length - fields.length) * RamUsageEstimator.NUM_BYTES_OBJECT_REF);
                 fields = array;
             }
+            // 这里是计算新的field占用空间
             if (field != fields[0]) { // that's an easy win of not accounting if there is an outlier
                 bytesUsed.addAndGet(sizeOfString(field));
             }
@@ -228,6 +233,7 @@ final class FieldUpdatesBuffer {
      */
     void addUpdate(Term term, long value, int docUpTo) {
         assert isNumeric;
+        // 在维护term的数组中增加一个新的 term
         final int ord = append(term);
         // 查看本次term 关联的field 信息
         String field = term.field;
@@ -294,11 +300,11 @@ final class FieldUpdatesBuffer {
             throw new IllegalStateException("buffer was finished already");
         }
         finished = true;
-        // 是数字类型 且仅包含一个值  且每次插入的 term都是属于同一个field    这种情况下 term 可能相同  也可能不相同
+        // 每次更新的都是同一个数字 且每次更新的都是同一个field
         final boolean sortedTerms = hasSingleValue() && hasValues == null && fields.length == 1;
+        // 这种情况就需要对每次更新相关的term 做排序
         if (sortedTerms) {
             // sort by ascending by term, then sort descending by docsUpTo so that we can skip updates with lower docUpTo.
-            // 结果中存储的是  BytesRefArray 的偏移量
             termSortState = termValues.sort(Comparator.naturalOrder(),  // 按照 term.bytes 进行排序
                     // 上面的比较结果无效时 使用下面的 cmp 也就是比较   也就是比较 docId上限的大小
                     (i1, i2) -> Integer.compare(
@@ -326,7 +332,7 @@ final class FieldUpdatesBuffer {
     }
 
     /**
-     * 仅包含一个 数字型数值
+     * 代表每次更新的都是同一个数字
      *
      * @return
      */

@@ -231,19 +231,22 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
 
   /** If buffered deletes are using too much heap, resolve them and write disk and return true. */
+  // 是否要将所有待删除动作一起执行
   private boolean applyAllDeletes() throws IOException {
     final DocumentsWriterDeleteQueue deleteQueue = this.deleteQueue;
-    // fullFlush 代表正在进行刷盘操作 那么 选择忽略本次动作   否则将更改写入到磁盘中
-    if (flushControl.isFullFlush() == false // never apply deletes during full flush this breaks happens before relationship
-        && deleteQueue.isOpen() // if it's closed then it's already fully applied and we have a new delete queue
-        && flushControl.getAndResetApplyAllDeletes()  // 该标识为true 就代表在  flushControl.doOnDelete 中因为deleteQueue已经存放了太多数据 导致需要将更新写入磁盘
+    if (flushControl.isFullFlush() == false // never apply deletes during full flush this breaks happens before relationship    当fullFlush时 无法删除doc
+        && deleteQueue.isOpen() // if it's closed then it's already fully applied and we have a new delete queue                 确保此时queue还是可用的
+        && flushControl.getAndResetApplyAllDeletes()  // 当此时queue中已经存储了很多数据时 会触发删除   也就是删除动作实际上也是尽可能的批处理 所以将删除操作和 写入操作拆解开吗
+                                                      // 删除doc有自己的触发条件 与是否刷盘无关
     ) {
+      // 将所有待删除的信息设置到 ticketQueue中
       if (ticketQueue.addDeletes(deleteQueue)) {
         // 触发监听器   看来刷盘动作实际上是这个监听器做的
         flushNotifications.onDeletesApplied(); // apply deletes event forces a purge
         return true;
       }
     }
+    // 如果此时正在执行全刷盘 无法进行删除
     return false;
   }
 
@@ -484,6 +487,13 @@ final class DocumentsWriter implements Closeable, Accountable {
     return hasEvents;
   }
 
+  /**
+   * 处理后置事件
+   * @param flushingDWPT
+   * @param hasEvents
+   * @return
+   * @throws IOException
+   */
   private boolean postUpdate(DocumentsWriterPerThread flushingDWPT, boolean hasEvents) throws IOException {
     hasEvents |= applyAllDeletes();
     if (flushingDWPT != null) {
@@ -533,15 +543,19 @@ final class DocumentsWriter implements Closeable, Accountable {
         // We don't know how many documents were actually
         // counted as indexed, so we must subtract here to
         // accumulate our separate counter:
+        // 更新计数器
         numDocsInRAM.addAndGet(dwpt.getNumDocsInRAM() - dwptNumDocs);
       }
-      // 如果本次更新doc的同时传入了 携带删除信息的node
+      // 只有 DocValuesUpdatesNode  isDelete为false
       final boolean isUpdate = delNode != null && delNode.isDelete();
       flushingDWPT = flushControl.doAfterDocument(dwpt, isUpdate);
     } finally {
+      // flushPending 包含刷盘中 和 待刷盘
       if (dwpt.isFlushPending() || dwpt.isAborted()) {
+        // 通过这个锁来确保此时只有一个线程独占这个对象   在从pool中获取 perThread的逻辑中就要求一定要上锁成功才能返回
         dwpt.unlock();
       } else {
+        // 如果没有处在待刷盘 刷盘中状态 那么是可以回到pool中的
         perThreadPool.marksAsFreeAndUnlock(dwpt);
       }
       assert dwpt.isHeldByCurrentThread() == false : "we didn't release the dwpt even on abort";

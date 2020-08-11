@@ -37,12 +37,12 @@ final class DocumentsWriterFlushQueue {
   private final Queue<FlushTicket> queue = new LinkedList<>();
   // we track tickets separately since count must be present even before the ticket is
   // constructed ie. queue.size would not reflect it.
-  // 当前有多少正在处理的 ticket
+  // 当前有多少正在处理的 ticket     当触发 addDeletes时 该值也会+1
   private final AtomicInteger ticketCount = new AtomicInteger();
   private final ReentrantLock purgeLock = new ReentrantLock();
 
   /**
-   * 传入一个删除队列 此时删除队列内部已经记录了各种包含删除信息的node
+   * 读取删除队列中的 node
    * @param deleteQueue
    * @return
    * @throws IOException
@@ -52,6 +52,7 @@ final class DocumentsWriterFlushQueue {
                  // a window for #anyChanges to fail
     boolean success = false;
     try {
+      // 抽取 buffer内部的数据 并转移到frozenBufferedUpdates中
       FrozenBufferedUpdates frozenBufferedUpdates = deleteQueue.maybeFreezeGlobalBuffer();
       if (frozenBufferedUpdates != null) { // no need to publish anything if we don't have any frozen updates
         queue.add(new FlushTicket(frozenBufferedUpdates, false));

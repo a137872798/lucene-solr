@@ -43,7 +43,8 @@ public final class FieldInfo {
    */
   private DocValuesType docValuesType = DocValuesType.NONE;
 
-  // True if any document indexed term vectors  是否存储了向量  在解析doc 并写入 field信息的过程中 当某个 field存储了向量信息 并写入到 formatWriter后 设置为true
+  // True if any document indexed term vectors
+  // 代表当前field下的词向量信息已经存储到内存中了(通过writer写入到合适的数据结构中 但是还没有持久化)
   private boolean storeTermVector;
 
   private boolean omitNorms; // omit norms associated with indexed fields  

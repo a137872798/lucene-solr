@@ -45,9 +45,7 @@ abstract class DocValuesUpdate {
    * 该文档的类型
    */
   final DocValuesType type;
-  /**
-   * 代表具体哪个term 更新了
-   */
+
   final Term term;
   /**
    * 该词属于哪个域
