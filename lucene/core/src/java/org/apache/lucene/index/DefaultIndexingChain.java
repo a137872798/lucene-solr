@@ -17,16 +17,6 @@
 package org.apache.lucene.index;
 
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.codecs.DocValuesConsumer;
 import org.apache.lucene.codecs.DocValuesFormat;
@@ -49,6 +39,16 @@ import org.apache.lucene.util.BytesRefHash.MaxBytesLengthExceededException;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Default general purpose indexing chain, which handles
@@ -98,7 +98,7 @@ final class DefaultIndexingChain extends DocConsumer {
     private long nextFieldGen;
 
     // Holds fields seen in each document
-    // 存储该对象处理的所有 field  并且每个对象内部包含了 通过docId 反向查找field的 invert信息
+    // 存储当前doc 下正在处理的 field  只有首次出现的field 才会存储
     private PerField[] fields = new PerField[1];
 
     /**
@@ -123,7 +123,7 @@ final class DefaultIndexingChain extends DocConsumer {
         if (docWriter.getSegmentInfo().getIndexSort() == null) {
             // 该对象专门负责存储 field相关信息 (生成索引结构 并存储)
             storedFieldsConsumer = new StoredFieldsConsumer(docWriter);
-            // 该对象负责写入term的向量信息 TODO 现在还不清楚什么是向量信息 继承自一个 TermsHash对象
+            // 该对象负责写入term的向量信息
             termVectorsWriter = new TermVectorsConsumer(docWriter);
         } else {
             // 当声明了排序规则时 创建2个排序对象
@@ -423,6 +423,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
     /**
      * 将当前对象标记成不可用
+     *
      * @throws IOException
      */
     @Override
@@ -481,6 +482,7 @@ final class DefaultIndexingChain extends DocConsumer {
     /**
      * Calls StoredFieldsWriter.finishDocument, aborting the
      * segment if it hits any exception.
+     * 这里就是更新 StoredFieldWriter 内部的属性 以便处理新的doc   如果此时缓存在内存中的数据已经比较多了 那么会被动的触发刷盘
      */
     private void finishStoredFields() throws IOException {
         try {
@@ -501,6 +503,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
         // How many indexed field names we've seen (collapses
         // multiple field instances by the same name):
+        // 记录的是新增的 field 之前已经出现过的field 在 processField方法后返回的是原值
         int fieldCount = 0;
 
         // 默认情况下 该值总是与 docId一致 标明了某个field是在处理哪个doc时存储的
@@ -513,7 +516,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // (i.e., we cannot have more than one TokenStream
         // running "at once"):
         //
-        // 在 TermVectorsConsumer中 会清除 处理上一个doc时产生的field信息
+        // 在 TermVectorsConsumer中 会清除上一个doc时产生的field信息
         termsHash.startDocument();
 
         // 让 StoredFieldsConsumer 做一些准备工作
@@ -527,17 +530,18 @@ final class DefaultIndexingChain extends DocConsumer {
             // 代表正常执行的情况 触发finish 方法
             if (docWriter.hasHitAbortingException() == false) {
                 // Finish each indexed field name seen in the document:
+                // 只要在该doc中出现过的field 都会设置到 fields[] 中 如果一个field在doc中出现多次 只设置一次
                 for (int i = 0; i < fieldCount; i++) {
                     fields[i].finish();
                 }
-                // 代表某个doc 已经处理完毕了 将他们持久化到磁盘中 (在索引writer中又做了一层优化 也就是先将数据存储在内存中只有满足了 flush()的条件才会真正刷盘)
-                // 这里对应 storedField
+                // 这里代表所有field的数据都写入完成了  注意只是 field.value 相关的信息  不涉及(term offset/position/freq等)
+                // 做一些收尾动作 但是不是强制刷盘 也就是数据还是留存在内存中
                 finishStoredFields();
             }
         }
 
         try {
-            // 这里对应 termVector
+            // termsHash 本身是一个链表结构 会将 TermVectors 和 FreqProxTerms 的信息都写入
             termsHash.finishDocument();
         } catch (Throwable th) {
             // Must abort, on the possibility that on-disk term
@@ -550,9 +554,9 @@ final class DefaultIndexingChain extends DocConsumer {
     /**
      * 在 processDocument中 会遍历doc下所有field 并进行处理
      *
-     * @param field   因为field实现了 IndexableField接口 会记录field上哪些信息需要存储到索引文件
-     * @param fieldGen  代表在docId为多少的doc时被处理
-     * @param fieldCount  这个count是指处理某个doc时 总计遇到了几个field
+     * @param field      因为field实现了 IndexableField接口 会记录field上哪些信息需要存储到索引文件
+     * @param fieldGen   代表在docId为多少的doc时被处理
+     * @param fieldCount 这个count是指处理某个doc时 总计遇到了几个field  去重
      * @return
      * @throws IOException
      */
@@ -567,31 +571,36 @@ final class DefaultIndexingChain extends DocConsumer {
             throw new NullPointerException("IndexOptions must not be null (field: \"" + field.name() + "\")");
         }
 
+        // 实际上只看到了从 NONE 到 != NONE 时    对fieldPer的修改     而如果本次设置的是NONE 没有覆盖的入口
+
         // Invert indexed fields:
-        // 代表field的某些信息需要写入到索引文件中   只有这种情况 才初始化 fp
+        // 代表field的某些信息需要写入到索引文件中
         if (fieldType.indexOptions() != IndexOptions.NONE) {
             // 将内部信息抽取出来生成 perField 对象
             // 当 IndexOptions 不为 NONE 的时候 才会创建invertState
             fp = getOrAddField(fieldName, fieldType, true);
-            // 代表该field 在本次处理的doc中首次出现 就要生成 invert信息
+            // field每次出现在不同的 doc中  fieldGen 就会变化
             boolean first = fp.fieldGen != fieldGen;
-            // 从这里可以看到 即使first为false 也要存储部分数据到 invert中 那么应该就是 freq position 等信息
+            // 将field.value的数据 经过分词器处理后 将term的偏移量 位置 频率等信息 写入到bytePool中
             fp.invert(field, first);
 
-            // 首次处理 存储到数组中
+            // 代表在当前doc中首次处理该field
             if (first) {
                 fields[fieldCount++] = fp;
                 fp.fieldGen = fieldGen;
             }
         } else {
-            // 这里只是做了一致性校验  当没有设置 IndexOptional 时  很多storeXXX属性应该为false
+            // 这里只是做了一致性校验  当IndexOptional为NONE 时  很多FieldType.storeXXX属性应该为false
             verifyUnIndexedFieldType(fieldName, fieldType);
         }
+
+        // 此时已经将term的相关信息存储到 PerField.bytePool中了
 
         // Add stored fields:
         // 这里代表需要存储 field本身的值
         if (fieldType.stored()) {
             if (fp == null) {
+                // 基于存储 .value本身的情况 是不需要生成 invertState的
                 fp = getOrAddField(fieldName, fieldType, false);
             }
             if (fieldType.stored()) {
@@ -600,7 +609,7 @@ final class DefaultIndexingChain extends DocConsumer {
                     throw new IllegalArgumentException("stored field \"" + field.name() + "\" is too large (" + value.length() + " characters) to store");
                 }
                 try {
-                    // 存储域相关的信息(写入到索引文件)
+                    // 这里主要就是写入 field的 num/valueType/value
                     storedFieldsConsumer.writeField(fp.fieldInfo, field);
                 } catch (Throwable th) {
                     docWriter.onAbortingException(th);
@@ -609,19 +618,25 @@ final class DefaultIndexingChain extends DocConsumer {
             }
         }
 
-        // 获取 docValue数据类型
+        // 该值规定了 field.value 在所有doc下类型都相同  如果没有指定的情况 那么同一fieldName 的field 在不同的doc下 它的数据可以不一致
         DocValuesType dvType = fieldType.docValuesType();
         if (dvType == null) {
             throw new NullPointerException("docValuesType must not be null (field: \"" + fieldName + "\")");
         }
+
+        // 被索引的数据是可以选择的 可以选择 term 也可以选择 field  或者 term + field
+        // 实际上只看到了从 NONE 到 != NONE 时    对fieldPer的修改     而如果本次设置的是NONE 没有覆盖的入口
+
+        // TODO 照理说一个doc下应该是能出现多个相同的field 但是比如是 NumDocValue类型 那么在写入时 会报错 要求docId必须递增
         if (dvType != DocValuesType.NONE) {
             if (fp == null) {
+                // 如果只是存储field信息 那么是不需要存储 invert数据的  同时 如果需要存储term的情况  那么在上面的逻辑中肯定已经完成了对 fp的创建
                 fp = getOrAddField(fieldName, fieldType, false);
             }
-            // 如果field 携带了docValue 需要存储
+            // 按照 docValue 的类型 生成不同的 DocValueWriter对象 并将数据写入到容器中
             indexDocValue(fp, dvType, field);
         }
-        // 如果存在维度信息
+        // 如果存在维度信息  现在简单的将多维度信息理解成 type.value 可以拆解成多个值 每个值对应一个维度
         if (fieldType.pointDimensionCount() != 0) {
             if (fp == null) {
                 fp = getOrAddField(fieldName, fieldType, false);
@@ -657,14 +672,16 @@ final class DefaultIndexingChain extends DocConsumer {
      * 存储某个field 的point信息
      */
     private void indexPoint(PerField fp, IndexableField field) throws IOException {
-        // 获取维护和索引维度
+        // 维度数 和会被索引的维度数
         int pointDimensionCount = field.fieldType().pointDimensionCount();
         int pointIndexDimensionCount = field.fieldType().pointIndexDimensionCount();
 
+        // 每个维度 的数据占用多少byte
         int dimensionNumBytes = field.fieldType().pointNumBytes();
 
         // Record dimensions for this field; this setter will throw IllegalArgExc if
         // the dimensions were already set to something different:
+        // 如果之前维度数为0 会尝试更新
         if (fp.fieldInfo.getPointDimensionCount() == 0) {
             fieldInfos.globalFieldNumbers.setDimensions(fp.fieldInfo.number, fp.fieldInfo.name, pointDimensionCount, pointIndexDimensionCount, dimensionNumBytes);
         }
@@ -675,7 +692,7 @@ final class DefaultIndexingChain extends DocConsumer {
         if (fp.pointValuesWriter == null) {
             fp.pointValuesWriter = new PointValuesWriter(docWriter, fp.fieldInfo);
         }
-        // TODO
+        // 写入 多维度信息  啥意思 实际上写入的还是 field.value
         fp.pointValuesWriter.addPackedValue(docState.docID, field.binaryValue());
     }
 
@@ -723,30 +740,34 @@ final class DefaultIndexingChain extends DocConsumer {
 
     /**
      * Called from processDocument to index one field's doc value
-     * 存储 某个field对应的 docValue 信息
-     * 在外层会对某个doc下所有的field 做处理 这时就可能遇到field重复的情况  就对应sorted 为每个doc下出现的docValue做排序的动作
+     *
+     * @param fp     以 PerThread为单位 存储field信息 (包括下面的 term信息)
      * @param dvType 描述docValue的类型信息
+     *               docValue 代表某一field在所有doc下 的value都是同一类型
+     * @param field  描述field的信息
      */
     private void indexDocValue(PerField fp, DocValuesType dvType, IndexableField field) throws IOException {
 
+        // 如果原本没有 docValue信息
         if (fp.fieldInfo.getDocValuesType() == DocValuesType.NONE) {
             // This is the first time we are seeing this field indexed with doc values, so we
             // now record the DV type so that any future attempt to (illegally) change
             // the DV type of this field, will throw an IllegalArgExc:
-            // TODO 段携带 排序信息的情况 先忽略
+            // TODO 有关排序的先忽略
             if (docWriter.getSegmentInfo().getIndexSort() != null) {
                 final Sort indexSort = docWriter.getSegmentInfo().getIndexSort();
                 validateIndexSortDVType(indexSort, fp.fieldInfo.name, dvType);
             }
-            // 这里设置映射关系
+            // 为field在全局范围内设置 docValue
             fieldInfos.globalFieldNumbers.setDocValuesType(fp.fieldInfo.number, fp.fieldInfo.name, dvType);
 
         }
+        // 更新 perThread范围下 field的 docValueType
         fp.fieldInfo.setDocValuesType(dvType);
 
         int docID = docState.docID;
 
-        // DocValue 就是 fp.xxxValue();
+        // 一旦docValueType的类型确定下来就不会再改变了   TODO 在一个doc下可以出现多个相同的field吗??? 如果可以出现在这里就会出错了
         switch (dvType) {
 
             case NUMERIC:
@@ -756,6 +777,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 if (field.numericValue() == null) {
                     throw new IllegalArgumentException("field=\"" + fp.fieldInfo.name + "\": null value not allowed");
                 }
+                // 将 field.value 直接写入
                 ((NumericDocValuesWriter) fp.docValuesWriter).addValue(docID, field.numericValue().longValue());
                 break;
 
@@ -766,13 +788,14 @@ final class DefaultIndexingChain extends DocConsumer {
                 ((BinaryDocValuesWriter) fp.docValuesWriter).addValue(docID, field.binaryValue());
                 break;
 
+            // TODO 从写入逻辑看 并没有发现哪里体现了 排序 可能写入的field本身就要按照某种规则
             case SORTED:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new SortedDocValuesWriter(fp.fieldInfo, bytesUsed);
                 }
                 ((SortedDocValuesWriter) fp.docValuesWriter).addValue(docID, field.binaryValue());
                 break;
-
+            //
             case SORTED_NUMERIC:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new SortedNumericDocValuesWriter(fp.fieldInfo, bytesUsed);
@@ -780,6 +803,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 ((SortedNumericDocValuesWriter) fp.docValuesWriter).addValue(docID, field.numericValue().longValue());
                 break;
 
+            // SortedSetDocValuesWriter 实现 跟 SortedNumericDocValuesWriter 比较相似
             case SORTED_SET:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new SortedSetDocValuesWriter(fp.fieldInfo, bytesUsed);
@@ -812,8 +836,9 @@ final class DefaultIndexingChain extends DocConsumer {
      * absorbing the type information from {@link FieldType},
      * and creates a new {@link PerField} if this field name
      * wasn't seen yet.
+     *
      * @param invert 是否需要反转
-     * 通过记录了 该field下需要存储哪些信息 生成 PerField对象
+     *               通过记录了 该field下需要存储哪些信息 生成 PerField对象
      */
     private PerField getOrAddField(String name, IndexableFieldType fieldType, boolean invert) {
 
@@ -885,7 +910,7 @@ final class DefaultIndexingChain extends DocConsumer {
         // This is the first time we are seeing this field indexed, so we now
         // record the index options so that any future attempt to (illegally)
         // change the index options of this field, will throw an IllegalArgExc:
-        // 覆盖之前的   indexOptions  TODO 多次存储相同fieldName的 field  并且他们的 IndexOptions 不同 ，这样是可行的吗
+        // 覆盖之前的   indexOptions
         fieldInfos.globalFieldNumbers.setIndexOptions(info.number, info.name, indexOptions);
         info.setIndexOptions(indexOptions);
     }
@@ -919,7 +944,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
         // Non-null if this field ever had doc values in this
         // segment:
-        // 该对象负责写入 doc的数据
+        // 该对象写入 docValule 信息
         DocValuesWriter docValuesWriter;
 
         // Non-null if this field ever had points in this segment:
@@ -929,7 +954,7 @@ final class DefaultIndexingChain extends DocConsumer {
         /**
          * We use this to know when a PerField is seen for the
          * first time in the current document.
-         * 代表首次发现该field时处理的是  docId为多少的doc
+         * 每当处理一个新的 doc 时会产生一个新的 fieldGen 然后如果此时刚好处理到这个field 就将gen更新成与该doc相关的
          */
         long fieldGen = -1;
 
@@ -980,25 +1005,31 @@ final class DefaultIndexingChain extends DocConsumer {
             return this.fieldInfo.name.compareTo(other.fieldInfo.name);
         }
 
+        /**
+         * @throws IOException
+         */
         public void finish() throws IOException {
-            // 如果没有设置标准因子 就要对结果进行打分
+            // 只要没有忽略标准因子 就要进行打分  打分的逻辑是委托给 Similarity
             if (fieldInfo.omitsNorms() == false) {
                 long normValue;
+                // 如果没有任何 term信息存储 无法打分 使用默认值0
                 if (invertState.length == 0) {
                     // the field exists in this document, but it did not have
                     // any indexed tokens, so we assign a default value of zero
                     // to the norm
                     normValue = 0;
                 } else {
+                    // TODO 具体怎么打分的逻辑可以先忽略  看到有基于field打分的模板
                     normValue = similarity.computeNorm(invertState);
                     if (normValue == 0) {
                         throw new IllegalStateException("Similarity " + similarity + " return 0 for non-empty field");
                     }
                 }
-                // 存储每个doc的得分
+                // 存储该field在每个doc下的得分
                 norms.addValue(docState.docID, normValue);
             }
 
+            // 将 PerField设置到 termsHash的field数组中
             termsHashPerField.finish();
         }
 
@@ -1007,9 +1038,9 @@ final class DefaultIndexingChain extends DocConsumer {
          * if this is the first time we are seeing this field
          * name in this document.
          * <p>
-         *     解析field的信息 并存储到 invertState 中
+         * 解析field的信息 并存储到 invertState 中
          *
-         * @param first 代表该field 在本次处理的所有doc中 首次出现
+         * @param first 代表该field 在当前doc中首次出现
          */
         public void invert(IndexableField field, boolean first) throws IOException {
             if (first) {
@@ -1029,7 +1060,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 fieldInfo.setOmitsNorms();
             }
 
-            // tokenized() 标识 该field相关的value信息是否应当被分词器处理   TODO docState的分词器是啥时候设置的???
+            // tokenized() 标识 该field相关的value信息是否应当被分词器处理
             final boolean analyzed = fieldType.tokenized() && docState.analyzer != null;
 
             /*
@@ -1072,7 +1103,7 @@ final class DefaultIndexingChain extends DocConsumer {
                         } else {
                             throw new IllegalArgumentException("position overflowed Integer.MAX_VALUE (got posIncr=" + posIncr + " lastPosition=" + invertState.lastPosition + " position=" + invertState.position + ") for field '" + field.name() + "'");
                         }
-                    // 代表该field下解析出来的 token数量超过一开始的限定值  抛出异常
+                        // 代表该field下解析出来的 token数量超过一开始的限定值  抛出异常
                     } else if (invertState.position > IndexWriter.MAX_POSITION) {
                         throw new IllegalArgumentException("position " + invertState.position + " is too large for field '" + field.name() + "': max allowed position is " + IndexWriter.MAX_POSITION);
                     }
@@ -1082,7 +1113,7 @@ final class DefaultIndexingChain extends DocConsumer {
                         invertState.numOverlap++;
                     }
 
-                    // 本次token 在整个reader流中的起始位置和终止位置   看来在多个doc中处理同一个field  fieldInvertState的信息是全局累加的
+                    // 本次token 在整个reader流中的起始位置和终止位置
                     int startOffset = invertState.offset + invertState.offsetAttribute.startOffset();
                     int endOffset = invertState.offset + invertState.offsetAttribute.endOffset();
                     if (startOffset < invertState.lastStartOffset || endOffset < startOffset) {
@@ -1108,7 +1139,7 @@ final class DefaultIndexingChain extends DocConsumer {
                     // corrupt and should not be flushed to a
                     // new segment:
                     try {
-                        // 这里会将term的信息 写入到索引中 (不一定触发刷盘)
+                        // 将term的位置信息 频率信息等抽取出来 写入到 bytePool中 某些属性则会更新到 FieldInvertState
                         termsHashPerField.add();
                     } catch (MaxBytesLengthExceededException e) {
                         byte[] prefix = new byte[30];
@@ -1127,12 +1158,12 @@ final class DefaultIndexingChain extends DocConsumer {
                 }
 
                 // trigger streams to perform end-of-stream operations
-                // 代表某个数据流全部处理完毕了  会转发给 attr.end()
+                // 代表某个field下所有term的信息都已经写入  此时将pos 和 offset更新成最终值
                 stream.end();
 
                 // TODO: maybe add some safety? then again, it's already checked
                 // when we come back around to the field...
-                // 在最后更新 position 和 offset
+                // 更新 field在当前doc的 pos和offset 当下次解析到相同的field时 就会将当前偏移量作为基础值    形成逻辑上的连续存储
                 invertState.position += invertState.posIncrAttribute.getPositionIncrement();
                 invertState.offset += invertState.offsetAttribute.endOffset();
 
@@ -1145,7 +1176,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 }
             }
 
-            // 代表已经被处理过 TODO 这里设置了一个 gap 啥意思???
+            // 代表已经被处理过 TODO 这里设置了一个 gap 啥意思???   在 StandardTokenizer中 这2个方法的返回值都是固定的
             if (analyzed) {
                 invertState.position += docState.analyzer.getPositionIncrementGap(fieldInfo.name);
                 invertState.offset += docState.analyzer.getOffsetGap(fieldInfo.name);

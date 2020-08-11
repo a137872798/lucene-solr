@@ -71,6 +71,11 @@ class SortedNumericDocValuesWriter extends DocValuesWriter {
     iwBytesUsed.addAndGet(bytesUsed);
   }
 
+  /**
+   * 因为 数字类型已经完成排序了 所以确保每次写入的值都是递增的 可以采用差值写入
+   * @param docID
+   * @param value
+   */
   public void addValue(int docID, long value) {
     assert docID >= currentDoc;
     // 以doc为单位 每次切换doc前 将之前写入的数据排序后写入pending中

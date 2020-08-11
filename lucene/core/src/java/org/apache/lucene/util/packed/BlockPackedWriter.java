@@ -90,7 +90,7 @@ public final class BlockPackedWriter extends AbstractBlockPackedWriter {
       min = Math.max(0L, max - PackedInts.maxValue(bitsRequired));
     }
 
-    // TODO 这里又是先通过特殊计算 获取一个token值
+    // 这里是先通过特殊计算 获取一个token值
     final int token = (bitsRequired << BPV_SHIFT) | (min == 0 ? MIN_VALUE_EQUALS_0 : 0);
     out.writeByte((byte) token);
 

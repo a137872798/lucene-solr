@@ -52,7 +52,7 @@ import org.apache.lucene.util.packed.PackedInts;
 /**
  * {@link TermVectorsWriter} for {@link CompressingTermVectorsFormat}.
  * @lucene.experimental
- * 该 对象会将要写入到索引文件的词向量数据压缩
+ * 存储词向量信息的对象
  */
 public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
@@ -102,7 +102,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
      */
     final int numFields;
     /**
-     * 存储 field的详细数据
+     * 本次doc下存储的 field相关信息
      */
     final Deque<FieldData> fields;
     final int posStart, offStart, payStart;
@@ -110,7 +110,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     /**
      *
      * @param numFields  标明该 doc内部有多少个 field
-     * @param posStart
+     * @param posStart   相关向量值的基础值  本次docData的数据都会以该值作为基础 往上累加
      * @param offStart
      * @param payStart
      */
@@ -135,7 +135,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     FieldData addField(int fieldNum, int numTerms, boolean positions, boolean offsets, boolean payloads) {
       final FieldData field;
       if (fields.isEmpty()) {
-        // 第一个field 的 pos off 等属性是从上个doc默认获取的
+        // 第一个field 的 pos off 等属性是从上个doc默认获取的     也就是在逻辑上将他们的偏移量等信息连起来了
         field = new FieldData(fieldNum, numTerms, positions, offsets, payloads, posStart, offStart, payStart);
       } else {
         final FieldData last = fields.getLast();
@@ -150,14 +150,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 代表当前doc 要存储多少个 field的数据
+   * 代表当前doc 要存储多少个 field的数据  构建结构体对象
    * @param numVectorFields
    * @return
    */
   private DocData addDocData(int numVectorFields) {
     FieldData last = null;
-    // 这里主要就是获取上一个文档相关的信息
-    // 将双端队列的数据 倒序返回
+    // 反向遍历 DocData 因为每次TermVector的数据都是增量数据 所以需要借助上一次的数据
     for (Iterator<DocData> it = pendingDocs.descendingIterator(); it.hasNext(); ) {
       final DocData doc = it.next();
       // 只要某个 doc的 field 列表不为空 并且这里会返回最后一个
@@ -187,7 +186,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     final boolean hasPositions, hasOffsets, hasPayloads;
     final int fieldNum, flags, numTerms;
     /**
-     * 分别存储 某term出现的频率  与前一个term的公共前缀长度  suffixLengths = length - prefixLengths
+     * 分别存储 某term出现的频率  与前一个term的公共前缀长度 后缀长度
      */
     final int[] freqs, prefixLengths, suffixLengths;
     final int posStart, offStart, payStart;
@@ -228,7 +227,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
 
     /**
-     * 往该 field 中追加某个  term的信息
+     * 往该 field 中追加某个term
      * @param freq   该term出现的频率
      * @param prefixLength   与上个词相同前缀的长度
      * @param suffixLength   剩余的部分就是后缀长度
@@ -270,9 +269,12 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
    */
   private int numDocs; // total number of docs seen
   /**
-   * 待刷盘的文档  也就是解析完doc时 并不是立即就进行持久化
+   * 每个尚未刷盘的 数据块 以docData为单位存储
    */
   private final Deque<DocData> pendingDocs; // pending docs
+  /**
+   * 对应处理本次doc生成的结果
+   */
   private DocData curDoc; // current document
   /**
    * 对应当前正在采集的field
@@ -280,7 +282,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   private FieldData curField; // current field
 
   /**
-   * 上个写入 索引结构的 term
+   * 存储最近一个写入的term  当插入一个新的field时 重置该字段
    */
   private final BytesRef lastTerm;
 
@@ -298,7 +300,18 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   private final ByteBuffersDataOutput payloadBytes; // buffered term payloads
   private final BlockPackedWriter writer;
 
-  /** Sole constructor. */
+  /**
+   * 初始化写入词向量信息的 writer
+   * @param directory  本次文件会写入到哪个目录
+   * @param si   本次段信息  与 IndexWriter 一一对应的关系
+   * @param segmentSuffix
+   * @param context
+   * @param formatName
+   * @param compressionMode
+   * @param chunkSize
+   * @param blockShift
+   * @throws IOException
+   */
   public CompressingTermVectorsWriter(Directory directory, SegmentInfo si, String segmentSuffix, IOContext context,
       String formatName, CompressionMode compressionMode, int chunkSize, int blockShift) throws IOException {
     assert directory != null;
@@ -309,7 +322,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
     numDocs = 0;
     pendingDocs = new ArrayDeque<>();
-    // 创建2个具备回收功能的 BB dataOutput
+
     termSuffixes = ByteBuffersDataOutput.newResettableInstance();
     payloadBytes = ByteBuffersDataOutput.newResettableInstance();
     lastTerm = new BytesRef(ArrayUtil.oversize(30, 1));
@@ -323,7 +336,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       CodecUtil.writeIndexHeader(vectorsStream, formatName, VERSION_CURRENT, si.getId(), segmentSuffix);
       assert CodecUtil.indexHeaderLength(formatName, segmentSuffix) == vectorsStream.getFilePointer();
 
-      // 这里构建一个写入索引的对象
+      // 这个索引文件相当于是 tvd的索引
       indexWriter = new FieldsIndexWriter(directory, segment, segmentSuffix, VECTORS_INDEX_EXTENSION_PREFIX, VECTORS_INDEX_CODEC_NAME, si.getId(), blockShift, context);
 
       vectorsStream.writeVInt(PackedInts.VERSION_CURRENT);
@@ -356,8 +369,8 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 当某个 doc的数据处理完了后 会触发该方法  代表即将要存储多少个 field的词向量信息
-   * @param numVectorFields
+   * 代表预备向 writer中写入数据  在writer中初始化一些结构对象
+   * @param numVectorFields   代表该doc下有多少field
    * @throws IOException
    */
   @Override
@@ -382,13 +395,15 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       // 执行刷盘操作
       flush();
     }
+    // 将此时正在处理的 docData 置空
     curDoc = null;
   }
 
   /**
-   * 当某个域将要写入数据时 会触发该方法 为当前正在使用的 DocData 写入 FieldData
+   * 开始往DocData中写入某个fieldData的信息
    * @param info
-   * @param numTerms
+   * @param numTerms  该field解析出了多少 term
+   *                  下面3个变量代表需要存储term的哪些相关信息
    * @param positions
    * @param offsets
    * @param payloads
@@ -411,15 +426,15 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 代表处理到了某个 term    抽取相关信息
-   * @param term
-   * @param freq
+   * @param term  对应term内的数据体
+   * @param freq  该term在field中出现的次数
    * @throws IOException
    */
   @Override
   public void startTerm(BytesRef term, int freq) throws IOException {
     assert freq >= 1;
     final int prefix;
+    // 因为存入term时 在外层已经做过排序了 所以可以节省前缀的方式写入
     // 这里想要存储相同的前缀 以便节省空间
     if (lastTerm.length == 0) {
       // no previous term: no bytes to write
@@ -437,7 +452,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
     lastTerm.offset = 0;
     lastTerm.length = term.length;
-    // 这里进行了内存拷贝
+    // 更新 lastTerm的值
     System.arraycopy(term.bytes, term.offset, lastTerm.bytes, 0, term.length);
   }
 
@@ -898,10 +913,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 加入某个 term相关的 数据流
+   * 写入term相关的向量信息
    * @param numProx
-   * @param positions   该数据流是有关 position的
-   * @param offsets   该数据流是有关 offset的
+   * @param positions   存储了 position信息
+   * @param offsets   存储了offset信息
    * @throws IOException
    */
   @Override

@@ -58,12 +58,12 @@ class TermVectorsConsumer extends TermsHash {
    */
   boolean hasVectors;
   /**
-   * 每当chain 处理一个新的 doc时 会重置该值
+   * 记录有多少个 需要存储向量的field
    */
   int numVectorFields;
   int lastDocID;
   /**
-   * 每次 reset时 会置空这个数组    TermVectorsConsumerPerField负责从doc中抽取信息 并以field为单位存储
+   * 内部对象以 field为单位写入数据
    */
   private TermVectorsConsumerPerField[] perFields = new TermVectorsConsumerPerField[1];
 
@@ -115,11 +115,12 @@ class TermVectorsConsumer extends TermsHash {
   }
 
   /**
-   * 初始化 writer对象   该对象基于 codec定义的索引文件模板持久化数据
+   * 确保用于写入 term向量数据的writer对象已经被初始化
    * @throws IOException
    */
   void initTermVectorsWriter() throws IOException {
     if (writer == null) {
+      // 获取此时内存中的doc数量
       IOContext context = new IOContext(new FlushInfo(docWriter.getNumDocsInRAM(), docWriter.bytesUsed()));
       writer = docWriter.codec.termVectorsFormat().vectorsWriter(docWriter.directory, docWriter.getSegmentInfo(), context);
       lastDocID = 0;
@@ -127,18 +128,19 @@ class TermVectorsConsumer extends TermsHash {
   }
 
   /**
-   * 代表某个 doc 处理完毕了
+   * 此时处理完某个doc下的所有field  准备将数据写入到 索引文件
    * @throws IOException
    */
   @Override
   void finishDocument() throws IOException {
 
-    // 代表在处理该doc时 发现field内部设置不需要存储向量 那么直接返回
+    // 代表不需要存储 field下任何有关term的向量信息 (就是offset/payload/freq/position等信息)
     if (!hasVectors) {
       return;
     }
 
     // Fields in term vectors are UTF16 sorted:
+    // 按照fieldName 进行排序
     ArrayUtil.introSort(perFields, 0, numVectorFields);
 
     // 在写入前 先初始化 writer对象
@@ -198,7 +200,7 @@ class TermVectorsConsumer extends TermsHash {
   }
 
   /**
-   * 当 TermVectorsConsumerPerField.finish() 被触发时   调用该方法  将field 存储到 perField数组中  然后下一次 startDoc 时 将之前的数组再清空
+   * 代表此时某个field的数据处理完成 这里写入数据并刷盘
    * @param fieldToFlush
    */
   void addFieldToFlush(TermVectorsConsumerPerField fieldToFlush) {
@@ -210,6 +212,7 @@ class TermVectorsConsumer extends TermsHash {
       perFields = newArray;
     }
 
+    // 将field对象设置到数组中
     perFields[numVectorFields++] = fieldToFlush;
   }
 

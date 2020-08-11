@@ -67,6 +67,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
     this.fieldInfo = fieldInfo;
     this.bytes = new PagedBytes(BLOCK_BITS);
     this.bytesOut = bytes.getDataOutput();
+    // 长度也是用差值存储
     this.lengths = PackedLongValues.deltaPackedBuilder(PackedInts.COMPACT);
     this.iwBytesUsed = iwBytesUsed;
     this.docsWithField = new DocsWithFieldSet();

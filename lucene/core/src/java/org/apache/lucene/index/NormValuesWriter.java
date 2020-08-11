@@ -28,7 +28,7 @@ import org.apache.lucene.util.packed.PackedLongValues;
 
 /** Buffers up pending long per doc, then flushes when
  *  segment flushes.
- *  该对象负责写入 标准因子信息
+ *  标准因子 实际上就是得分
  */
 class NormValuesWriter {
 
@@ -54,6 +54,11 @@ class NormValuesWriter {
     iwBytesUsed.addAndGet(bytesUsed);
   }
 
+  /**
+   * 存储 field在该doc下的得分信息
+   * @param docID
+   * @param value
+   */
   public void addValue(int docID, long value) {
     if (docID <= lastDocID) {
       throw new IllegalArgumentException("Norm for \"" + fieldInfo.name + "\" appears more than once in this document (only one value is allowed per field)");

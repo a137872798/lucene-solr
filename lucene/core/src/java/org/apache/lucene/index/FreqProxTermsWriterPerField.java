@@ -52,10 +52,17 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
   final boolean hasOffsets;
   PayloadAttribute payloadAttribute;
   OffsetAttribute offsetAttribute;
+  /**
+   * 此时写入的 termFreq总值 默认情况下发现一次term 就将freq+1
+   */
   long sumTotalTermFreq;
+  /**
+   * 代表 term 以doc 为单位出现了多少个 (也就是同一field下出现多次算一次)
+   */
   long sumDocFreq;
 
-  // How many docs have this field:   代表该field 已经处理了多少doc  换一个角度描述就是 已经检测到有多少文档包含该 field
+  // How many docs have this field:
+  // 当属于当前doc的某个field在处理时确实产生了term 就会将该值+1
   int docCount;
 
   /** Set to true if any token had a payload in the current
@@ -95,6 +102,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       docCount++;
     }
 
+    // 设置是否存储了 payload 信息
     if (sawPayloads) {
       fieldInfo.setStorePayloads();
     }
@@ -213,11 +221,11 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       if (termFreqAtt.getTermFrequency() != 1) {
         throw new IllegalStateException("field \"" + fieldInfo.name + "\": must index term freq while using custom TermFrequencyAttribute");
       }
-      // 代表这个词 上次出现是在另外的文档
+      // 代表此时跨文档了
       if (docState.docID != postings.lastDocIDs[termID]) {
         // New document; now encode docCode for previous doc:
         assert docState.docID > postings.lastDocIDs[termID];
-        // 在不需要写入频率的情况下 lastDocCodes 就是 lastDocIDs
+        // 在不需要写入频率的情况下 lastDocCodes 就是 上次docId 与上上次docId的差值
         writeVInt(0, postings.lastDocCodes[termID]);
         // lastDocCodes 实际上存储的是docID的增量
         postings.lastDocCodes[termID] = docState.docID - postings.lastDocIDs[termID];
@@ -232,21 +240,26 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
 
       // Now that we know doc freq for previous doc,
       // write it & lastDocCode
+      // 当发生跨文档时  代表着此时termFreqs[termID] 中记录的就是上一个文档中该term出现的总次数
+      // 代表上一次文档中该term只出现一次
       if (1 == postings.termFreqs[termID]) {
-        // 最低位为1的时候 应该就是代表频率为1  否则 最低为是0  TODO 需要看写入的数据是怎么读取的
+        // 最低位为1的时候 代表该term在
         writeVInt(0, postings.lastDocCodes[termID]|1);
       } else {
-        // 最低位为0 时 代表需要记录频率信息 然后立即读取一个int 代表频率值   这里写入的都是上一次的数据
+        // 最低位为0 时 将上次docId 与上上个docID的差值写入  以及该term在上个doc出现的频率
         writeVInt(0, postings.lastDocCodes[termID]);
         writeVInt(0, postings.termFreqs[termID]);
       }
 
       // Init freq for the current document
-      // 更新本次信息
+      // 更新当前doc下term出现的频率
       postings.termFreqs[termID] = getTermFreq();
       fieldState.maxTermFrequency = Math.max(postings.termFreqs[termID], fieldState.maxTermFrequency);
+      // 因为这里要记录 freq信息  所以 最低位要空出来
       postings.lastDocCodes[termID] = (docState.docID - postings.lastDocIDs[termID]) << 1;
+      // 更新最后一次记录的docId
       postings.lastDocIDs[termID] = docState.docID;
+      // 如果还携带了位置信息 和 offset信息 也进行写入
       if (hasProx) {
         writeProx(termID, fieldState.position);
         if (hasOffsets) {
@@ -260,7 +273,9 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       fieldState.uniqueTermCount++;
       // 代表在同一文档中 并且 需要记录频率
     } else {
+      // 没有发生跨文档 增加该 term在该doc中出现的次数
       postings.termFreqs[termID] = Math.addExact(postings.termFreqs[termID], getTermFreq());
+      // 尝试更新 term最大的频率值
       fieldState.maxTermFrequency = Math.max(fieldState.maxTermFrequency, postings.termFreqs[termID]);
       if (hasProx) {
         writeProx(termID, fieldState.position-postings.lastPositions[termID]);

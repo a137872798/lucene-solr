@@ -114,22 +114,22 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     private final int maxDocsPerChunk;
 
     /**
-     * doc数据会先存储在该容器中
+     * field相关信息写入到该容器
      */
     private final ByteBuffersDataOutput bufferedDocs;
 
     /**
-     * numBufferedDocs作为下标  value 对应该doc下有多少sortedField
+     * 记录每个doc下存储了多少field
      */
     private int[] numStoredFields; // number of stored fields
     /**
-     * numBufferedDocs作为下标 value对应存储了数据后 bufferedDocs的偏移量
+     * 记录每当写入一个doc下所有field数据后 该输出流的最终偏移量
      */
     private int[] endOffsets; // end offsets in bufferedDocs
     private int docBase; // doc ID at the beginning of the chunk
 
     /**
-     * 代表当前已经处理了多少doc  每当刷盘一次后 这个值就会重置   并且更新docBase的值
+     * 每个值对应一个处理完并缓存在内存中的doc  当刷盘后 该值会清空
      */
     private int numBufferedDocs; // docBase + numBufferedDocs == current doc ID
 
@@ -201,7 +201,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
 
     /**
-     * 当前正在处理的doc内部有多少个 sortedField
+     * 此时写入到doc中第几个field  每当一个doc写入完成时 就可以将该值置零
      */
     private int numStoredFieldsInDoc;
 
@@ -215,21 +215,21 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
 
     /**
-     * 当某个doc内部的数据都已经写入到 output时 调用该方法
+     * 当某个document下所有field的处理完后触发  只涉及到 field.value 类型等
      *
      * @throws IOException
      */
     @Override
     public void finishDocument() throws IOException {
-        // 代表当前缓冲区中已经存放了多少doc  每次flush后 该值会重置
-        // 这里只是为 numStoredFields 扩容
+        // 每当处理完一个doc 时 numBufferedDocs 就会加1 代表此时内存中缓存的doc数量
+        // 当doc数量超过了 numStoredFields 时 进行扩容
         if (numBufferedDocs == this.numStoredFields.length) {
             final int newLength = ArrayUtil.oversize(numBufferedDocs + 1, 4);
             this.numStoredFields = ArrayUtil.growExact(this.numStoredFields, newLength);
             endOffsets = ArrayUtil.growExact(endOffsets, newLength);
         }
 
-        // 设置某个doc下相关的 sortedField 数量
+        // 记录当前doc下存储了多少field
         this.numStoredFields[numBufferedDocs] = numStoredFieldsInDoc;
         numStoredFieldsInDoc = 0;
 
@@ -312,7 +312,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
 
     /**
-     * 基于 大小和 数量2个维度 决定是否要刷盘
+     * 每当缓存的数据量过大 或者缓存的doc数量过多就会触发刷盘
      *
      * @return
      */
@@ -385,7 +385,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         final BytesRef bytes;
         final String string;
 
-        // 尝试以 num的形式读取 field的值
+        // 尝试以 num的形式读取 field的值    也就是docValue的类型是通过检测 field.value的类型来判别的
         Number number = field.numericValue();
         if (number != null) {
             if (number instanceof Byte || number instanceof Short || number instanceof Integer) {
@@ -417,7 +417,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
             }
         }
 
-        // 存储的第一个值 代表 field的数据类型
+        // 存储的第一个值 代表 field的编号以及它的数据类型
         final long infoAndBits = (((long) info.number) << TYPE_BITS) | bits;
         bufferedDocs.writeVLong(infoAndBits);
 
@@ -429,6 +429,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
             // 写入string 实际上就会拆解成上面2步
             bufferedDocs.writeString(string);
         } else {
+            // 数字类型会采用 锯齿写入法 也就是避免了 负数占用的位数过多的问题
             if (number instanceof Byte || number instanceof Short || number instanceof Integer) {
                 bufferedDocs.writeZInt(number.intValue());
             } else if (number instanceof Long) {

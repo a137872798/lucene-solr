@@ -65,19 +65,20 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
      * are enabled, to write the vectors to
      * RAMOutputStream, which is then quickly flushed to
      * the real term vectors files in the Directory.
-     * 代表当前这个文档已经处理完了
+     * 允许写入当前 field的信息
      */
     @Override
     void finish() {
-        // 如果本身就不需要存储 向量信息 或者当前没有读取到任何信息 直接返回
+        // 如果本身就不需要存储 向量信息 或者当前没有读取到任何信息 代表无数据可写入
         if (!doVectors || bytesHash.size() == 0) {
             return;
         }
+        // 将当前对象设置到 termWriter的数组上 为flush做准备
         termsWriter.addFieldToFlush(this);
     }
 
     /**
-     * 当 TermVectorsConsumer.finishDocument() 调用时 转发到这里    TermVectorsConsumer 在处理一个doc时可能会有很多的field 就会创建多个该对象
+     * 将每个field 对应的数据写入到writer对象中
      * @throws IOException
      */
     void finishDocument() throws IOException {
@@ -88,9 +89,10 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
 
         doVectors = false;
 
-        // 代表写入了多少数据
+        // 代表解析出了多少term
         final int numPostings = bytesHash.size();
 
+        // 虽然全局perField 共享该字段 但是本方法是串行执行 所以没有并发问题
         final BytesRef flushTerm = termsWriter.flushTerm;
 
         assert numPostings >= 0;
@@ -99,37 +101,41 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
         // of a given field in the doc.  At this point we flush
         // our hash into the DocWriter.
 
-        // 该数组内部此时记录了各种信息
+        // 该数组以 termID 为单位存储了各种信息
         TermVectorsPostingsArray postings = termVectorsPostingsArray;
+        // 获取写入词向量信息的对象
         final TermVectorsWriter tv = termsWriter.writer;
 
-        // 获取当前field内所有的 term
+        // 将 termID 按照 term的大小排序  此时termID就是无序的
         final int[] termIDs = sortPostings();
 
         // writer 可以创建索引结构对象 这里是给索引对象追加field 信息   (对应实体 fieldData)
         tv.startField(fieldInfo, numPostings, doVectorPositions, doVectorOffsets, hasPayloads);
 
-        // 创建2个用来读取分片信息的对象  此时内部的指针还没有初始化
+        // 获取读取bytePool分片的对象
         final ByteSliceReader posReader = doVectorPositions ? termsWriter.vectorSliceReaderPos : null;
         final ByteSliceReader offReader = doVectorOffsets ? termsWriter.vectorSliceReaderOff : null;
 
-        // TODO 推测 numPosition 记录的是不同term的数量  下面通过freq 可以知道同一个term 有多少个 然后相同term的position等信息是连续存储的
+        // 开始遍历term
         for (int j = 0; j < numPostings; j++) {
+            // 此时ID 是按照term大小顺序排序的 所以第一个元素的 termID 不一定是0
             final int termID = termIDs[j];
-            // 通过 termID 找到频率   频率实际上也就记录了这个termId在这个field中出现了几次  同时出现几次就有多少 position offset 存储
+            // 获取该term 在本field中出现的频率
             final int freq = postings.freqs[termID];
 
-            // Get BytesRef  定位到 目标term 并将flushTerm 指向内存块
+            // Get BytesRef
+            // 将 flushTerm 指向目标块
             termBytePool.setBytesRef(flushTerm, postings.textStarts[termID]);
-            // 将 term 写入到 FieldData 内
+            // 将 term的数据以及 频率写入到 tv中
             tv.startTerm(flushTerm, freq);
 
+            // 如果还携带了 position/offset/payload 信息 那么将这些信息写入
             if (doVectorPositions || doVectorOffsets) {
-                // 开始初始化 reader 对象   pos作为第一个数据流
+                // 因为写入向量信息时 是在bytePool中创建分片 这里就反向读取
+
                 if (posReader != null) {
                     initReader(posReader, termID, 0);
                 }
-                // offset 作为第二个数据流
                 if (offReader != null) {
                     initReader(offReader, termID, 1);
                 }
@@ -158,7 +164,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
         super.start(field, first);
         assert field.fieldType().indexOptions() != IndexOptions.NONE;
 
-        // 代表该 perField 关联的 perThread 首次处理该field
+        // 代表在该doc下首次处理该field
         if (first) {
 
             // 先清理之前的数据   该对象的 bytesHash和FreqProxTermsWriterPerField 共用同一个bytesPool

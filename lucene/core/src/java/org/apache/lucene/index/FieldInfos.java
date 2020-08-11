@@ -443,6 +443,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
                 throw new IllegalArgumentException("field name \"" + name + "\" is already mapped to field number \"" + nameToNumber.get(name) + "\", not \"" + number + "\"");
             }
             DocValuesType currentDVType = docValuesType.get(name);
+            // 同上 只允许三种情况
             if (dvType != DocValuesType.NONE && currentDVType != null && currentDVType != DocValuesType.NONE && dvType != currentDVType) {
                 throw new IllegalArgumentException("cannot change DocValues type from " + currentDVType + " to " + dvType + " for field \"" + name + "\"");
             }
@@ -455,6 +456,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
             if (number.equals(nameToNumber.get(name)) == false) {
                 throw new IllegalArgumentException("field name \"" + name + "\" is already mapped to field number \"" + nameToNumber.get(name) + "\", not \"" + number + "\"");
             }
+            // 只允许从 NONE -> A  和 A->A
             FieldDimensions dim = dimensions.get(name);
             if (dim != null) {
                 if (dim.dimensionCount != dataDimensionCount) {

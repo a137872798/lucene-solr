@@ -54,7 +54,7 @@ public final class FieldInvertState {
   int offset;
 
   /**
-   * 记录下面所有term中 频率最大的值
+   * 当前field下所有term中 频率最大值
    */
   int maxTermFrequency;
   /**

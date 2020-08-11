@@ -293,6 +293,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * Maximum length string for a stored field.
+     * 当直接存储某个field.value 时 允许的数据最大长度
      */
     public final static int MAX_STORED_STRING_LENGTH = ArrayUtil.MAX_ARRAY_LENGTH / UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR;
 

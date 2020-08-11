@@ -23,6 +23,9 @@ import org.apache.lucene.codecs.DocValuesConsumer;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.SortField;
 
+/**
+ * 该接口专门负责 docValue的写入
+ */
 abstract class DocValuesWriter {
 
   abstract void finish(int numDoc);

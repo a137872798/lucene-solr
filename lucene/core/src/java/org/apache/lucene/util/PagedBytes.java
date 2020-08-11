@@ -366,7 +366,7 @@ public final class PagedBytes implements Accountable {
   }
 
   /**
-   * 该对象是一个内部类 负责往
+   * 该对象是一个内部类 负责往PagedBytes中写入数据
    */
   public final class PagedBytesDataOutput extends DataOutput {
     @Override

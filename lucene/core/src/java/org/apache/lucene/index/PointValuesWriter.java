@@ -27,17 +27,37 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.Counter;
 
 /** Buffers up pending byte[][] value(s) per doc, then flushes when segment flushes. */
-// 该对象负责存储某个field的向量信息
+// 负责写入 多维度数据
 class PointValuesWriter {
   private final FieldInfo fieldInfo;
   private final ByteBlockPool bytes;
   private final Counter iwBytesUsed;
+
+
+  /**
+   * 可能多个 points 对应的是同一个docID
+   */
   private int[] docIDs;
+
+  /**
+   * 总计写入多少次
+   */
   private int numPoints;
+  /**
+   * 总计写入到多少 doc中
+   */
   private int numDocs;
   private int lastDocID = -1;
+  /**
+   * 总长度 通过 field下相关的维度数*每个维度占用的bytes 计算获得
+   */
   private final int packedBytesLength;
 
+  /**
+   *
+   * @param docWriter  关联的doc写入对象
+   * @param fieldInfo
+   */
   public PointValuesWriter(DocumentsWriterPerThread docWriter, FieldInfo fieldInfo) {
     this.fieldInfo = fieldInfo;
     this.iwBytesUsed = docWriter.bytesUsed;
@@ -48,20 +68,25 @@ class PointValuesWriter {
   }
 
   // TODO: if exactly the same value is added to exactly the same doc, should we dedup?
+  // 写入多维度信息
   public void addPackedValue(int docID, BytesRef value) {
     if (value == null) {
       throw new IllegalArgumentException("field=" + fieldInfo.name + ": point value must not be null");
     }
+    // 那么 value 应该就是联合了多个维度的数据
     if (value.length != packedBytesLength) {
       throw new IllegalArgumentException("field=" + fieldInfo.name + ": this field's value has length=" + value.length + " but should be " + (fieldInfo.getPointDimensionCount() * fieldInfo.getPointNumBytes()));
     }
 
+    // 对doc数组扩容 不影响别的
     if (docIDs.length == numPoints) {
       docIDs = ArrayUtil.grow(docIDs, numPoints+1);
       iwBytesUsed.addAndGet((docIDs.length - numPoints) * Integer.BYTES);
     }
     bytes.append(value);
+    // 记录当前第几维度 对应的docId   也就是多次写入的数据可以在同一doc中   但是有些 DocValueWriter 严格要求 doc下同一field 只能出现一次
     docIDs[numPoints] = docID;
+    // 当切换doc时 更新lastDocID
     if (docID != lastDocID) {
       numDocs++;
       lastDocID = docID;

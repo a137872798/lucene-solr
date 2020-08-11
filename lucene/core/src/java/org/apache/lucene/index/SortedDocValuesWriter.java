@@ -35,6 +35,7 @@ import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /** Buffers up pending byte[] per doc, deref and sorting via
  *  int ord, then flushes when segment flushes. */
+// 该容器存储的是已经排序完成的的数据
 class SortedDocValuesWriter extends DocValuesWriter {
   final BytesRefHash hash;
   private PackedLongValues.Builder pending;
@@ -63,6 +64,11 @@ class SortedDocValuesWriter extends DocValuesWriter {
     iwBytesUsed.addAndGet(bytesUsed);
   }
 
+  /**
+   * 记录当前field 所在的doc  以及field.value
+   * @param docID
+   * @param value
+   */
   public void addValue(int docID, BytesRef value) {
     if (docID <= lastDocID) {
       throw new IllegalArgumentException("DocValuesField \"" + fieldInfo.name + "\" appears more than once in this document (only one value is allowed per field)");
@@ -75,6 +81,7 @@ class SortedDocValuesWriter extends DocValuesWriter {
     }
 
     addOneValue(value);
+    // 记录docId
     docsWithField.add(docID);
 
     lastDocID = docID;
@@ -86,11 +93,13 @@ class SortedDocValuesWriter extends DocValuesWriter {
   }
 
   /**
-   * 在存储数据时 并没有体现排序的含义
+   * 该value 本身已经做过排序处理了
    * @param value
    */
   private void addOneValue(BytesRef value) {
+    // 将数据存储到hash结构下的 BytePool 中   他跟单纯写入 二进制数据的 BinaryDocValuesWriter 写入数据的容器不同
     int termID = hash.add(value);
+    // 代表 value之前已经写入过
     if (termID < 0) {
       termID = -termID-1;
     } else {
@@ -100,7 +109,8 @@ class SortedDocValuesWriter extends DocValuesWriter {
       // 2. when flushing, we need 1 int per value (slot in the ordMap).
       iwBytesUsed.addAndGet(2 * Integer.BYTES);
     }
-    
+
+    // 这里只存储 返回的id
     pending.add(termID);
     updateBytesUsed();
   }

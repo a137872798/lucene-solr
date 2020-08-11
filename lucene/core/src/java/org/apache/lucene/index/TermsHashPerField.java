@@ -77,9 +77,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     protected final FieldInfo fieldInfo;
 
     /**
-     * 该对象借助 pool 对象写入数据  利用了pool自动扩容且不需要大量的数据拷贝的特点
-     * 该对象本身只维护了  hash到 id 到 pool偏移量的映射关系
-     * 该对象连接到 termBytePool 这样就可以通过 termId 映射到 pool的偏移量
+     * size 对应分配的 termID的数量
      */
     final BytesRefHash bytesHash;
 

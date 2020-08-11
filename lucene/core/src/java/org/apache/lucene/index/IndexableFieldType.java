@@ -28,7 +28,8 @@ import org.apache.lucene.analysis.Analyzer; // javadocs
  */
 public interface IndexableFieldType {
 
-  /** True if the field's value should be stored */ // 这个域是否设置了排序信息
+  /** True if the field's value should be stored */
+  // 是否要存储 field.value本身    原本存储的都是 value在使用分词器处理后生成的各个term
   public boolean stored();
   
   /** 

@@ -25,9 +25,6 @@ package org.apache.lucene.store;
 // 刷盘相关的上下文
 public class FlushInfo {
 
-  /**
-   * 代表本次会将多少 doc持久化
-   */
   public final int numDocs;
 
   /**
@@ -40,7 +37,7 @@ public class FlushInfo {
    * the values required for a FLUSH {@link IOContext} context.
    * 
    * These values are only estimates and are not the actual values.
-   * 
+   * @param numDocs 代表有多少doc是待刷盘的
    */
   
   public FlushInfo(int numDocs, long estimatedSegmentSize) {

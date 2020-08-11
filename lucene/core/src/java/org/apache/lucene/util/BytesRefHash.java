@@ -166,7 +166,7 @@ public final class BytesRefHash implements Accountable {
    * </p>
    *
    * @lucene.internal
-   * 紧凑化  可能初始化值的时候 ids 不是连续设置的  这里修改成连续
+   * 只将有效的 ids返回 因为是hash函数处理过 所以是乱序 数组内存放的是 termID
    */
   public int[] compact() {
     assert bytesStart != null : "bytesStart is null - not initialized";
@@ -193,7 +193,7 @@ public final class BytesRefHash implements Accountable {
    * Note: This is a destructive operation. {@link #clear()} must be called in
    * order to reuse this {@link BytesRefHash} instance.
    * </p>
-   * 使用基数排序算法
+   * 使用基数排序算法  将term排序
    */
   public int[] sort() {
     final int[] compact = compact();
@@ -201,6 +201,11 @@ public final class BytesRefHash implements Accountable {
 
       BytesRef scratch = new BytesRef();
 
+      /**
+       * 交换的是 termID
+       * @param i
+       * @param j
+       */
       @Override
       protected void swap(int i, int j) {
         int tmp = compact[i];
@@ -208,6 +213,11 @@ public final class BytesRefHash implements Accountable {
         compact[j] = tmp;
       }
 
+      /**
+       * 比较的是 term大小
+       * @param i
+       * @return
+       */
       @Override
       protected BytesRef get(int i) {
         pool.setBytesRef(scratch, bytesStart[compact[i]]);

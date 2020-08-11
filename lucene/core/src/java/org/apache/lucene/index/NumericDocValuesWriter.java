@@ -43,12 +43,13 @@ class NumericDocValuesWriter extends DocValuesWriter {
 
   /**
    *
-   * @param fieldInfo docValueType 都是设置在某个field上的
+   * @param fieldInfo  field的描述信息
    * @param iwBytesUsed  该对象一般都是不断传递进来 用于估量当前使用的总内存的  可以先不看
    */
   public NumericDocValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed) {
     // 生成一个增量存储的 packed 对象  packed本身的特性是按位存储数据
     pending = PackedLongValues.deltaPackedBuilder(PackedInts.COMPACT);
+    // 通过位图对象记录该field 出现在哪些 doc中  注意在 第一位记录的不是docId 而是当前位图总计记录了多少doc
     docsWithField = new DocsWithFieldSet();
     bytesUsed = pending.ramBytesUsed() + docsWithField.ramBytesUsed();
     this.fieldInfo = fieldInfo;
@@ -57,10 +58,9 @@ class NumericDocValuesWriter extends DocValuesWriter {
   }
 
   /**
-   * 存储 某个doc下该field 存储的值
-   * 在处理多个doc时  field可能会出现重复的情况 然后每个 field对象对应一个 DocValueWriter对象  在处理doc时 按照docId 触发该方法
-   * @param docID
-   * @param value
+   *
+   * @param docID  当前field 所在的doc
+   * @param value  field.value
    */
   public void addValue(int docID, long value) {
     // 要求id单调递增
@@ -70,7 +70,7 @@ class NumericDocValuesWriter extends DocValuesWriter {
 
     // 写入到差值存储的容器中
     pending.add(value);
-    // 追加关联关系  内部使用了 位图
+    // 写入位图
     docsWithField.add(docID);
 
     updateBytesUsed();

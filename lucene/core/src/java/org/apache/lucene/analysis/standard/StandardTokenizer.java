@@ -188,13 +188,20 @@ public final class StandardTokenizer extends Tokenizer {
         skippedPositions++;
     }
   }
-  
+
+  /**
+   * 在reader对象解析完成时调用
+   * @throws IOException
+   */
   @Override
   public final void end() throws IOException {
-    // 代表某个token的处理结束了 触发每个 attr的 end()
+
+    // 清除之前的 attr
     super.end();
     // set final offset
     int finalOffset = correctOffset(scanner.yychar() + scanner.yylength());
+    // 最后还设置了一次 pos 和 offset信息
+
     // 更新偏移量
     offsetAtt.setOffset(finalOffset, finalOffset);
     // adjust any skipped tokens
