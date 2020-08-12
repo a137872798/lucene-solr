@@ -25,7 +25,7 @@ import java.io.IOException;
  * {@link TwoPhaseCommit}s.
  * 
  * @lucene.experimental
- * 这不就是 TCC吗...
+ * 两阶段式提交 必须先调用 prepareCommit 才能执行commit/rollback
  */
 public interface TwoPhaseCommit {
 

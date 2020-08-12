@@ -503,8 +503,10 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
             fullFlush = this.fullFlush;
             numPending = this.numPending;
         }
+        // 当没有任务在刷盘队列中时 进行检测   但是如果正处在 fullFlush状态 那么不进行检测   因为在fullFlush中已经确保把同一deleteQueue时期的 perThread都转移到 flushQueue中了 所以不需要再检测池中的perThread对象
         if (numPending > 0 && fullFlush == false) { // don't check if we are doing a full flush
             for (final DocumentsWriterPerThread next : perThreadPool) {
+                // 发现待刷盘的线程 只要他现在没有被其他线程占用 就转移到刷盘队列 并从池中移除
                 if (next.isFlushPending()) {
                     if (next.tryLock()) {
                         try {
@@ -613,13 +615,12 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 标记成需要 fullFlush  并且尽可能将满足条件的待刷盘队列加入到 flushQueue 中
+     * 代表此时由于 prepareCommit 进入了 fullFlush状态
      * @return
      */
     long markForFullFlush() {
         final DocumentsWriterDeleteQueue flushingQueue;
         long seqNo;
-        // 首先更新 docWriter 内部的deleteQueue
         synchronized (this) {
             assert fullFlush == false : "called DWFC#markForFullFlush() while full flush is still running";
             assert fullFlushMarkDone == false : "full flush collection marker is still set to true";
@@ -632,18 +633,24 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
             try {
                 // Insert a gap in seqNo of current active thread count, in the worst case each of those threads now have one operation in flight.  It's fine
                 // if we have some sequence numbers that were never assigned:
-                // 生成一个新队列
+                // 这里生成了一个新的queue 并使用新的 序列号 / 同时内部的 generate也会增加
                 DocumentsWriterDeleteQueue newQueue = documentsWriter.deleteQueue.advanceQueue(perThreadPool.size());
+                // 返回当前队列最大的序列号
                 seqNo = documentsWriter.deleteQueue.getMaxSeqNo();
+                // 更新内部的队列
                 documentsWriter.resetDeleteQueue(newQueue);
             } finally {
+                // 当新的队列生成时 就允许创建新的 perThread对象  相当于此时新的线程只会将node写入到新队列中 不会对本次的flush造成影响  这样锁的粒度是最小的 也不会丢失删除/更新请求
                 perThreadPool.unlockNewWriters();
             }
         }
 
-        // 存储 更新成刷盘中的 perThread
+        // 存储本次参与fullFlush的所有线程
         final List<DocumentsWriterPerThread> fullFlushBuffer = new ArrayList<>();
-        // deleteQueue 相同的 perThread 是同一时期的  获取并加锁
+        // 获取同一时期的线程 做到本次刷盘与之后的写入 解耦
+        // 返回此时还未刷盘的所有 PerThread
+        // 在 filterAndLock 方法中 会通过 lock 阻塞获取某个线程 如果此时该线程正在被其他人使用 那么会等待索引生成完毕  那些线程在发现此时已经进入了 fullFlush状态 就会将自己设置到 blockFlush队列中
+        // 在下面会从blockFlush中将线程取出来 并执行任务  如果刚好未检测到 fullFlush标识 那么就会直到刷盘完成  TODO 待确定
         for (final DocumentsWriterPerThread next : perThreadPool.filterAndLock(dwpt -> dwpt.deleteQueue == flushingQueue)) {
             try {
                 assert next.deleteQueue == flushingQueue
@@ -659,9 +666,11 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
                 if (next.getNumDocsInRAM() > 0) {
                     final DocumentsWriterPerThread flushingDWPT;
                     synchronized (this) {
+                        // 如果此时线程没有被标记成待刷盘状态  更新状态   (从等待刷盘 到刷盘完成 都属于 flushPending)
                         if (next.isFlushPending() == false) {
                             setFlushPending(next);
                         }
+                        // 将线程转移到刷盘队列中 同时从pool移除
                         flushingDWPT = checkOutForFlush(next);
                     }
                     assert flushingDWPT != null : "DWPT must never be null here since we hold the lock and it holds documents";
@@ -671,11 +680,12 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
                     // it's possible that we get a DWPT with 0 docs if we flush concurrently to
                     // threads getting DWPTs from the pool. In this case we simply remove it from
                     // the pool and drop it on the floor.
-                    // 没有需要写入的数据 直接移除就好
+                    // 如果此时没有需要刷盘的数据  直接从pool中移除
                     boolean checkout = perThreadPool.checkout(next);
                     assert checkout;
                 }
             } finally {
+                // 因为此时已经从pool中移除了 不会被其他线程访问到 所以可以解锁
                 next.unlock();
             }
         }
@@ -684,7 +694,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
              * pending and moved to blocked are moved over to the flushQueue. There is
              * a chance that this happens since we marking DWPT for full flush without
              * blocking indexing.*/
-            // 将阻塞中的队列 转移到 刷盘中
+            // 将 blockFlush队列中的元素移动到刷盘队列中
             pruneBlockedQueue(flushingQueue);
             assert assertBlockedFlushes(documentsWriter.deleteQueue);
             // 将之前设置为刷盘中的 perThread 都加入到 flushQueue 中
@@ -706,7 +716,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
     /**
      * Prunes the blockedQueue by removing all DWPTs that are associated with the given flush queue.
-     * 将阻塞中的刷盘任务 返回到刷盘中队列
+     * 找到阻塞中的刷盘任务  只要与该删除队列属于同一generate 就转移到刷盘队列中
      */
     private void pruneBlockedQueue(final DocumentsWriterDeleteQueue flushingQueue) {
         assert Thread.holdsLock(this);

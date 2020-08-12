@@ -62,7 +62,7 @@ public final class SegmentInfo {
   public final String name;
 
   /**
-   * 当前段记录的最大文档号   并且该值是递增的 所以号码多少就代表有多少doc
+   * 代表当前段对象内总计有多少doc   每个PerThread 会对应一个段 然后当解析完doc生成索引数据时 会有一个 docInRam的计数器 当刷盘时 这个计数器的值就是这个段文件内持久化的总文档数
    */
   private int maxDoc;         // number of docs in seg
 

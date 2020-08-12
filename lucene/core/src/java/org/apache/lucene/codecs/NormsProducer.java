@@ -38,7 +38,7 @@ public abstract class NormsProducer implements Closeable, Accountable {
   /** Returns {@link NumericDocValues} for this field.
    *  The returned instance need not be thread-safe: it will only be
    *  used by a single thread. */
-  // 为该域字段 解析标准因子
+  // 接口定义就是传入某个field 获取相关的标准因子
   public abstract NumericDocValues getNorms(FieldInfo field) throws IOException;
   
   /** 

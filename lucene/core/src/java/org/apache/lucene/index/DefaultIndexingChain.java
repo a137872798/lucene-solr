@@ -142,7 +142,7 @@ final class DefaultIndexingChain extends DocConsumer {
      * @throws IOException
      */
     private Sorter.DocMap maybeSortSegment(SegmentWriteState state) throws IOException {
-        // 获取排序对象  如果没有设置 那么不需要排序
+        // 获取排序对象  如果没有设置 那么不需要排序  该属性是从 IndexConfig.indexSort 传递过来的
         Sort indexSort = state.segmentInfo.getIndexSort();
         if (indexSort == null) {
             return null;
@@ -175,9 +175,8 @@ final class DefaultIndexingChain extends DocConsumer {
     }
 
     /**
-     * 根据 携带的描述信息 执行刷盘动作
-     *
-     * @param state
+     * 将之前解析doc生成的索引数据持久化到segment文件中
+     * @param state  描述本次刷盘信息的对象
      * @return
      * @throws IOException
      */
@@ -187,11 +186,12 @@ final class DefaultIndexingChain extends DocConsumer {
         // NOTE: caller (DocumentsWriterPerThread) handles
         // aborting on any exception from this method
         // 首先尝试根据 segmentInfo 内部包含的排序对象 进行排序
+        // TODO 先忽略排序逻辑 那么这里会返回null
         Sorter.DocMap sortMap = maybeSortSegment(state);
-        // 该段下最大的文档号
+        // 获取该段总计解析了多少doc  (这里是包含解析失败的)  解析失败的doc 会通过delCountOnFlush 展示
         int maxDoc = state.segmentInfo.maxDoc();
         long t0 = System.nanoTime();
-        // 这里是写入 标准因子
+        // 先写入标准因子
         writeNorms(state, sortMap);
         if (docState.infoStream.isEnabled("IW")) {
             docState.infoStream.message("IW", ((System.nanoTime() - t0) / 1000000) + " msec to write norms");
@@ -376,7 +376,7 @@ final class DefaultIndexingChain extends DocConsumer {
     }
 
     /**
-     * 写入标准因子
+     * 将标准因子信息持久化
      *
      * @param state
      * @param sortMap
@@ -386,7 +386,7 @@ final class DefaultIndexingChain extends DocConsumer {
         boolean success = false;
         NormsConsumer normsConsumer = null;
         try {
-            // 首先检测是否有标准因子
+            // 只要本次涉及到的所有field 有至少一个写入了标准因子  就要将数据持久化到文件中
             if (state.fieldInfos.hasNorms()) {
                 // 当存在标准因子时  获取当前版本支持的 标准因子格式   默认使用的 Codec 就是 Lucene84Codec
                 NormsFormat normsFormat = state.segmentInfo.getCodec().normsFormat();
@@ -395,17 +395,18 @@ final class DefaultIndexingChain extends DocConsumer {
                 normsConsumer = normsFormat.normsConsumer(state);
 
                 for (FieldInfo fi : state.fieldInfos) {
-                    // 从hash桶中找到 对应的域信息   这个是之前处理doc的时候写进去的
+                    // 从hash桶中找到 对应的域信息   这个是之前处理doc的时候写进去的  之前解析doc数据时 对应的 标准因子信息 value信息 termVector信息等都缓存在 PerField对象中
                     PerField perField = getPerField(fi.name);
                     assert perField != null;
 
                     // we must check the final value of omitNorms for the fieldinfo: it could have
                     // changed for this field since the first time we added it.
-                    // 如果没有设置  不写入任何索引文件  并且 忽略标准因子的标识为 false 就会将标准因子写入到索引文件
+                    // 代表该field存储了标准因子 且存储了词向量信息
                     if (fi.omitsNorms() == false && fi.getIndexOptions() != IndexOptions.NONE) {
                         assert perField.norms != null : "field=" + fi.name;
                         // 当前版本 finish是NOOP
                         perField.norms.finish(state.segmentInfo.maxDoc());
+                        // 将信息写入到 索引文件中
                         perField.norms.flush(state, sortMap, normsConsumer);
                     }
                 }

@@ -27,7 +27,7 @@ import org.apache.lucene.util.InfoStream;
 /**
  * Holder class for common parameters used during write.
  * @lucene.experimental
- * 存储一些公共参数
+ * 描述一次将数据持久化到段文件中涉及到的参数
  */
 public class SegmentWriteState {
 
@@ -45,11 +45,12 @@ public class SegmentWriteState {
 
   /** {@link FieldInfos} describing all fields in this
    *  segment. */
+  // 会写入该段下的所有field信息
   public final FieldInfos fieldInfos;
 
   /** Number of deleted documents set while flushing the
    *  segment. */
-  // 记录本次刷盘动作 会删除多少doc
+  // 记录本次刷盘过程中有多少doc无法被写入  这些doc被删除的原因是生成索引时失败
   public int delCountOnFlush;
   /** Number of only soft deleted documents set while flushing the
    *  segment. */
@@ -94,6 +95,7 @@ public class SegmentWriteState {
    * 
    * @see #SegmentWriteState(InfoStream, Directory, SegmentInfo, FieldInfos,
    *      BufferedUpdates, IOContext)
+   * @param segUpdates 看来只有等待刷盘的时候 才会处理这些要删除的数据   (TODO 那么在刷盘之前查询数据的话能看到将被删除的数据吗???)
    */
   public SegmentWriteState(InfoStream infoStream, Directory directory, SegmentInfo segmentInfo, FieldInfos fieldInfos,
       BufferedUpdates segUpdates, IOContext context, String segmentSuffix) {

@@ -239,9 +239,8 @@ final class DocumentsWriter implements Closeable, Accountable {
         && flushControl.getAndResetApplyAllDeletes()  // 当此时queue中已经存储了很多数据时 会触发删除   也就是删除动作实际上也是尽可能的批处理 所以将删除操作和 写入操作拆解开吗
                                                       // 删除doc有自己的触发条件 与是否刷盘无关
     ) {
-      // 将所有待删除的信息设置到 ticketQueue中
+      // 将所有待删除/更新的信息 包装成一个FlushTicket 并添加到队列中
       if (ticketQueue.addDeletes(deleteQueue)) {
-        // 触发监听器   看来刷盘动作实际上是这个监听器做的
         flushNotifications.onDeletesApplied(); // apply deletes event forces a purge
         return true;
       }
@@ -569,7 +568,7 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
 
   /**
-   * 将写入线程的数据刷盘
+   * 将某个PerThread对象暂存在内存中的索引数据写入磁盘
    * @param flushingDWPT
    * @return
    * @throws IOException
@@ -603,14 +602,14 @@ final class DocumentsWriter implements Closeable, Accountable {
         try {
           assert assertTicketQueueModification(flushingDWPT.deleteQueue);
           // Each flush is assigned a ticket in the order they acquire the ticketQueue lock
-          // 线程不能直接刷盘 而要先申请门票
+          // 必须先申请门票
           ticket = ticketQueue.addFlushTicket(flushingDWPT);
           // 获取当前待刷盘的 doc 数量
           final int flushingDocsInRam = flushingDWPT.getNumDocsInRAM();
           boolean dwptSuccess = false;
           try {
             // flush concurrently without locking
-            // TODO 这里先不细看 核心逻辑就是触发了 consumer.flush() 将内存中暂存的解析数据 持久化到索引文件中
+            // 将内存中的数据刷盘
             final FlushedSegment newSegment = flushingDWPT.flush(flushNotifications);
             // 回填本次刷盘的结果信息
             ticketQueue.addSegment(ticket, newSegment);
@@ -790,7 +789,7 @@ final class DocumentsWriter implements Closeable, Accountable {
    * FlushAllThreads is synced by IW fullFlushLock. Flushing all threads is a
    * two stage operation; the caller must ensure (in try/finally) that finishFlush
    * is called after this method, to release the flush lock in DWFlushControl
-   * 返回当前所有的flush线程
+   * 该方法必须在持有 fullFlushLock时执行 并且在final中释放锁  同时 fullFlush是由二阶段提交触发的
    */
   long flushAllThreads()
     throws IOException {
@@ -801,23 +800,25 @@ final class DocumentsWriter implements Closeable, Accountable {
 
     long seqNo;
     synchronized (this) {
+      // 此时是否有待处理的数据
       pendingChangesInCurrentFullFlush = anyChanges();
       flushingDeleteQueue = deleteQueue;
       /* Cutover to a new delete queue.  This must be synced on the flush control
        * otherwise a new DWPT could sneak into the loop with an already flushing
        * delete queue */
-      // 该方法会冻结当前所有的perThread 并将内部待刷盘任务转移到 flushQueue中
+      // 生成一个新的 deleteQueue 替代原来的删除队列 并将同一时期创建的 perThread都转移到刷盘队列中 设置 fullFlush标识
       seqNo = flushControl.markForFullFlush(); // swaps this.deleteQueue synced on FlushControl
       assert setFlushingDeleteQueue(flushingDeleteQueue);
     }
     assert currentFullFlushDelQueue != null;
     assert currentFullFlushDelQueue != deleteQueue;
-    
+
+    // 代表是否有数据被成功刷盘
     boolean anythingFlushed = false;
     try {
       DocumentsWriterPerThread flushingDWPT;
       // Help out with flushing:
-      // 从flushQueue中取出任务并刷盘
+      // 挨个取出所有刷盘队列中的 PerThread 并执行刷盘操作
       while ((flushingDWPT = flushControl.nextPendingFlush()) != null) {
         anythingFlushed |= doFlush(flushingDWPT);
       }

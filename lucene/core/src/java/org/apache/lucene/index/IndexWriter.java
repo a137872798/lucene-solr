@@ -3367,6 +3367,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      */
     @Override
     public final long prepareCommit() throws IOException {
+        // 确保此时 IndexWriter 处于打开状态
         ensureOpen();
         pendingSeqNo = prepareCommitInternal();
         // we must do this outside of the commitLock else we can deadlock:
@@ -3405,6 +3406,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 执行预提交
+     * @return
+     * @throws IOException
+     */
     private long prepareCommitInternal() throws IOException {
         startCommitTime = System.nanoTime();
         synchronized (commitLock) {
@@ -3418,10 +3424,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 throw new IllegalStateException("this writer hit an unrecoverable error; cannot commit", tragedy.get());
             }
 
+            // 代表之前已经有别人触发过预提交了 此时应该调用commit/rollback
             if (pendingCommit != null) {
                 throw new IllegalStateException("prepareCommit was already called with no corresponding call to commit");
             }
 
+            // 先执行刷盘前的预备操作
             doBeforeFlush();
             testPoint("startDoFlush");
             SegmentInfos toCommit = null;
@@ -3438,6 +3446,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     boolean flushSuccess = false;
                     boolean success = false;
                     try {
+                        // 在预提交阶段 需要将之前所有数据刷盘
                         seqNo = docWriter.flushAllThreads();
                         if (seqNo < 0) {
                             anyChanges = true;
@@ -5392,7 +5401,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      *
      * @param forced if <code>true</code> this call will block on the ticket queue if the lock is held by another thread.
      *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.
-     *               在某个刷盘任务结束后 满足条件的 ticket 才会触发该方法
+     *               是否要强制刷盘
      */
     private void publishFlushedSegments(boolean forced) throws IOException {
 

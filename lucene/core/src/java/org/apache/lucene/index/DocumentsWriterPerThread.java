@@ -52,6 +52,7 @@ import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /**
  * 具体的写入逻辑都在这个类里面
+ * PerThread的含义是该对象一次只能被一条线程持有 (每次执行相关方法前都要确保获取该对象的锁)
  */
 final class DocumentsWriterPerThread {
 
@@ -267,7 +268,7 @@ final class DocumentsWriterPerThread {
     private final int indexVersionCreated;
     private final ReentrantLock lock = new ReentrantLock();
     /**
-     * 槽中存放的是 待删除的 docId
+     * 存储因生成索引失败 要删除的doc
      */
     private int[] deleteDocIDs = new int[0];
     private int numDeletedDocIds = 0;
@@ -312,7 +313,7 @@ final class DocumentsWriterPerThread {
         assert numDocsInRAM == 0 : "num docs " + numDocsInRAM;
         // 每个线程会持有自己的分片对象  每个线程就是通过这个分片对象 将bufferedUpdate 同步到 deleteQueue的 globalBufferedUpdates中的
         deleteSlice = deleteQueue.newSlice();
-        // 根据段的版本号  创建段的描述信息
+        // 根据段的版本号  创建段的描述信息   当该对象开始刷盘时 会将信息写入到segmentInfo中   一旦PerThread对象完成刷盘后 就可以被丢弃了
         segmentInfo = new SegmentInfo(directoryOrig, Version.LATEST, Version.LATEST, segmentName, -1, false, codec, Collections.emptyMap(), StringHelper.randomId(), Collections.emptyMap(), indexWriterConfig.getIndexSort());
         assert numDocsInRAM == 0;
         if (INFO_VERBOSE && infoStream.isEnabled("DWPT")) {
@@ -388,7 +389,7 @@ final class DocumentsWriterPerThread {
                     reserveOneDoc();
                     // 通过状态对象记录此时doc的信息
                     docState.doc = doc;
-                    // TODO 从这里可以推断 每次存储在内存中的docs id以0为起点   一旦刷盘后 numDocsInRAM变成0 之后写入的docId 又是从0开始
+                    // 从这里可以推断 每次存储在内存中的docs id以0为起点   一旦刷盘后 该perThread被丢弃
                     docState.docID = numDocsInRAM;
                     try {
                         // 开始处理当前doc 主要流程就是遍历doc下所有field  将field.value通过分词器拆解后 将term的position/offset/payload/freq等信息写入到writer中
@@ -406,7 +407,7 @@ final class DocumentsWriterPerThread {
                 if (!allDocsIndexed && !aborted) {
                     // the iterator threw an exception that is not aborting
                     // go and mark all docs from this block as deleted
-                    // 将本次添加的部分doc 全部删除
+                    // 当生成索引失败时 将本次处理的所有doc标记成待删除
                     deleteLastDocs(numDocsInRAM - docsInRamBefore);
                 }
                 // 清空当前的  doc
@@ -461,15 +462,16 @@ final class DocumentsWriterPerThread {
         return seqNo;
     }
 
-    // This method marks the last N docs as deleted. This is used
-    // in the case of a non-aborting exception. There are several cases
-    // where we fail a document ie. due to an exception during analysis
-    // that causes the doc to be rejected but won't cause the DWPT to be
-    // stale nor the entire IW to abort and shutdown. In such a case
-    // we only mark these docs as deleted and turn it into a livedocs
-    // during flush
-    // 删除最后的几个 doc  一般是在生成索引  部分成功部分失败时  选择将成功的部分删除
-    // 这里没有直接执行 IO 操作 看来IO 操作会集中在某一时机触发  这也是为了提高效率  将松散的IO 操作尽可能的整合
+    /**
+     * This method marks the last N docs as deleted. This is used
+     * in the case of a non-aborting exception. There are several cases
+     * where we fail a document ie. due to an exception during analysis
+     * that causes the doc to be rejected but won't cause the DWPT to be
+     * stale nor the entire IW to abort and shutdown. In such a case
+     * we only mark these docs as deleted and turn it into a livedocs
+     * during flush
+     * @param docCount 从后往前要删除多少doc
+     */
     private void deleteLastDocs(int docCount) {
         int from = numDocsInRAM - docCount;
         int to = numDocsInRAM;
@@ -522,30 +524,35 @@ final class DocumentsWriterPerThread {
 
     /**
      * Flush all pending docs to a new segment
-     * 将所有待刷盘的 对象进行刷盘
+     * 将此时内存中维护的doc索引数据写入到磁盘中
      * @param flushNotifications   IndexWriter 会监听刷盘状态
      */
     FlushedSegment flush(DocumentsWriter.FlushNotifications flushNotifications) throws IOException {
         assert flushPending.get() == Boolean.TRUE;
         assert numDocsInRAM > 0;
         assert deleteSlice.isEmpty() : "all deletes must be applied in prepareFlush";
+        // 设置此时段内维护的doc总数   numDocsInRAM 包含了本次失败的doc
         segmentInfo.setMaxDoc(numDocsInRAM);
-        // 可以看作一个简单的 bean 对象
+        // 生成描述本次刷盘信息的对象
         final SegmentWriteState flushState = new SegmentWriteState(infoStream, directory, segmentInfo, fieldInfos.finish(),
                 pendingUpdates, new IOContext(new FlushInfo(numDocsInRAM, bytesUsed())));
+
+        // 计算此时占用了多少内存
         final double startMBUsed = bytesUsed() / 1024. / 1024.;
 
         // Apply delete-by-docID now (delete-byDocID only
         // happens when an exception is hit processing that
         // doc, eg if analyzer has some problem w/ the text):
-        // 代表有部分 doc 需要被删除
+        // 代表某些doc生成索引失败  这些doc不会被写入到索引文件中
         if (numDeletedDocIds > 0) {
+            // 先根据最大值创建位图对象 然后将写入失败的doc 从位图中去除
             flushState.liveDocs = new FixedBitSet(numDocsInRAM);
             // 初始状态 将所有位设置成1
             flushState.liveDocs.set(0, numDocsInRAM);
             for (int i = 0; i < numDeletedDocIds; i++) {
                 flushState.liveDocs.clear(deleteDocIDs[i]);
             }
+            // 记录本次生成索引失败的 doc数量
             flushState.delCountOnFlush = numDeletedDocIds;
             bytesUsed.addAndGet(-(deleteDocIDs.length * Integer.SIZE));
             deleteDocIDs = null;
@@ -559,6 +566,7 @@ final class DocumentsWriterPerThread {
             return null;
         }
 
+        // 记录刷盘的起始时间
         long t0 = System.nanoTime();
 
         if (infoStream.isEnabled("DWPT")) {
@@ -568,7 +576,7 @@ final class DocumentsWriterPerThread {
         try {
             // 对应匹配软删除域的所有doc
             DocIdSetIterator softDeletedDocs;
-            // 如果某个字段打算采用软删除
+            // TODO 先忽略软删除
             if (indexWriterConfig.getSoftDeletesField() != null) {
                 softDeletedDocs = consumer.getHasDocValues(indexWriterConfig.getSoftDeletesField());
             } else {

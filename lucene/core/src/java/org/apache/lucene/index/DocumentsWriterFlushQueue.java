@@ -89,7 +89,7 @@ final class DocumentsWriterFlushQueue {
     boolean success = false;
     try {
       // prepare flush freezes the global deletes - do in synced block!
-      // FlushTicket  还携带了 本次刷盘同时会删除/更新的doc   主要体现在 FrozenBufferedUpdates 这个类中
+      // 将GlobalSlice采集到的所有删除/更新信息抽取到一个 BufferedUpdate对象中
       final FlushTicket ticket = new FlushTicket(dwpt.prepareFlush(), true);
       queue.add(ticket);
       success = true;

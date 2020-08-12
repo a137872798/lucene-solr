@@ -41,6 +41,10 @@ final class Lucene80NormsConsumer extends NormsConsumer {
    * 抽取标准因子后 写入到这2个输出流中   这2个输出流 底层对接2个索引文件
    */
   IndexOutput data, meta;
+
+  /**
+   * 代表本次段文件最大的docId  但是doc数量不一定相同 因为在解析doc生成索引数据的过程中可能有部分数据失败  那么那些数据不会写入到索引文件中
+   */
   final int maxDoc;
 
   /**
@@ -55,16 +59,16 @@ final class Lucene80NormsConsumer extends NormsConsumer {
   Lucene80NormsConsumer(SegmentWriteState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
     boolean success = false;
     try {
-      // segmentName_suffix.ext
+      // 生成数据文件名  .nvd
       String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
       data = state.directory.createOutput(dataName, state.context);
       // 写入头部信息
       CodecUtil.writeIndexHeader(data, dataCodec, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
-      // 看来标准因子不需要创建那2个啥  x  m 文件的
-      // 生成元数据索引文件
+      // 生成元数据索引文件  .nvm
       String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
       meta = state.directory.createOutput(metaName, state.context);
       CodecUtil.writeIndexHeader(meta, metaCodec, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+
       maxDoc = state.segmentInfo.maxDoc();
       success = true;
     } finally {
@@ -98,13 +102,14 @@ final class Lucene80NormsConsumer extends NormsConsumer {
   }
 
   /**
-   *
+   * 写入某个field的标准因子数据
    * @param field field information  代表该标准因子是属于哪个 field的
    * @param normsProducer NormsProducer of the numeric norm values  该field绑定的所有包含标准因子的 doc
    * @throws IOException
    */
   @Override
   public void addNormsField(FieldInfo field, NormsProducer normsProducer) throws IOException {
+    // 获取该field的标准因子
     NumericDocValues values = normsProducer.getNorms(field);
     // 记录总计有多少doc 包含标准因子
     int numDocsWithValue = 0;
@@ -119,30 +124,29 @@ final class Lucene80NormsConsumer extends NormsConsumer {
     }
     assert numDocsWithValue <= maxDoc;
 
-    // 标明之后的数据是针对 fieldNum 为多少的  field
+    // 标明这段标准因子是针对 fieldNum为多少的field
     meta.writeInt(field.number);
 
     // 不存在标准因子
     if (numDocsWithValue == 0) {
       // 写入特殊值
-      meta.writeLong(-2); // docsWithFieldOffset
+      meta.writeLong(-2); // docsWithFieldOffset        对应data文件该field标准因子数据的起始偏移量
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
-    // -1 代表doc是紧凑存储的 并且没有doc被删除 这样直接写入数据就好
+    // -1 代表所有doc 都是成功写入的
     } else if (numDocsWithValue == maxDoc) {
-      meta.writeLong(-1); // docsWithFieldOffset
+      meta.writeLong(-1); // docsWithFieldOffset           对应data文件该field标准因子数据的起始偏移量
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
     } else {
-      // 需要借助 disi 迭代docId  下面写入的都是元数据信息 还没有涉及到data数据
-      // 获取当前的文件偏移量
+      // 因为 doc不是连续存储的 在doc的量比较大的时候  为了避免浪费太多空间使用了特殊的数据结构存储
       long offset = data.getFilePointer();
       // 写入文件偏移量
       meta.writeLong(offset); // docsWithFieldOffset
-      // 某个域对应的 标准因子 实际上是关联多个doc的  重新生成迭代器 以便重新遍历数据
       values = normsProducer.getNorms(field);
+      // 按照此时有效的doc构建跳跃结构
       final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
       meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength
       meta.writeShort(jumpTableEntryCount);

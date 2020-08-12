@@ -57,11 +57,13 @@ public class FieldInfos implements Iterable<FieldInfo> {
     /**
      * used only by fieldInfo(int)
      * fieldNum -> fieldInfo
+     * 以fieldNum作为数组下标
      */
     private final FieldInfo[] byNumber;
 
     /**
      * fieldName -> fieldInfo
+     * 以 fieldName 为key 查询field信息
      */
     private final HashMap<String, FieldInfo> byName = new HashMap<>();
     private final Collection<FieldInfo> values; // for an unmodifiable iterator
@@ -82,16 +84,18 @@ public class FieldInfos implements Iterable<FieldInfo> {
         String softDeletesField = null;
 
         int size = 0; // number of elements in byNumberTemp, number of used array slots
+        // 以num作为下标存储 FieldInfo
         FieldInfo[] byNumberTemp = new FieldInfo[10]; // initial array capacity of 10
         for (FieldInfo info : infos) {
             if (info.number < 0) {
                 throw new IllegalArgumentException("illegal field number: " + info.number + " for field " + info.name);
             }
-            // num 在某个段下应该是自增的
+            // 通过num来确定最终要创建的 数组大小
             size = info.number >= size ? info.number + 1 : size;
             if (info.number >= byNumberTemp.length) { //grow array
                 byNumberTemp = ArrayUtil.grow(byNumberTemp, info.number + 1);
             }
+            // 确保每个field的num不重复
             FieldInfo previous = byNumberTemp[info.number];
             if (previous != null) {
                 throw new IllegalArgumentException("duplicate field numbers: " + previous.name + " and " + info.name + " have: " + info.number);

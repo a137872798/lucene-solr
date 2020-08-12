@@ -83,13 +83,15 @@ class NormValuesWriter {
 
   /**
    * 将标准因子的信息写入到 索引文件中
-   * @param state
-   * @param sortMap
-   * @param normsConsumer
+   * @param state  描述本次刷盘的信息
+   * @param sortMap  如果中途field被重新排序过了 通过该对象映射顺序
+   * @param normsConsumer   实际上就是写入索引文件的对象
    * @throws IOException
    */
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, NormsConsumer normsConsumer) throws IOException {
+    // 将之前存储的所有field信息 以压缩格式存储
     final PackedLongValues values = pending.build();
+    // TODO 先忽略排序   这个leaf指代的是通过跳跃表检索到的某个fst索引吗???
     final SortingLeafReader.CachedNumericDVs sorted;
     // 代表根据 docValue 做了排序
     if (sortMap != null) {
@@ -100,9 +102,10 @@ class NormValuesWriter {
     }
     // 设置某个field 有关的标准因子信息
     normsConsumer.addNormsField(fieldInfo,   // 存储了field的详细信息
+            // 这里自定义了一个 通过传入field获取标准因子的对象 实际上就是读取 values内的数据
                                 new NormsProducer() {
                                   @Override
-                                  public NumericDocValues getNorms(FieldInfo fieldInfo2) {
+                                  public NumericDocValues getNorms(FieldInfo fieldInfo) {
                                    if (fieldInfo != NormValuesWriter.this.fieldInfo) {
                                      throw new IllegalArgumentException("wrong fieldInfo");
                                    }
@@ -132,6 +135,9 @@ class NormValuesWriter {
   // TODO: norms should only visit docs that had a field indexed!!
   
   // iterates over the values we have in ram
+  /**
+   * 开放了遍历内部Num类型数据的api
+   */
   private static class BufferedNorms extends NumericDocValues {
     final PackedLongValues.Iterator iter;
     final DocIdSetIterator docsWithField;
@@ -142,6 +148,10 @@ class NormValuesWriter {
       this.docsWithField = docsWithFields;
     }
 
+    /**
+     * 返回当前位图指向的docId
+     * @return
+     */
     @Override
     public int docID() {
       return docsWithField.docID();
@@ -151,6 +161,7 @@ class NormValuesWriter {
     public int nextDoc() throws IOException {
       int docID = docsWithField.nextDoc();
       if (docID != NO_MORE_DOCS) {
+        // 切换doc的同时 读取下一个field的标准因子
         value = iter.next();
       }
       return docID;

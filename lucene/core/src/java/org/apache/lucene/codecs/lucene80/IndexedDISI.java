@@ -110,19 +110,22 @@ final class IndexedDISI extends DocIdSetIterator {
 
 
     /**
-     * @param block          本批数据写入的block
+     * 当此时的docId 切换到下一个block时 需要将之前的数据写入到 文件中
+     * @param block          代表block的下标
      * @param buffer         存储数据的位图对象  长度固定为 65535  此时位图已经存储了划分到该block下的所有doc (只取低16位)
      * @param cardinality    当前block中总计写入了多少数据
      * @param denseRankPower rank因子对象  范围在 7~15之内 默认为9
-     * @param out            数据写入对象
+     * @param out            数据将会持久化到该文件中
      * @throws IOException
      */
     private static void flush(
             int block, FixedBitSet buffer, int cardinality, byte denseRankPower, IndexOutput out) throws IOException {
         assert block >= 0 && block < 65536;
+
+        // 写入此时是第几个block
         out.writeShort((short) block);
         assert cardinality > 0 && cardinality <= 65536;
-        // 这里写入的数据量 -1
+        // !!! 注意这里写入的值 -1了
         out.writeShort((short) (cardinality - 1));
         // 这个是参考那个稀疏视图的实现 也就是对数据进行分级
         // 本次写入的数据超过了 某个阈值 可以采用分块存储的方式
@@ -209,12 +212,12 @@ final class IndexedDISI extends DocIdSetIterator {
      * The caller must keep track of the number of jump-table entries (returned by this method) as well as the
      * denseRankPower and provide them when constructing an IndexedDISI for reading.
      *
-     * @param it             the document IDs.   内部包含本次相关的所有docId  (仅迭代hasValue的doc)
-     * @param out            destination for the blocks.    会将结果写入到该输出流
+     * @param it             the document IDs.                                                                                      迭代本次所有docId   当某次要刷盘的doc索引文件中 有很多doc写入失败 那么docId必然是不连续的 这时就使用跳跃结构来节省空间
+     * @param out            destination for the blocks.                                                                            存储结果的输出流
      * @param denseRankPower for {@link Method#DENSE} blocks, a rank will be written every {@code 2^denseRankPower} docIDs.
      *                       Values &lt; 7 (every 128 docIDs) or &gt; 15 (every 32768 docIDs) disables DENSE rank.
      *                       Recommended values are 8-12: Every 256-4096 docIDs or 4-64 longs.
-     *                       {@link #DEFAULT_DENSE_RANK_POWER} is 9: Every 512 docIDs.     一种因子 用来确定某个block下存储多少docId  一般不推荐太大或太小 (小于7大于15)  默认值为9
+     *                       {@link #DEFAULT_DENSE_RANK_POWER} is 9: Every 512 docIDs.                                              一种因子 用来确定某个block下存储多少docId  一般不推荐太大或太小 (小于7大于15)  默认值为9
      *                       This should be stored in meta and used when creating an instance of IndexedDISI.
      * @return the number of jump-table entries following the blocks, -1 for no entries.
      * This should be stored in meta and used when creating an instance of IndexedDISI.
@@ -229,32 +232,37 @@ final class IndexedDISI extends DocIdSetIterator {
         }
         // 记录所有block 总计存储了多少数据
         int totalCardinality = 0;
-        // 代表当前块下已经存储了多少值
+        // 在切换到下一个块之前已经写入了多少数据了
         int blockCardinality = 0;
         // 65535/64 = 1024 也就是该位图由1024个long组成
         final FixedBitSet buffer = new FixedBitSet(1 << 16);
+
+        // 如果连续每2个下标读取的值是一样的 就代表这些数据在同一个block中 而发生改变前（最后一个数组下标-1）/2 就是block的下标
         int[] jumps = new int[ArrayUtil.oversize(1, Integer.BYTES * 2)];
+
+        // 记录上一个值被划分到哪个block
         int prevBlock = -1;
         int jumpBlockIndex = 0;
 
-        // 开始遍历每个 hasValue的 doc
+        // 遍历所有docId  一般会进入到该方法 那么docId 一定不是连续的
         for (int doc = it.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = it.nextDoc()) {
-            // 每个block的大小是 2^16
+            // 每个block的大小65535
             final int block = doc >>> 16;
-            // 代表发生了 block的切换
+            // 代表上一个block有效 并且本次的值被划分到与上次不同的block
             if (prevBlock != -1 && block != prevBlock) {
                 // Track offset+index from previous block up to current
-                // 这个 jumps 内维护了 offset 和 index 信息
+                // 将block相关信息写入到 jumps中
                 jumps = addJumps(jumps, out.getFilePointer() - origo, totalCardinality, jumpBlockIndex, prevBlock + 1);
                 jumpBlockIndex = prevBlock + 1;
-                // Flush block  将位图的信息写入到out中
+                // Flush block  每当切换一个block时 将之前的数据刷盘
                 flush(prevBlock, buffer, blockCardinality, denseRankPower, out);
                 // Reset for next block
+                // 清空相关数据
                 buffer.clear(0, buffer.length());
                 totalCardinality += blockCardinality;
                 blockCardinality = 0;
             }
-            // 同属于一个block的情况  继续标记位图
+            // 仅保留最后 16位
             buffer.set(doc & 0xFFFF);
             blockCardinality++;
             prevBlock = block;
@@ -290,10 +298,10 @@ final class IndexedDISI extends DocIdSetIterator {
      * 构建一个 jumpTableEntry对象 并存储到 data文件中
      *
      * @param jumps      存储相关信息的容器
-     * @param offset     此次要写入数据 距离data文件起始位置的偏移量
-     * @param index      此时总计写入了多少doc
-     * @param startBlock 本批数据存储在哪个block
-     * @param endBlock   本批数据写入的block 对应的下一个block
+     * @param offset     距离调用writeBitSet时 data文件起始位置的偏移量
+     * @param index      总计写入了多少docId
+     * @param startBlock 连接到下标为多少的 block
+     * @param endBlock   下一个block
      * @return
      */
     private static int[] addJumps(int[] jumps, long offset, int index, int startBlock, int endBlock) {

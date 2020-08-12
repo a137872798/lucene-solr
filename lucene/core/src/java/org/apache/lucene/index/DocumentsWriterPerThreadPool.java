@@ -75,6 +75,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
 
   /**
    * 调用该方法后会增加一个计数器  在该计数值归零之前 不能成功调用 newWriter方法
+   * 一般是当触发 fullFlush时 设置
    */
   synchronized void lockNewWriters() {
     // this is similar to a semaphore - we need to acquire all permits ie. takenWriterPermits must be == 0
@@ -169,18 +170,20 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
    * Filters all DWPTs the given predicate applies to and that can be checked out of the pool via
    * {@link #checkout(DocumentsWriterPerThread)}. All DWPTs returned from this method are already locked
    * and {@link #isRegistered(DocumentsWriterPerThread)} will return <code>true</code> for all returned DWPTs
-   * 将满足条件的对象上锁
+   * 获取满足条件的 PerThread 对象
    */
   List<DocumentsWriterPerThread> filterAndLock(Predicate<DocumentsWriterPerThread> predicate) {
     List<DocumentsWriterPerThread> list = new ArrayList<>();
     for (DocumentsWriterPerThread perThread : this) {
       if (predicate.test(perThread)) {
+        // 如果此时有某个线程还在使用的话 这里是会阻塞住的  因为调用该方法的时机一般就是 prepareCommit 会阻塞直到所有线程写内存的动作结束后 再将所有数据刷盘
         perThread.lock();
         if (isRegistered(perThread)) {
           list.add(perThread);
         } else {
           // somebody else has taken this DWPT out of the pool.
           // unlock and let it go
+          // TODO 某些线程可能在写完后 就从 dwpt中移除了 推测是因为这些线程在写入索引结束后 因为满足刷盘条件而自动刷盘了  所以不需要被 fullFlush处理
           perThread.unlock();
         }
       }

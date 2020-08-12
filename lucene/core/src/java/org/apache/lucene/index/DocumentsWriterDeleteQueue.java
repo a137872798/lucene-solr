@@ -68,7 +68,7 @@ import org.apache.lucene.util.InfoStream;
  * updated its delete slice which ensures the consistency of the update. If the
  * update fails before the DeleteSlice could have been updated the deleteTerm
  * will also not be added to its private deletes neither to the global deletes.
- * 存放已经被删除的元素   所有 WriterPerThread 对象都会持有该对象 他会从各个thread中收集doc的更新/删除动作
+ * 队列在全局范围内会接收各个分片写入的 node
  */
 final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
@@ -105,6 +105,9 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
 
     private final InfoStream infoStream;
 
+    /**
+     * 该值只有在调用 advance 时修改
+     */
     private volatile long maxSeqNo = Long.MAX_VALUE;
 
     private final long startSeqNo;
@@ -720,10 +723,12 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      * @return a new queue as a successor of this queue.
      */
     synchronized DocumentsWriterDeleteQueue advanceQueue(int maxNumPendingOps) {
+        // 可以看出该方法只能调用一次
         if (advanced) {
             throw new IllegalStateException("queue was already advanced");
         }
         advanced = true;
+        // 预分配一个编号
         long seqNo = getLastSequenceNumber() + maxNumPendingOps + 1;
         maxSeqNo = seqNo;
         return new DocumentsWriterDeleteQueue(infoStream, generation + 1, seqNo + 1,
