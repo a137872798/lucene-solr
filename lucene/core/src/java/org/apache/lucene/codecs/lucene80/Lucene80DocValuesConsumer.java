@@ -112,12 +112,20 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
   }
 
+  /**
+   * 存储某个field在所有doc中的  数字类型的值
+   * @param field field information
+   * @param valuesProducer Numeric values to write.
+   * @throws IOException
+   */
   @Override
   public void addNumericField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
+    // 写入 fieldNum 以及 docValue 类型
     meta.writeInt(field.number);
     meta.writeByte(Lucene80DocValuesFormat.NUMERIC);
 
     writeValues(field, new EmptyDocValuesProducer() {
+      // 这里虽然又包装了一层 不过可以看作是普通的 NumericDocValues   并且在没有设置 sort时 内部的docValue也没有排序 还是按照docId的顺序
       @Override
       public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
         return DocValues.singleton(valuesProducer.getNumeric(field));
@@ -125,6 +133,9 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     });
   }
 
+  /**
+   * 该对象记录了所有写入的值中的最大值 最小值 等
+   */
   private static class MinMaxTracker {
     long min, max, numValues, spaceInBits;
 
@@ -140,6 +151,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
 
     /** Accumulate a new value. */
+    // 尝试更新 min/max
     void update(long v) {
       min = Math.min(min, v);
       max = Math.max(max, v);
@@ -149,6 +161,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     /** Update the required space. */
     void finish() {
       if (max > min) {
+        // 计算当前block下按照差值存储需要多少额外的空间
         spaceInBits += DirectWriter.unsignedBitsRequired(max - min) * numValues;
       }
     }
@@ -160,34 +173,52 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
   }
 
+  /**
+   * 将 docValue的值写入到索引文件中
+   * @param field
+   * @param valuesProducer
+   * @return
+   * @throws IOException
+   */
   private long[] writeValues(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
+    // 获取已经完成排序的 所有docValue
     SortedNumericDocValues values = valuesProducer.getSortedNumeric(field);
     int numDocsWithValue = 0;
     MinMaxTracker minMax = new MinMaxTracker();
     MinMaxTracker blockMinMax = new MinMaxTracker();
     long gcd = 0;
     Set<Long> uniqueValues = new HashSet<>();
+    // 挨个处理每个 docValue
     for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
+      // 代表SortedNumericDocValues 内部包含了多少 NumericDocValues 因为它是一个组合对象
+      // 实际上一般传入的是 SingletonSortedNumericDocValues  也就是count总是1
       for (int i = 0, count = values.docValueCount(); i < count; ++i) {
         long v = values.nextValue();
 
         if (gcd != 1) {
+          // 这种时候 计算容易发生溢出  所以不采用 gcd计算
           if (v < Long.MIN_VALUE / 2 || v > Long.MAX_VALUE / 2) {
             // in that case v - minValue might overflow and make the GCD computation return
             // wrong results. Since these extreme values are unlikely, we just discard
             // GCD computation for them
             gcd = 1;
+            // 要确保此前至少有一个数据
           } else if (minMax.numValues != 0) { // minValue needs to be set first
+            // 计算最大公约数
             gcd = MathUtil.gcd(gcd, v - minMax.min);
           }
         }
 
+        // 记录所有docValue中的 min/max
         minMax.update(v);
+        // 记录每个block下的 min/max
         blockMinMax.update(v);
+        // 每当写入的值超过了 一个block的大小 就切换成下一个block
         if (blockMinMax.numValues == NUMERIC_BLOCK_SIZE) {
           blockMinMax.nextBlock();
         }
 
+        // 当不同的值超过 256个时 清除set
         if (uniqueValues != null
             && uniqueValues.add(v)
             && uniqueValues.size() > 256) {
@@ -195,9 +226,11 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         }
       }
 
+      // 累加出现的总数
       numDocsWithValue++;
     }
 
+    // 计算 存储差值需要的空间
     minMax.finish();
     blockMinMax.finish();
 
@@ -206,17 +239,20 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     final long max = minMax.max;
     assert blockMinMax.spaceInBits <= minMax.spaceInBits;
 
+    // 代表该field 没有出现在任何doc中
     if (numDocsWithValue == 0) {              // meta[-2, 0]: No documents with values
       meta.writeLong(-2); // docsWithFieldOffset
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1);   // denseRankPower
+    // 代表所有doc都有值
     } else if (numDocsWithValue == maxDoc) {  // meta[-1, 0]: All documents has values
       meta.writeLong(-1); // docsWithFieldOffset
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1);   // denseRankPower
     } else {                                  // meta[data.offset, data.length]: IndexedDISI structure for documents with values
+      // 部分doc有值 使用disi结构存储离散的 docId
       long offset = data.getFilePointer();
       meta.writeLong(offset);// docsWithFieldOffset
       values = valuesProducer.getSortedNumeric(field);
@@ -226,14 +262,17 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
     }
 
+    // 写入docValue总数
     meta.writeLong(numValues);
     final int numBitsPerValue;
     boolean doBlocks = false;
     Map<Long, Integer> encode = null;
+    // 代表所有值都是一样的
     if (min >= max) {                         // meta[-1]: All values are 0
       numBitsPerValue = 0;
       meta.writeInt(-1); // tablesize
     } else {
+      // 代表一共出现的 不重复的 docValue值数量不超过 256  TODO 忽略 就当作简单的存储吧
       if (uniqueValues != null
           && uniqueValues.size() > 1
           && DirectWriter.unsignedBitsRequired(uniqueValues.size() - 1) < DirectWriter.unsignedBitsRequired((max - min) / gcd)) {
@@ -383,7 +422,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     final int[] docLengths = new int[Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK]; 
     byte[] block = BytesRef.EMPTY_BYTES;
     /**
-     * 记录总计触发了多少次 flushData   或者说某次大流程中总共刷盘了多少次
+     * 记录总计触发了多少次 flushData   或者说某次大流程中总共刷盘了多少次  又或者代表总计写入了多少block
      */
     int totalChunks = 0;
     /**
@@ -403,7 +442,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     
     
     public CompressedBinaryBlockWriter() throws IOException {
-      // 创建临时文件
+      // 创建临时文件  每次都记录 2个block之间写入了多少数据
       tempBinaryOffsets = state.directory.createTempOutput(state.segmentInfo.name, "binary_pointers", state.context);
       boolean success = false;
       try {
@@ -424,10 +463,13 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
      * @throws IOException
      */
     void addDoc(int doc, BytesRef v) throws IOException {
+      // 设置对应的长度
       docLengths[numDocsInCurrentBlock] = v.length;
+      // 存储当前block下所有docValue的容器
       block = ArrayUtil.grow(block, uncompressedBlockLength + v.length);
       System.arraycopy(v.bytes, v.offset, block, uncompressedBlockLength, v.length);
       uncompressedBlockLength += v.length;
+      // 记录当前block下已经存储了多少 doc
       numDocsInCurrentBlock++;
       // 当满足一个刷盘大小时 才进行刷盘 (类似批处理的思路)  这里是每当添加32个docValue时 强制刷盘
       if (numDocsInCurrentBlock == Lucene80DocValuesFormat.BINARY_DOCS_PER_COMPRESSED_BLOCK) {
@@ -436,7 +478,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
 
     /**
-     * 每当写入多少 doc的关联数据时  将之前的数据刷盘  为什么需要临时文件呢  应该是这样 临时文件还存在代表整个操作还没有完成 这时 data文件是不完整的
+     * 当某个block 被填满时 将之前的数据采用压缩算法处理后写入到 out中
      * @throws IOException
      */
     private void flushData() throws IOException {
@@ -490,22 +532,23 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
 
     /**
-     * 代表有关 docValue的数据已经全部刷盘完毕
+     * 代表有关 docValue的数据以及写入到 meta/data文件中了
      * @throws IOException
      */
     void writeMetaData() throws IOException {
       if (totalChunks == 0) {
         return;
       }
-      
+
+      // 记录此时data文件写入docValue后的位置
       long startDMW = data.getFilePointer();
       // 这里是记录 每次flush的详情的
 
       // 记录data 文件的结尾偏移量
       meta.writeLong(startDMW);
-      // 总计在 data文件中刷盘了多少次
+      // 记录总计生成了多少 block
       meta.writeVInt(totalChunks);
-      // 格式信息
+      // 每个block 对应的 docValue 数量
       meta.writeVInt(Lucene80DocValuesFormat.BINARY_BLOCK_SHIFT);
       // 记录未压缩前的block块的   主要是用来还原的
       meta.writeVInt(maxUncompressedBlockLength);
@@ -544,6 +587,10 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       meta.writeLong(data.getFilePointer() - startDMW);
     }
 
+    /**
+     * 临时文件就是为了记录 处理每个block时 data文件的起始偏移量的 所以当写入完整时 临时文件就可以删除了
+     * @throws IOException
+     */
     @Override
     public void close() throws IOException {
       if (tempBinaryOffsets != null) {
@@ -555,9 +602,9 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
   }
 
   /**
-   * 存储某个 field 下的docValue (全量 如果某个DocValue未改变 写入原值 否则写入新值)
+   * 存储某个 field 下的docValue  (类型为 二进制数据)
    * @param field field information
-   * @param valuesProducer Binary values to write.    这里包含了本次最新的 docValue  (部分数据可能是之前已经写入到磁盘的)
+   * @param valuesProducer Binary values to write.
    * @throws IOException
    */
   @Override
@@ -569,30 +616,30 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     // 代表 docValue 的值类型是 二进制类型
     meta.writeByte(Lucene80DocValuesFormat.BINARY);
 
-    // 这里构建了一个 压缩对象
+    // 该 writer对象采用LZ4 压缩算法存储数据
     try (CompressedBinaryBlockWriter blockWriter = new CompressedBinaryBlockWriter()){
-      // 通过指定 field 找到关联的 docValues  (docValues具备迭代内部docValue的能力)
+      // 获取该field在所有相关doc下的value
       BinaryDocValues values = valuesProducer.getBinary(field);
-      // 获取并将当前数据文件的起始偏移量写入到元数据文件
+      // 记录此时偏移量的起点
       long start = data.getFilePointer();
       meta.writeLong(start); // dataOffset
-      // TODO docValue 对应一个doc还是什么???  一个field 为什么可以对应多个文档啊
+      // 因为不是所有的doc 都包含该field 所以需要记录 该field总计关联了多少doc  以及生成索引失败的doc 也不会算在内
       int numDocsWithField = 0;
       int minLength = Integer.MAX_VALUE;
       int maxLength = 0;
-      // 这里写入doc数据时 当超过一定长度时 会触发被动flush    nextDoc只会遍历到 hasValue == true 的doc
+      // 开始遍历该field 涉及到的所有doc
       for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
         // 随着每次读取到一个doc 增加该值
         numDocsWithField++;
+        // 对应docValue
         BytesRef v = values.binaryValue();
-        // 将 docId 以及绑定的docValue 写入到writer中  同时每满足写入32个 docValue 会触发一次被动刷盘  注意因为这里doc都是分散的
-        // 正常情况下想要找到某个docValue 只能不断读取数据 直到找到匹配的doc 那么效率会很低 所以才需要disi 作为一个索引
+        // 将数据写入到 基于 LZ4 的writer中  这样每当写满32个docValue时 会自动将数据压缩 后存入out中
         blockWriter.addDoc(doc, v);      
         int length = v.length;      
         minLength = Math.min(length, minLength);
         maxLength = Math.max(length, maxLength);
       }
-      // 主动触发 flush
+      // 将最后不足32个docValue 强制写入到out中
       blockWriter.flushData();
 
       assert numDocsWithField <= maxDoc;
@@ -611,11 +658,10 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
         meta.writeShort((short) -1); // jumpTableEntryCount     这种情况应该是 docValue本身排序就会存在规则 (连续的就容易寻找) 所以也不需要借助 jumpTable
         meta.writeByte((byte) -1);   // denseRankPower
       } else {
-        // 为分散的 docValue 建立一个索引数据 也是写入到 data文件中
+        // data记录docValue   而 meta 负责记录docId 信息  当docId 不连续时 根据情况使用 DISI结构存储
         long offset = data.getFilePointer();
         meta.writeLong(offset); // docsWithFieldOffset      写入data文件的偏移量
         values = valuesProducer.getBinary(field);
-        // 这里使用特殊的数据结构划分 doc  形成一个类似索引的结构
         final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);  //  写入 jumpTable 相关数据   默认的 rankPower 为9
         // 记录 disi数据的长度
         meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength

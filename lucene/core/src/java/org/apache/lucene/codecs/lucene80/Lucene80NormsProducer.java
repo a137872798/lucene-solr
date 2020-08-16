@@ -39,10 +39,11 @@ import static org.apache.lucene.codecs.lucene80.Lucene80NormsFormat.VERSION_STAR
 
 /**
  * Reader for {@link Lucene80NormsFormat}
- * 该对象负责读取 按特定格式存储的 标准因子信息
+ * 该对象负责读取 标准因子信息
  */
 final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   // metadata maps (just file pointers and minimal stuff)
+  // 将每个 fieldNum 对应的信息抽取出来存在 entry中
   private final Map<Integer,NormsEntry> norms = new HashMap<>();
   private final int maxDoc;
   private IndexInput data;
@@ -54,8 +55,19 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   private Map<Integer, RandomAccessInput> disiJumpTables;
   private Map<Integer, RandomAccessInput> dataInputs;
 
+  /**
+   * 初始化标准因子读取对象
+   * @param state   描述一些上下文信息的对象
+   * @param dataCodec
+   * @param dataExtension
+   * @param metaCodec
+   * @param metaExtension
+   * @throws IOException
+   */
   Lucene80NormsProducer(SegmentReadState state, String dataCodec, String dataExtension, String metaCodec, String metaExtension) throws IOException {
     maxDoc = state.segmentInfo.maxDoc();
+
+    // 根据上下文中携带的段名 找到段文件
     String metaName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, metaExtension);
     int version = -1;
 
@@ -210,8 +222,15 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
     }
   }
 
+  /**
+   * 读取元数据信息
+   * @param meta
+   * @param infos   该标准因子下 应该包含了哪些field的信息
+   * @throws IOException
+   */
   private void readFields(IndexInput meta, FieldInfos infos) throws IOException {
     for (int fieldNumber = meta.readInt(); fieldNumber != -1; fieldNumber = meta.readInt()) {
+      // 通过 num 读取对应的field 信息
       FieldInfo info = infos.fieldInfo(fieldNumber);
       if (info == null) {
         throw new CorruptIndexException("Invalid field number: " + fieldNumber, meta);
@@ -219,6 +238,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
         throw new CorruptIndexException("Invalid field: " + info.name, meta);
       }
       NormsEntry entry = new NormsEntry();
+      // 这个是描述 DISI 结构的
       entry.docsWithFieldOffset = meta.readLong();
       entry.docsWithFieldLength = meta.readLong();
       entry.jumpTableEntryCount = meta.readShort();

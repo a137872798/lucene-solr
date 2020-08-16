@@ -114,7 +114,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
     }
 
     /**
-     * 该对象负责处理 docValue
+     * 一个 DefaultIndexingChain 对应一个该对象 每次要写入某个field的数据时 创建一个新对象
      */
     private class FieldsWriter extends DocValuesConsumer {
 
@@ -124,6 +124,9 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
          */
         private final Map<String, Integer> suffixes = new HashMap<>();
 
+        /**
+         * 代表相关的段
+         */
         private final SegmentWriteState segmentWriteState;
 
         public FieldsWriter(SegmentWriteState state) {
@@ -137,6 +140,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
 
         @Override
         public void addBinaryField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
+            // 先找到 field对应的consumer 后再调用 addBinaryField
             getInstance(field).addBinaryField(field, valuesProducer);
         }
 
@@ -196,14 +200,15 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
          * @param ignoreCurrentFormat - ignore the existing format attributes.
          * @return DocValuesConsumer for the field.
          * @throws IOException if there is a low-level IO error
-         *                     docValue 以field 为单位进行存储
+         *                     通过field 找到对应的 consumer
          */
         private DocValuesConsumer getInstance(FieldInfo field, boolean ignoreCurrentFormat) throws IOException {
             DocValuesFormat format = null;
+            // TODO 这个值是什么时候设置的???
             if (field.getDocValuesGen() != -1) {
                 String formatName = null;
                 if (ignoreCurrentFormat == false) {
-                    // 如果自定义了存储格式
+                    // 查询是否设置了自定义格式
                     formatName = field.getAttribute(PER_FIELD_FORMAT_KEY);
                 }
                 // this means the field never existed in that segment, yet is applied updates
@@ -213,7 +218,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
                 }
             }
             if (format == null) {
-                // 生成 Lucene80 那个格式的索引文件
+                // 采用默认的格式
                 format = getDocValuesFormatForField(field.name);
             }
             if (format == null) {
@@ -230,6 +235,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             if (consumer == null) {
                 // First time we are seeing this format; create a new instance
 
+                // 获取后缀属性 如果存在设置到 suffix容器中
                 if (field.getDocValuesGen() != -1) {
                     String suffixAtt = null;
                     if (!ignoreCurrentFormat) {

@@ -76,7 +76,7 @@ class TermVectorsConsumer extends TermsHash {
   }
 
   /**
-   * 这里将 相关信息写入到索引中
+   * 将数据写入到索引文件中
    * @param fieldsToFlush
    * @param state
    * @param sortMap
@@ -90,6 +90,7 @@ class TermVectorsConsumer extends TermsHash {
       assert numDocs > 0;
       // At least one doc in this run had term vectors enabled
       try {
+        // 确保之前的 docData  fieldData 都已经创建
         fill(numDocs);
         assert state.segmentInfo != null;
         writer.finish(state.fieldInfos, numDocs);

@@ -79,7 +79,7 @@ import org.apache.lucene.util.bkd.BKDWriter;
  * <h2>Advanced usage</h2>
  * Custom structures can be created on top of single- or multi- dimensional basic types, on top of 
  * {@link BinaryPoint} for more flexibility, or via custom {@link Field} subclasses.
- *
+ *  代表多维度信息
  *  @lucene.experimental */
 public abstract class PointValues {
 

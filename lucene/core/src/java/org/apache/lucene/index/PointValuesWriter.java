@@ -95,8 +95,18 @@ class PointValuesWriter {
     numPoints++;
   }
 
+  /**
+   * 将之前存储的多维度信息写入到 writer中
+   * @param state
+   * @param sortMap
+   * @param writer
+   * @throws IOException
+   */
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, PointsWriter writer) throws IOException {
+
+    //
     PointValues points = new MutablePointValues() {
+      // numPoints 记录总计写入了多少值   根据写入的值生成顺序数组
       final int[] ords = new int[numPoints];
       {
         for (int i = 0; i < numPoints; ++i) {
@@ -107,11 +117,13 @@ class PointValuesWriter {
       @Override
       public void intersect(IntersectVisitor visitor) throws IOException {
         final BytesRef scratch = new BytesRef();
+        // 用于填装多个维度的数据 的数组
         final byte[] packedValue = new byte[packedBytesLength];
         for(int i=0;i<numPoints;i++) {
           getValue(i, scratch);
           assert scratch.length == packedValue.length;
           System.arraycopy(scratch.bytes, scratch.offset, packedValue, 0, packedBytesLength);
+          // 通过visitor来解析同时存储多个维度数据的 packedValue
           visitor.visit(getDocID(i), packedValue);
         }
       }
@@ -186,14 +198,18 @@ class PointValuesWriter {
     if (sortMap == null) {
       values = points;
     } else {
+      // TODO 先忽略排序的情况
       values = new MutableSortingPointValues((MutablePointValues) points, sortMap);
     }
+
+    // 该对象负责读取多维度数据
     PointsReader reader = new PointsReader() {
       @Override
       public PointValues getValues(String fieldName) {
         if (fieldName.equals(fieldInfo.name) == false) {
           throw new IllegalArgumentException("fieldName must be the same");
         }
+        // 返回的就是 MutablePointValues  它需要借助 PointVisitor 来将多维度数据解开 之前写入的 field.value 实际上是多个维度的数据整合起来
         return values;
       }
 
@@ -211,6 +227,8 @@ class PointValuesWriter {
       public void close() {
       }
     };
+
+    // TODO 这里不看bkd树的实现了 所以就当作写入成功
     writer.writeField(fieldInfo, reader);
   }
 

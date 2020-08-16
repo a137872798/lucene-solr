@@ -96,6 +96,7 @@ final class FreqProxTermsWriter extends TermsHash {
   @Override
   public void flush(Map<String,TermsHashPerField> fieldsToFlush, final SegmentWriteState state,
       Sorter.DocMap sortMap, NormsProducer norms) throws IOException {
+    // super 会调用下游 hashTerm的flush方法
     super.flush(fieldsToFlush, state, sortMap, norms);
 
     // Gather all fields that saw any postings:

@@ -24,7 +24,7 @@ import java.io.IOException;
  * <p>
  * This can be used if you want to have one multi-valued implementation
  * that works for single or multi-valued types.
- * 看来 sortedNumDocValue 应该是认为内部存在很多 NumDocValue
+ * 如果存在多个 docValue的话 会将它们的结果排序后返回 如果是单个的话 实际上跟直接调用 in 没区别
  */
 final class SingletonSortedNumericDocValues extends SortedNumericDocValues {
   private final NumericDocValues in;

@@ -135,15 +135,24 @@ class NumericDocValuesWriter extends DocValuesWriter {
     return new SortingLeafReader.CachedNumericDVs(values, docsWithField);
   }
 
+  /**
+   * 将 数字类型的  docValue 持久化到文件中
+   * @param state
+   * @param sortMap
+   * @param dvConsumer
+   * @throws IOException
+   */
   @Override
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, DocValuesConsumer dvConsumer) throws IOException {
     final PackedLongValues values;
+    // 存储所有 数字类型 docValue    finalValues 代表之前已经触发过 pending.build()了  这里就不用重复构建
     if (finalValues == null) {
       values = pending.build();
     } else {
       values = finalValues;
     }
 
+    // 先忽略排序的
     final SortingLeafReader.CachedNumericDVs sorted;
     if (sortMap != null) {
       NumericDocValues oldValues = new BufferedNumericDocValues(values, docsWithField.iterator());

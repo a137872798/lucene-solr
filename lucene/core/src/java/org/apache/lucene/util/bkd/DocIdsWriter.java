@@ -26,10 +26,19 @@ class DocIdsWriter {
 
   private DocIdsWriter() {}
 
+  /**
+   * 将docId 写入到索引文件
+   * @param docIds
+   * @param start
+   * @param count
+   * @param out
+   * @throws IOException
+   */
   static void writeDocIds(int[] docIds, int start, int count, DataOutput out) throws IOException {
     // docs can be sorted either when all docs in a block have the same value
     // or when a segment is sorted
     boolean sorted = true;
+    // 检测是否是有序的  如果已经按照 对应的值排序过了 那么docId 一般就是无序的
     for (int i = 1; i < count; ++i) {
       if (docIds[start + i - 1] > docIds[start + i]) {
         sorted = false;
@@ -37,8 +46,10 @@ class DocIdsWriter {
       }
     }
     if (sorted) {
+      // 写入0 代表是有序的
       out.writeByte((byte) 0);
       int previous = 0;
+      // 差值存储
       for (int i = 0; i < count; ++i) {
         int doc = docIds[start + i];
         out.writeVInt(doc - previous);
@@ -49,13 +60,17 @@ class DocIdsWriter {
       for (int i = 0; i < count; ++i) {
         max |= Integer.toUnsignedLong(docIds[start + i]);
       }
+      // 找到最大值
       if (max <= 0xffffff) {
+        // 代表最多只需要 24位表示
         out.writeByte((byte) 24);
         for (int i = 0; i < count; ++i) {
+          // 分别存储 高16位 和 低8位
           out.writeShort((short) (docIds[start + i] >>> 8));
           out.writeByte((byte) docIds[start + i]);
         }
       } else {
+        // 存储全部的32位
         out.writeByte((byte) 32);
         for (int i = 0; i < count; ++i) {
           out.writeInt(docIds[start + i]);

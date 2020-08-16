@@ -126,6 +126,10 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
      * 记录每当写入一个doc下所有field数据后 该输出流的最终偏移量
      */
     private int[] endOffsets; // end offsets in bufferedDocs
+
+    /**
+     * 记录此时有多少doc 完成刷盘
+     */
     private int docBase; // doc ID at the beginning of the chunk
 
     /**
@@ -215,7 +219,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
 
     /**
-     * 当某个document下所有field的处理完后触发  只涉及到 field.value 类型等
+     * 当某个doc下所有的 field.value写入后触发
      *
      * @throws IOException
      */
@@ -337,7 +341,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
             lengths[i] = endOffsets[i] - endOffsets[i - 1];
             assert lengths[i] >= 0;
         }
-        // 代表此时BB内部的数据已经比较多了
+        // 代表此时BB内部的数据已经比较多了   照理说 只要写入到内存的doc数量超过chunkSize 就应该触发刷盘啊
         final boolean sliced = bufferedDocs.size() >= 2 * chunkSize;
         // 往索引文件中写入相关信息
         writeHeader(docBase, numBufferedDocs, numStoredFields, lengths, sliced);
@@ -346,7 +350,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         //
         // TODO: do we need to slice it since we already have the slices in the buffer? Perhaps
         // we should use max-block-bits restriction on the buffer itself, then we won't have to check it here.
-        // 这个对象内部存储的是 termValue
+        // 存储每个doc下 所有field.value的数据
         byte[] content = bufferedDocs.toArrayCopy();
         bufferedDocs.reset();
 

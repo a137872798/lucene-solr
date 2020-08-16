@@ -90,7 +90,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
    */
   private long numChunks; // number of compressed blocks written
   /**
-   * 由于调用了 finish 导致强制刷盘的docData  此时他们的数据不一定是完整的
+   * 由于调用了 finish 导致实际上内存中数据还没满足一个block的大小 却被强制写入索引文件中
    */
   private long numDirtyChunks; // number of incomplete compressed blocks written
 
@@ -491,40 +491,38 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     assert chunkDocs > 0 : chunkDocs;
 
     // write the index file
-    // 这里记录了一些临时信息
+    // 记录本次刷盘了多少doc的数据 以及词向量文件此时的偏移量
     indexWriter.writeIndex(chunkDocs, vectorsStream.getFilePointer());
 
     // 代表之前已经有多少 doc flush了
     final int docBase = numDocs - chunkDocs;
-    // 这里将数据写入到索引文件  先存储 之前有多少doc 写入 之后存储 本次要写入的doc
+    // 这里将数据写入到索引文件  存储之前有多少doc ,本次要写入的doc
     vectorsStream.writeVInt(docBase);
     vectorsStream.writeVInt(chunkDocs);
 
     // total number of fields of the chunk
-    // 读取本次要写入的所有 doc 对应的 fieldNum
+    // 将本次处理的每个doc 相关的 field数写入 out 中
     final int totalFields = flushNumFields(chunkDocs);
 
-    // 开始写入域有关的信息
+    // 将field 下面的term信息写入索引文件
     if (totalFields > 0) {
       // unique field numbers (sorted)
-      // 将所有field 按照 fieldNum 去重并排序后 写入到 vectorsStream  并返回
+      // 为 field 去重  因为每个doc下可以设置相同的field  返回的数组代表 已去重 已排序的fieldNum
       final int[] fieldNums = flushFieldNums();
       // offsets in the array of unique field numbers
-      // 这里写入 通过 field号码 找到 field数量的数组的下标
+      // 将所有fieldNum 通过 fieldNums容器进行映射后的下标 存储到out中
       flushFields(totalFields, fieldNums);
       // flags (does the field have positions, offsets, payloads?)
       // 写入 flag 信息
       flushFlags(totalFields, fieldNums);
       // number of terms of each field
-      // 写入每个  termNum 注意跟上面的 flushFieldNums 是不同的
+      // 将本批doc下每个field下有多少 term 数写入
       flushNumTerms(totalFields);
       // prefix and suffix lengths for each field
-      // 记录每个 term的长度
+      // 记录每个 term与上一个term的共享前缀长度 以及本次的后缀长度
       flushTermLengths();
       // term freqs - 1 (because termFreq is always >=1) for each term
-
-
-      // 存储 term相关的信息 freq/position/offset/payload
+      // 存储每个词的频率信息 这里存储的值还额外减了1  因为 freq总是>=1
       flushTermFreqs();
       // positions for all terms, when enabled
       flushPositions();
@@ -564,6 +562,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       vectorsStream.writeVInt(numFields);
       return numFields;
     } else {
+      // writer 会将写入的数据 以增量形式 写入到 out中
       writer.reset(vectorsStream);
       int totalFields = 0;
       for (DocData dd : pendingDocs) {
@@ -577,25 +576,27 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
   /** Returns a sorted array containing unique field numbers */
   /**
-   * 将 fieldNum 按从小到大的顺序存储到 int[] 中
+   * 将 所有doc下的 field 进行去重
    * @return
    * @throws IOException
    */
   private int[] flushFieldNums() throws IOException {
-    // 这里要去重 因为 多个doc 可以存储 相同fieldNum 的 field
     SortedSet<Integer> fieldNums = new TreeSet<>();
+
+    // 将这些doc下所有的fieldNum 通过set去重
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         fieldNums.add(fd.fieldNum);
       }
     }
 
+    // 获取去重后的field数量
     final int numDistinctFields = fieldNums.size();
     assert numDistinctFields > 0;
-    // 最大的数占用的位肯定最多
+    // 因为treeMap 已经排序过了 所以最后一个fieldNum肯定是最大的  这里获取最大的fieldNum需要多少位来表示
     final int bitsRequired = PackedInts.bitsRequired(fieldNums.last());
 
-    // 这里是这样 首先 bitsRequired 最大为 31 也就是2的5次  如果field 本身的值比较小 那么可以将他们压缩成一个byte   如果field的值 超过了剩余的3位能表示的值 8
+    // 这里是这样 首先 bitsRequired 最大为 31 也就是2的5次  如果numDistinctFields本身的值比较小 那么可以将他们压缩成一个byte   如果numDistinctFields的值 超过了剩余的3位能表示的值 8
     // 那么只能额外使用一个VInt  来记录 field真正的数量
     // token值的解析 看 CompressingTermVectorsReader       final int token = vectorsStream.readByte() & 0xFF;   的逻辑
     // 7 需要3位 加上这里的  << 5 代表这个token 最多只占 8 位  并且最低位代表 每个数据使用多少 bit 来存储
@@ -603,9 +604,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     vectorsStream.writeByte((byte) token);
 
     if (numDistinctFields - 1 >= 0x07) {
+      // 使用一个额外的int值来记录总计存储了多少field
       vectorsStream.writeVInt(numDistinctFields - 1 - 0x07);
     }
-    // 这里将 int 值转换成 byte 值存储到vectorsStream中
+    // 使用通过基于位存储的容器 存储num
     final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, fieldNums.size(), bitsRequired, 1);
     for (Integer fieldNum : fieldNums) {
       // 这里存储的是 去重后 且  已经排序后的 field 号码
@@ -613,6 +615,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
     writer.finish();
 
+    // 将fieldNum 从小到大设置到数组中
     int[] fns = new int[fieldNums.size()];
     int i = 0;
     for (Integer key : fieldNums) {
@@ -622,15 +625,16 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * @param totalFields
-   * @param fieldNums  每次写入索引文件都是多个 doc    该数组是按照 每个 field的数量排序的  然后存储的是 fieldNum
+   * @param totalFields  本次flush涉及到的 field总数  不去重的数量
+   * @param fieldNums  对应已去重且以排序的 fieldNum
    * @throws IOException
    */
   private void flushFields(int totalFields, int[] fieldNums) throws IOException {
+    // 生成一个按位存储的对象
     final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, totalFields, PackedInts.bitsRequired(fieldNums.length - 1), 1);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
-        //  返回所在的下标 并写入
+        //  找到在数组中对应的下标 并以位的形式写入
         final int fieldNumIndex = Arrays.binarySearch(fieldNums, fd.fieldNum);
         assert fieldNumIndex >= 0;
         writer.add(fieldNumIndex);
@@ -641,25 +645,27 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
   /**
    * 这里写入 存储的索引数据携带了  选项
-   * @param totalFields
-   * @param fieldNums  按号码大小排序的数组
+   * @param totalFields   本次刷盘的所有doc对应的fieldNum总数
+   * @param fieldNums  按号码大小排序的数组  已去重
    * @throws IOException
    */
   private void flushFlags(int totalFields, int[] fieldNums) throws IOException {
     // check if fields always have the same flags
     boolean nonChangingFlags = true;
-    // 按照 fieldNums 的顺序 记录 flag 信息
+    // 为每个 fieldNum 生成flag
     int[] fieldFlags = new int[fieldNums.length];
     Arrays.fill(fieldFlags, -1);
     outer:
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
+        // 先获取在 fieldNums的下标
         final int fieldNumOff = Arrays.binarySearch(fieldNums, fd.fieldNum);
         assert fieldNumOff >= 0;
         // 代表还未设置  进行设置
         if (fieldFlags[fieldNumOff] == -1) {
+          // flags 代表该field的哪些信息会保存到索引文件中
           fieldFlags[fieldNumOff] = fd.flags;
-          // 代表在多个文档中可能会出现相同的 field  并且他们的 flag发生了变化  应该是不允许的
+          // 代表在多个文档中可能会出现相同的 field  并且他们的 flag发生了变化 (也就是后写入field时  从原本不需要存储信息到索引文件中 到后来设置了 IndexOptional != NONE)
         } else if (fieldFlags[fieldNumOff] != fd.flags) {
           nonChangingFlags = false;
           break outer;
@@ -667,11 +673,13 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       }
     }
 
+    // 校验后发现 flags前后没有发生变化
     if (nonChangingFlags) {
       // write one flag per field num
-      // 写入0 代表 相同号码的field 的 flag 是相同的
+      // 写入0代表所有field.flags前后都没有发生变化
       vectorsStream.writeVInt(0);
       final PackedInts.Writer writer = PackedInts.getWriterNoHeader(vectorsStream, PackedInts.Format.PACKED, fieldFlags.length, FLAGS_BITS, 1);
+      // 将flags 信息 按位存储   这里是按照fieldNum 从小到大的顺序
       for (int flags : fieldFlags) {
         assert flags >= 0;
         writer.add(flags);
@@ -700,6 +708,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
    */
   private void flushNumTerms(int totalFields) throws IOException {
     int maxNumTerms = 0;
+    // 先预估最大的 term需要多少位来表示
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         maxNumTerms |= fd.numTerms;
@@ -710,6 +719,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     vectorsStream.writeVInt(bitsRequired);
     final PackedInts.Writer writer = PackedInts.getWriterNoHeader(
         vectorsStream, PackedInts.Format.PACKED, totalFields, bitsRequired, 1);
+    // 将每个doc下每个field所存储的term数量写入
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         writer.add(fd.numTerms);
@@ -724,7 +734,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
    * @throws IOException
    */
   private void flushTermLengths() throws IOException {
+
+    // TODO 在写入 term前应该是已经做好排序了 在哪排序来着
     writer.reset(vectorsStream);
+    // 此前 term本身是按照共享前缀的方式写入的 这里先写入与上一个term的共享前缀长度
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         for (int i = 0; i < fd.numTerms; ++i) {
@@ -734,6 +747,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
     writer.finish();
     writer.reset(vectorsStream);
+    // 这里写入后缀长度
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         for (int i = 0; i < fd.numTerms; ++i) {
@@ -744,12 +758,16 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
   }
 
+  /**
+   * 存储每个 term的频率信息
+   * @throws IOException
+   */
   private void flushTermFreqs() throws IOException {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         for (int i = 0; i < fd.numTerms; ++i) {
-          // TODO 这里 频率减了 1
+          // !!!这里 频率减了 1
           writer.add(fd.freqs[i] - 1);
         }
       }
@@ -893,7 +911,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 代表本次的 doc 解析工作已结束   记录本次总计处理了多少doc
+   * 代表所有数据都已经处理完 写入到索引文件中
    * @param fis
    * @param numDocs
    * @throws IOException
@@ -901,8 +919,9 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   @Override
   public void finish(FieldInfos fis, int numDocs) throws IOException {
     if (!pendingDocs.isEmpty()) {
-      // 如果此时还有未刷盘的 docData 那么先处理
+      // 如果此时还有未刷盘的 docData 那么写入到索引文件中
       flush();
+      // 代表有几个block内部的数据不是满的
       numDirtyChunks++; // incomplete: we had to force this flush
     }
     // 代表出现了异常

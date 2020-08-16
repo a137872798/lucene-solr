@@ -196,7 +196,7 @@ final class DefaultIndexingChain extends DocConsumer {
         if (docState.infoStream.isEnabled("IW")) {
             docState.infoStream.message("IW", ((System.nanoTime() - t0) / 1000000) + " msec to write norms");
         }
-        // 描述段的bean 对象
+        // 该对象是描述读取segment的bean对象
         SegmentReadState readState = new SegmentReadState(state.directory, state.segmentInfo, state.fieldInfos, IOContext.READ, state.segmentSuffix);
 
         t0 = System.nanoTime();
@@ -215,15 +215,16 @@ final class DefaultIndexingChain extends DocConsumer {
 
         // it's possible all docs hit non-aborting exceptions...
         t0 = System.nanoTime();
-        // 这里对存储 field 信息的索引文件进行持久化
+        // 存储 field.value
         storedFieldsConsumer.finish(maxDoc);
+        // 将所有内存中的数据刷盘到索引文件中
         storedFieldsConsumer.flush(state, sortMap);
         if (docState.infoStream.isEnabled("IW")) {
             docState.infoStream.message("IW", ((System.nanoTime() - t0) / 1000000) + " msec to finish stored fields");
         }
 
         t0 = System.nanoTime();
-        // 将 hash桶的数据 转存到 hashMap中
+        // 将携带 term信息的 field抽取到 hashMap中
         Map<String, TermsHashPerField> fieldsToFlush = new HashMap<>();
         for (int i = 0; i < fieldHash.length; i++) {
             PerField perField = fieldHash[i];
@@ -235,16 +236,17 @@ final class DefaultIndexingChain extends DocConsumer {
             }
         }
 
+        // 如果有标准因子 就获取标准因子
         try (NormsProducer norms = readState.fieldInfos.hasNorms()
                 ? state.segmentInfo.getCodec().normsFormat().normsProducer(readState)
                 : null) {
             NormsProducer normsMergeInstance = null;
             if (norms != null) {
                 // Use the merge instance in order to reuse the same IndexInput for all terms
-                // 这里返回一个副本对象 并且标记 merging 为true
+                // 这里会创建一个副本对象
                 normsMergeInstance = norms.getMergeInstance();
             }
-            // 在这里将 有关term的数据写入到索引文件中  TODO 这里的逻辑比较复杂 还涉及到了 FST 先放着
+            // 将term信息写入到索引文件中  就是在这里利用了 FST 生成了倒排索引  还有使用了跳跃表 用于快速定位  fst
             termsHash.flush(fieldsToFlush, state, sortMap, normsMergeInstance);
         }
         if (docState.infoStream.isEnabled("IW")) {
@@ -267,6 +269,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
     /**
      * Writes all buffered points.
+     * 写入 points 信息
      */
     private void writePoints(SegmentWriteState state, Sorter.DocMap sortMap) throws IOException {
         PointsWriter pointsWriter = null;
@@ -321,18 +324,20 @@ final class DefaultIndexingChain extends DocConsumer {
         DocValuesConsumer dvConsumer = null;
         boolean success = false;
         try {
-            // 这是一个hash桶结构
+            // 获取之前解析doc时暂存在内存中的 PerField对象
             for (int i = 0; i < fieldHash.length; i++) {
                 PerField perField = fieldHash[i];
                 while (perField != null) {
-                    // 首先确保之前已经往内存中写入了 docValue(往writer对象内部的内存对象)
+                    // 只要 writer被初始化 那么 docValuesType 一定不是 NONE 详见 解析doc时的逻辑
                     if (perField.docValuesWriter != null) {
+                        // 该属性是要提前设置的
                         if (perField.fieldInfo.getDocValuesType() == DocValuesType.NONE) {
                             // BUG
                             throw new AssertionError("segment=" + state.segmentInfo + ": field=\"" + perField.fieldInfo.name + "\" has no docValues but wrote them");
                         }
                         if (dvConsumer == null) {
                             // lazy init
+                            // 初始化 写入docValue的对象
                             DocValuesFormat fmt = state.segmentInfo.getCodec().docValuesFormat();
                             dvConsumer = fmt.fieldsConsumer(state);
                         }

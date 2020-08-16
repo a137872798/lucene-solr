@@ -111,7 +111,7 @@ final class Lucene80NormsConsumer extends NormsConsumer {
   public void addNormsField(FieldInfo field, NormsProducer normsProducer) throws IOException {
     // 获取该field的标准因子
     NumericDocValues values = normsProducer.getNorms(field);
-    // 记录总计有多少doc 包含标准因子
+    // 记录总计有多少doc 包含标准因子     已经去除掉 无法正常生成索引的 doc了
     int numDocsWithValue = 0;
     // 这里维护了标准因子的 min max
     long min = Long.MAX_VALUE;
@@ -134,37 +134,42 @@ final class Lucene80NormsConsumer extends NormsConsumer {
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
-    // -1 代表所有doc 都是成功写入的
+    // -1 代表所有doc 都是成功写入的  这样它的值 刚好就与 maxDoc一致
     } else if (numDocsWithValue == maxDoc) {
       meta.writeLong(-1); // docsWithFieldOffset           对应data文件该field标准因子数据的起始偏移量
       meta.writeLong(0L); // docsWithFieldLength
       meta.writeShort((short) -1); // jumpTableEntryCount
       meta.writeByte((byte) -1); // denseRankPower
     } else {
-      // 因为 doc不是连续存储的 在doc的量比较大的时候  为了避免浪费太多空间使用了特殊的数据结构存储
+      // 当doc不是连续存储时 在doc的量比较大的时候  为了避免浪费太多空间使用了特殊的数据结构存储
       long offset = data.getFilePointer();
       // 写入文件偏移量
       meta.writeLong(offset); // docsWithFieldOffset
       values = normsProducer.getNorms(field);
       // 按照此时有效的doc构建跳跃结构
       final short jumpTableEntryCount = IndexedDISI.writeBitSet(values, data, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
+      // 写入文件的偏移量变化
       meta.writeLong(data.getFilePointer() - offset); // docsWithFieldLength
+      // 写入生成的 jump实体数量
       meta.writeShort(jumpTableEntryCount);
+      // 写入 使用的收缩因子
       meta.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
     }
 
-    // 基础值写完后 写入一个  doc数量
+    // 写入有多少doc下包含有效值
     meta.writeInt(numDocsWithValue);
-    // 获取每个值 是多少byte  如果所有值都是相同的 返回0
+    // 检测使用哪种单位 可以表示所有的值   如果为0代表所有值都一样 如果是1代表所有值都可以用byte表示  2代表所有值可以用short表示 以此类推
     int numBytesPerValue = numBytesPerValue(min, max);
 
     meta.writeByte((byte) numBytesPerValue);
     if (numBytesPerValue == 0) {
+      // 如果所有值一样 就使用一个long存储
       meta.writeLong(min);
     } else {
+      // 先写入偏移量
       meta.writeLong(data.getFilePointer()); // normsOffset
       values = normsProducer.getNorms(field);
-      // 将标准因子的值写入到 data文件中
+      // 将所有标准因子的值 按照指定的类型写入到out中
       writeValues(values, numBytesPerValue, data);
     }
   }

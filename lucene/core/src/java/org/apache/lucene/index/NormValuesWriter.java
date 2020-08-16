@@ -89,7 +89,7 @@ class NormValuesWriter {
    * @throws IOException
    */
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, NormsConsumer normsConsumer) throws IOException {
-    // 将之前存储的所有field信息 以压缩格式存储
+    // 之前该field在所有相关doc下生成的标准因子合成一个 压缩格式数据
     final PackedLongValues values = pending.build();
     // TODO 先忽略排序   这个leaf指代的是通过跳跃表检索到的某个fst索引吗???
     final SortingLeafReader.CachedNumericDVs sorted;

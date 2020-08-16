@@ -526,6 +526,7 @@ final class DocumentsWriterPerThread {
      * Flush all pending docs to a new segment
      * 将此时内存中维护的doc索引数据写入到磁盘中
      * @param flushNotifications   IndexWriter 会监听刷盘状态
+     * @return  刷盘后生成的段对象
      */
     FlushedSegment flush(DocumentsWriter.FlushNotifications flushNotifications) throws IOException {
         assert flushPending.get() == Boolean.TRUE;

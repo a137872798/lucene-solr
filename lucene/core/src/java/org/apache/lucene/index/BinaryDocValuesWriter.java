@@ -148,7 +148,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   /**
    * 将 docValue 写入到文件中
    * @param state
-   * @param sortMap  代表doc 已经重新排序过了
+   * @param sortMap  代表doc按照某种规则重新排序过  需要通过该对象映射
    * @param dvConsumer  该对象就是 负责将数据写入到 索引文件的对象
    * @throws IOException
    */
@@ -156,9 +156,9 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, DocValuesConsumer dvConsumer) throws IOException {
     // 冻结bytes 对象 无法再写入数据
     bytes.freeze(false);
-    // 该对象专门用于存储 每个docValue的长度
+    // 该对象专门用于存储 每个docValue的长度 (采用差值 存储的方式)
     final PackedLongValues lengths = this.lengths.build();
-    // 跟 norm 一个套路 如果携带了 sortMap 就将docValue 排序
+    // 先看无 sortMap的场景
     final SortingLeafReader.CachedBinaryDVs sorted;
     if (sortMap != null) {
       sorted = sortDocValues(state.segmentInfo.maxDoc(), sortMap,
@@ -173,6 +173,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
                                   if (fieldInfoIn != fieldInfo) {
                                     throw new IllegalArgumentException("wrong fieldInfo");
                                   }
+                                  // 先看无sortMap的情况
                                   if (sorted == null) {
                                     return new BufferedBinaryDocValues(lengths, maxLength, bytes.getDataInput(), docsWithField.iterator());
                                   } else {
@@ -184,12 +185,21 @@ class BinaryDocValuesWriter extends DocValuesWriter {
 
   // iterates over the values we have in ram
   private static class BufferedBinaryDocValues extends BinaryDocValues {
+    /**
+     * 当前doc 绑定的value
+     */
     final BytesRefBuilder value;
+    /**
+     * 迭代获取每个doc下对应的value的长度
+     */
     final PackedLongValues.Iterator lengthsIterator;
     /**
      * 这个位图是用来存储 docId的  （该迭代器是位图生成的）
      */
     final DocIdSetIterator docsWithField;
+    /**
+     * 迭代每个doc下docValue的值
+     */
     final DataInput bytesIterator;
     
     BufferedBinaryDocValues(PackedLongValues lengths, int maxLength, DataInput bytesIterator, DocIdSetIterator docsWithFields) {
@@ -205,13 +215,21 @@ class BinaryDocValuesWriter extends DocValuesWriter {
       return docsWithField.docID();
     }
 
+    /**
+     * 代表读取下一个doc对应的值
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
+      // 读取下一个docId
       int docID = docsWithField.nextDoc();
       if (docID != NO_MORE_DOCS) {
+        // 读取下一个value.length值
         int length = Math.toIntExact(lengthsIterator.next());
         // 根据长度 从value中读取数据
         value.setLength(length);
+        // 读取下一个value值
         bytesIterator.readBytes(value.bytes(), 0, length);
       }
       return docID;

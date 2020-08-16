@@ -86,11 +86,20 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
     this(writeState, BKDWriter.DEFAULT_MAX_POINTS_IN_LEAF_NODE, BKDWriter.DEFAULT_MAX_MB_SORT_IN_HEAP);
   }
 
+  /**
+   * 将某个field下的多维度信息写入到索引文件
+   * @param fieldInfo
+   * @param reader
+   * @throws IOException
+   */
   @Override
   public void writeField(FieldInfo fieldInfo, PointsReader reader) throws IOException {
 
+    // 实际上就是 MutablePointValues
     PointValues values = reader.getValues(fieldInfo.name);
 
+    // 每存储某个field的数据 就需要使用一个 BKD 结构
+    // TODO 有关 bkd树的实现先不看了
     try (BKDWriter writer = new BKDWriter(writeState.segmentInfo.maxDoc(),
                                           writeState.directory,
                                           writeState.segmentInfo.name,
@@ -101,7 +110,9 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
                                           maxMBSortInHeap,
                                           values.size())) {
 
+      // 默认情况下就是这种
       if (values instanceof MutablePointValues) {
+          // 返回的是此时file的偏移量 (写入数据后 )
         final long fp = writer.writeField(dataOut, fieldInfo.name, (MutablePointValues) values);
         if (fp != -1) {
           indexFPs.put(fieldInfo.name, fp);
@@ -226,7 +237,7 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
   }
 
   /**
-   * 将内部数据持久化
+   * 当所有field的多维度数据都写入完成后
    * @throws IOException
    */
   @Override
@@ -237,6 +248,7 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
     finished = true;
     CodecUtil.writeFooter(dataOut);
 
+    // 创建一个 dii元数据文件
     String indexFileName = IndexFileNames.segmentFileName(writeState.segmentInfo.name,
                                                           writeState.segmentSuffix,
                                                           Lucene60PointsFormat.INDEX_EXTENSION);
@@ -254,7 +266,7 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
         if (fieldInfo == null) {
           throw new IllegalStateException("wrote field=\"" + ent.getKey() + "\" but that field doesn't exist in FieldInfos");
         }
-        // 这里只是写入了 fieldNum  与 对应的value 呀
+        // 将每个 field对应的filePoint 写入
         indexOut.writeVInt(fieldInfo.number);
         indexOut.writeVLong(ent.getValue());
       }
