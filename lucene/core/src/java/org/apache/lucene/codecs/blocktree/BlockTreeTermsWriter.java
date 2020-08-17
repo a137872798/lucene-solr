@@ -283,10 +283,15 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
      * sub-blocks) per block will aim to be between
      * minItemsPerBlock and maxItemsPerBlock, though in some
      * cases the blocks may be smaller than the min.
-     * 初始化 term写入对象
+     *
+     * @param state           描述本次刷盘相关的段信息
+     * @param postingsWriter  该对象负责写入 term的位置信息
+     * @param minItemsInBlock 默认25
+     * @param maxItemsInBlock 默认48
+     *                        初始化 term写入对象
      */
     public BlockTreeTermsWriter(SegmentWriteState state,
-                                PostingsWriterBase postingsWriter,   // 对应 Lucene84PostingsWriter
+                                PostingsWriterBase postingsWriter,   // 对应 Lucene84PostingsWriter  也就是有关term的position信息 由该对象保存
                                 int minItemsInBlock,
                                 int maxItemsInBlock)
             throws IOException {
@@ -296,11 +301,13 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         this.minItemsInBlock = minItemsInBlock;
         this.maxItemsInBlock = maxItemsInBlock;
 
+        // 本次段要刷盘的最大doc数量
         this.maxDoc = state.segmentInfo.maxDoc();
         this.fieldInfos = state.fieldInfos;
+        // 该对象负责存储 term的position信息 内部使用了一个跳跃表结构
         this.postingsWriter = postingsWriter;
 
-        // 生成存储 term的索引文件  后缀名为 tim
+        // 创建存储 term的索引文件  .tim
         final String termsName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, BlockTreeTermsReader.TERMS_EXTENSION);
         termsOut = state.directory.createOutput(termsName, state.context);
         boolean success = false;
@@ -310,14 +317,14 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             CodecUtil.writeIndexHeader(termsOut, BlockTreeTermsReader.TERMS_CODEC_NAME, BlockTreeTermsReader.VERSION_CURRENT,
                     state.segmentInfo.getId(), state.segmentSuffix);
 
-            // 创建 tim 对应的索引文件 tip
+            // 创建  .tip 文件
             final String indexName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, BlockTreeTermsReader.TERMS_INDEX_EXTENSION);
             indexOut = state.directory.createOutput(indexName, state.context);
             CodecUtil.writeIndexHeader(indexOut, BlockTreeTermsReader.TERMS_INDEX_CODEC_NAME, BlockTreeTermsReader.VERSION_CURRENT,
                     state.segmentInfo.getId(), state.segmentSuffix);
             //segment = state.segmentInfo.name;
 
-            // 为termsOut 写入文件头
+            // 这里就是为 termsOut写入了一个文件头  以及写入了 postingsWriter的 blockSize
             postingsWriter.init(termsOut, state);                          // have consumer write its format/header
 
             this.indexOut = indexOut;
@@ -362,8 +369,8 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     /**
      * 将一组 field 信息 以及标准因子信息写入到 索引文件中
      *
-     * @param fields
-     * @param norms
+     * @param fields 该对象一般情况下是 FreqProxFields 对象
+     * @param norms  该对象负责提供标准因子信息
      * @throws IOException
      */
     @Override
@@ -372,22 +379,25 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
         String lastField = null;
         // 遍历本次涉及到的所有 field
+        // fields 在外层做过包装    (外层对field 按照写入格式进行了分组  并且使用一个装饰器确保只能读取到该组下的 field)
         for (String field : fields) {
-            // 确保 field是 递增的
+            // 确保 field是 递增的     在 FreqProxTermsWriter中 为field 按照fieldName 排序过
             assert lastField == null || lastField.compareTo(field) < 0;
             lastField = field;
 
             //if (DEBUG) System.out.println("\nBTTW.write seg=" + segment + " field=" + field);
-            // 找到某个field下关联的所有  term
+            // 获取一个遍历该field下所有term的 迭代器  实际上就是  FreqProxTerms
+            // 因为在解析doc时  term 都会存入到一个 termHash结构中  通过包装持有termHash的 perField对象 就可以遍历之前写入的所有term了
             Terms terms = fields.terms(field);
             if (terms == null) {
                 continue;
             }
 
             TermsEnum termsEnum = terms.iterator();
-            // term 通过该对象写入
+            // 将 term相关信息通过 TermsWriter写入  注意在之前的环节中已经将term按照字面量进行排序了
             TermsWriter termsWriter = new TermsWriter(fieldInfos.fieldInfo(field));
             while (true) {
+                // 从 termHash中 挨个取出 term 并插入到 termWriter中
                 BytesRef term = termsEnum.next();
                 //if (DEBUG) System.out.println("BTTW: next term " + term);
 
@@ -408,8 +418,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
     /**
      * 对输出进行编码  也就是为 fileOffset 的最低2位设置标识
+     *
      * @param fp
-     * @param hasTerms  上一次处理的entry是term还是block
+     * @param hasTerms 上一次处理的entry是term还是block
      * @param isFloor  本次处理的所有term 是否在一个block内
      * @return
      */
@@ -488,14 +499,13 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         public final int floorLeadByte;
 
         /**
-         *
-         * @param prefix 该block携带的前缀信息  本次处理的所有entry中都包含相同的前缀
-         *               同时该数据中除了前缀外 如果 ifFloor为 true 那么最后一位会存储 floorLeadLabel
-         * @param fp  写入该term相关信息前 termWriter的文件偏移量
-         * @param hasTerms  代表处理的上一个entry是 term 还是 block
-         * @param isFloor  代表处理本次 entry 划分成了多个块
+         * @param prefix        该block携带的前缀信息  本次处理的所有entry中都包含相同的前缀
+         *                      同时该数据中除了前缀外 如果 ifFloor为 true 那么最后一位会存储 floorLeadLabel
+         * @param fp            写入该term相关信息前 termWriter的文件偏移量
+         * @param hasTerms      代表处理的上一个entry是 term 还是 block
+         * @param isFloor       代表处理本次 entry 划分成了多个块
          * @param floorLeadByte 处理上一个entry时 灵活byte对应的ascii
-         * @param subIndices  当被处理的entry是 term时 该list为null
+         * @param subIndices    当被处理的entry是 term时 该list为null
          */
         public PendingBlock(BytesRef prefix, long fp, boolean hasTerms, boolean isFloor, int floorLeadByte, List<FST<BytesRef>> subIndices) {
             super(false);
@@ -514,7 +524,8 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
         /**
          * 每当某次处理 writeBlocks结束后 可能会有多个block写入到 一个列表中 在处理结束后会调用该方法  这里所有 PendingBlock的前缀是一样的
-         * @param blocks  此时所有待处理的block对象  包含自身
+         *
+         * @param blocks         此时所有待处理的block对象  包含自身
          * @param scratchBytes
          * @param scratchIntsRef
          * @throws IOException
@@ -867,16 +878,15 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
          * same prefix, and so we broke it into multiple floor blocks where
          * we record the starting label of the suffix of each floor block.
          *
-         * @param prefixLength 代表本次处理的term与之后的term 不同byte对应的位置 不是数组下标
-         *
-         * @param start 首先该对象会将所有处理的term存储到一个 pending中  并且每次按照相同前缀存储数据时 是有一个最小的阈值的 只有当前缀不再相同
-         *              且之前很多term都使用相同前缀时 才触发 writerBlocks  这些term又需要拆开来处理   而start都是当中某批数据的首个term
-         * @param end   对应某批数据的最后一个term
-         *              <p>
-         * @param isFloor 代表没有将所有数据一次性写入
+         * @param prefixLength   代表本次处理的term与之后的term 不同byte对应的位置 不是数组下标
+         * @param start          首先该对象会将所有处理的term存储到一个 pending中  并且每次按照相同前缀存储数据时 是有一个最小的阈值的 只有当前缀不再相同
+         *                       且之前很多term都使用相同前缀时 才触发 writerBlocks  这些term又需要拆开来处理   而start都是当中某批数据的首个term
+         * @param end            对应某批数据的最后一个term
+         *                       <p>
+         * @param isFloor        代表没有将所有数据一次性写入
          * @param floorLeadLabel 处理上一个entry时 灵活byte对应的ascii码
-         * @param hasTerms 代表上一个entry是term
-         * @param hasSubBlocks 代表上一个entry是 block
+         * @param hasTerms       代表上一个entry是term
+         * @param hasSubBlocks   代表上一个entry是 block
          */
         private PendingBlock writeBlock(int prefixLength, boolean isFloor, int floorLeadLabel, int start, int end,
                                         boolean hasTerms, boolean hasSubBlocks) throws IOException {
@@ -1153,32 +1163,36 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         }
 
         /**
-         * 通过某个 field的信息来初始化 term写入对象
+         * 代表该对象维护的是哪个 field下的term
          *
          * @param fieldInfo
          */
         TermsWriter(FieldInfo fieldInfo) {
             this.fieldInfo = fieldInfo;
             assert fieldInfo.getIndexOptions() != IndexOptions.NONE;
+            // 创建doc位图对象 推测每当处理某个term时  会将该term出现过的所有doc记录下来
             docsSeen = new FixedBitSet(maxDoc);
+            // 切换此时正在处理的 field
             postingsWriter.setField(fieldInfo);
         }
 
         /**
          * Writes one term's worth of postings.
          *
-         * @param norms 标准因子
-         *              将该field下 某个term 写入到该对象中
+         * @param text      当前 term对应的文本信息
+         * @param termsEnum 用于遍历 term的迭代器  (实际上内部存储了一个 termHash)
+         * @param norms     标准因子
          */
         public void write(BytesRef text, TermsEnum termsEnum, NormsProducer norms) throws IOException {
-      /*
-      if (DEBUG) {
-        int[] tmp = new int[lastTerm.length];
-        System.arraycopy(prefixStarts, 0, tmp, 0, tmp.length);
-        System.out.println("BTTW: write term=" + brToString(text) + " prefixStarts=" + Arrays.toString(tmp) + " pending.size()=" + pending.size());
-      }
-      */
-            // 将该term的倒排索引信息写入到 doc文件中  (该term出现在哪些doc上 出现多少次 位置信息 payload 等等)
+            /*
+            if (DEBUG) {
+                int[] tmp = new int[lastTerm.length];
+                System.arraycopy(prefixStarts, 0, tmp, 0, tmp.length);
+                System.out.println("BTTW: write term=" + brToString(text) + " prefixStarts=" + Arrays.toString(tmp) + " pending.size()=" + pending.size());
+            }
+            */
+
+            // 将 term的相关信息先写入到  负责存储 term position信息的  positionWriter中   该对象内部还使用了跳跃表
             BlockTermState state = postingsWriter.writeTerm(text, termsEnum, docsSeen, norms);
             // 代表数据有效   当该term没有写入到任何doc时 返回null
             if (state != null) {

@@ -196,11 +196,20 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
       this.disi = disi;
     }
 
+    /**
+     * 获取此时的 docId
+     * @return
+     */
     @Override
     public int docID() {
       return disi.docID();
     }
 
+    /**
+     * 遍历到下一个docId
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
       return disi.nextDoc();
@@ -239,11 +248,11 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
       }
       NormsEntry entry = new NormsEntry();
       // 这个是描述 DISI 结构的
-      entry.docsWithFieldOffset = meta.readLong();
-      entry.docsWithFieldLength = meta.readLong();
-      entry.jumpTableEntryCount = meta.readShort();
-      entry.denseRankPower = meta.readByte();
-      entry.numDocsWithField = meta.readInt();
+      entry.docsWithFieldOffset = meta.readLong();    // 当使用了 disi结构时 该值存储的是 还未写入disi相关数据前的filePosition
+      entry.docsWithFieldLength = meta.readLong();    // disi 相关数据的总长度
+      entry.jumpTableEntryCount = meta.readShort();   // 生成的jump实体数量
+      entry.denseRankPower = meta.readByte();   // 写入使用的收缩因子
+      entry.numDocsWithField = meta.readInt();    // 代表该field在多少doc下有标准因子信息
       entry.bytesPerNorm = meta.readByte();
       switch (entry.bytesPerNorm) {
         case 0: case 1: case 2: case 4: case 8:
@@ -251,7 +260,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
         default:
           throw new CorruptIndexException("Invalid bytesPerValue: " + entry.bytesPerNorm + ", field: " + info.name, meta);
       }
-      entry.normsOffset = meta.readLong();
+      entry.normsOffset = meta.readLong();   // 存储norm的起始偏移量
       norms.put(info.number, entry);
     }
   }
@@ -266,6 +275,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   private RandomAccessInput getDataInput(FieldInfo field, NormsEntry entry) throws IOException {
     RandomAccessInput slice = null;
     // 代表本次获取的数据是为了 merge使用
+    // TODO 先忽略 merge的场景
     if (merging) {
       slice = dataInputs.get(field.number);
     }
@@ -280,6 +290,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   }
 
   private IndexInput getDisiInput(FieldInfo field, NormsEntry entry) throws IOException {
+    // 非merge 场景 就是返回该对象
     if (merging == false) {
       return IndexedDISI.createBlockSlice(
           data, "docs", entry.docsWithFieldOffset, entry.docsWithFieldLength, entry.jumpTableEntryCount);
@@ -385,9 +396,11 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
     if (entry.docsWithFieldOffset == -2) {
       // empty
       return DocValues.emptyNumeric();
+    // 代表所有doc 都有数据
     } else if (entry.docsWithFieldOffset == -1) {
       // dense
       // 代表所有docId 对应的标准因子是一样的  这时normsOffset 本身就是标准因子 (对应 producer的存储逻辑)
+      // 那么此时就会使用一个 long值存储标准因子 并且针对任何docId 总是返回这个值
       if (entry.bytesPerNorm == 0) {
         return new DenseNormsIterator(maxDoc) {
           @Override
@@ -396,9 +409,9 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
           }
         };
       }
-      // 将该field 对应的所有doc 的标准因子取出来组成一个 NumDocValue
+      // 传入  entry是为了获取 data文件的 filePoint     这里创建了存储norm部分 的分片
       final RandomAccessInput slice = getDataInput(field, entry);
-      // 从下面的逻辑可以看出标准因子的值是连续存储的
+      // 根据存储的类型 读取对应长度   DenseNormsIterator 代表doc本身是连续存储的
       switch (entry.bytesPerNorm) {
         case 1:
           return new DenseNormsIterator(maxDoc) {
@@ -434,20 +447,27 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
           throw new AssertionError();
       }
     } else {
-      // 唯一的区别就是迭代docId委托给 disi 对象
+      // 代表 docId 借助了 disi结构存储
       // sparse
+      // 读取 disi的相关信息   这里返回的输入流 仅包含 docId 信息  不包含 jump[] 信息
       final IndexInput disiInput = getDisiInput(field, entry);
+      // 单独生成 jump[] 的数据分片
       final RandomAccessInput disiJumpTable = getDisiJumpTable(field, entry);
+
+      // 使用相关数据 初始化 DISI 对象
       final IndexedDISI disi = new IndexedDISI(disiInput, disiJumpTable, entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
 
+      // 稀疏docId 迭代器对象 通过disi 遍历doc
       if (entry.bytesPerNorm == 0) {
         return new SparseNormsIterator(disi) {
+          // 因为所有标准因子的值都一样 所以总是返回同一个值
           @Override
           public long longValue() throws IOException {
             return entry.normsOffset;
           }
         };
       }
+      // 获取有关存储 norm 的部分
       final RandomAccessInput slice = getDataInput(field, entry);
       switch (entry.bytesPerNorm) {
         case 1:

@@ -82,8 +82,8 @@ public abstract class MultiLevelSkipListWriter {
      *
      * @param skipInterval   对应block的大小
      * @param skipMultiplier 默认为8
-     * @param maxSkipLevels  跳跃表最大层级
-     * @param df             实际上就是文档数
+     * @param maxSkipLevels  跳跃表最大层级   默认为10
+     * @param df             当前段预备写入多少doc
      */
     protected MultiLevelSkipListWriter(int skipInterval, int skipMultiplier, int maxSkipLevels, int df) {
         this.skipInterval = skipInterval;
@@ -91,12 +91,11 @@ public abstract class MultiLevelSkipListWriter {
 
         int numberOfSkipLevels;
         // calculate the maximum number of skip levels for this document frequency
-        // 如果文档数 都没有满足一个block 那么只需要一级就足够了
+        // 这里开始提前计算跳跃表的层级了
         if (df <= skipInterval) {
             numberOfSkipLevels = 1;
         } else {
-            // df / skipInterval 这样才计算出一个基础值(skip[0]) 对应bufferSkip的 df / skipInterval
-            // 之后按照元素的数量 / skipMultiplier  得到需要多少级    注意最后要再+1 对应 df所在的那级
+            // df / skipInterval 代表预估要使用多少块   每上升一级就要 / skipMultiplier  这里在预估最多需要多少level
             numberOfSkipLevels = 1 + MathUtil.log(df / skipInterval, skipMultiplier);
         }
 

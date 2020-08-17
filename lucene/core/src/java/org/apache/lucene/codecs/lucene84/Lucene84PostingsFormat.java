@@ -423,11 +423,11 @@ public final class Lucene84PostingsFormat extends PostingsFormat {
    */
   @Override
   public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-    // 该对象内部包含3个输出流 并基于跳跃表存储数据
+    // 该writer对象会将数据写入到3个索引文件中 (.doc  .pay  .pos)  内部又有一个根据doc数量 提前规定层级数的跳跃表
     PostingsWriterBase postingsWriter = new Lucene84PostingsWriter(state);
     boolean success = false;
     try {
-      // 使用一个 blockTree 进行包装
+      // 最终写入数据的是一个 blockTree对象 该对象内部还借助 fst 来存储term 
       FieldsConsumer ret = new BlockTreeTermsWriter(state, 
                                                     postingsWriter,
                                                     minTermBlockSize, 
@@ -468,6 +468,7 @@ public final class Lucene84PostingsFormat extends PostingsFormat {
    * {@link org.apache.lucene.index.PostingsEnum} without re-seeking the terms dict.
    *
    * @lucene.internal
+   * 描述将term信息写入到 block中 此时 block的状态信息
    */
   public static final class IntBlockTermState extends BlockTermState {
     /** file pointer to the start of the doc ids enumeration, in {@link #DOC_EXTENSION} file */

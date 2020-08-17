@@ -305,7 +305,7 @@ final class IndexedDISI extends DocIdSetIterator {
      *
      * @param jumps      存储相关信息的容器
      * @param offset     距离调用writeBitSet时 data文件起始位置的偏移量
-     * @param index      总计写入了多少docId
+     * @param index      之前所有block写入了多少docId
      * @param startBlock 连接到下标为多少的 block
      * @param endBlock   下一个block
      * @return
@@ -382,13 +382,13 @@ final class IndexedDISI extends DocIdSetIterator {
      * This constructor allows to pass the slice and jumpTable directly in case it helps reuse.
      * see eg. Lucene80 norms producer's merge instance.
      *
-     * @param blockSlice          data blocks, normally created by {@link #createBlockSlice}.     对应 block数据的in分片
+     * @param blockSlice          data blocks, normally created by {@link #createBlockSlice}.     对应block数据的in分片
      * @param jumpTable           table holding jump-data for block-skips, normally created by {@link #createJumpTable}.   对应 jumpTable数据的in分片
      * @param jumpTableEntryCount the number of blocks covered by the jump-table.
-     *                            This must match the number returned by {@link #writeBitSet(DocIdSetIterator, IndexOutput, byte)}.
+     *                            This must match the number returned by {@link #writeBitSet(DocIdSetIterator, IndexOutput, byte)}.          jump结构的数量
      * @param denseRankPower      the number of docIDs covered by each rank entry in DENSE blocks, expressed as {@code 2^denseRankPower}.
-     *                            This must match the power given in {@link #writeBitSet(DocIdSetIterator, IndexOutput, byte)}   存储紧凑数据的容器大小
-     * @param cost                normally the number of logical docIDs.
+     *                            This must match the power given in {@link #writeBitSet(DocIdSetIterator, IndexOutput, byte)}     使用的收缩因子  当docId 采用特殊结构存储时 数组的大小受该因子影响
+     * @param cost                normally the number of logical docIDs.            代表总计存储了多少 docId
      */
     IndexedDISI(IndexInput blockSlice, RandomAccessInput jumpTable, int jumpTableEntryCount, byte denseRankPower, long cost) throws IOException {
         if ((denseRankPower < 7 || denseRankPower > 15) && denseRankPower != -1) {
@@ -400,8 +400,9 @@ final class IndexedDISI extends DocIdSetIterator {
         this.jumpTable = jumpTable;
         this.jumpTableEntryCount = jumpTableEntryCount;
         this.denseRankPower = denseRankPower;
-        // 2的7次是128
+        // 还原 rankIndexShift 属性  它决定了rank[] 的大小
         final int rankIndexShift = denseRankPower - 7;
+        // 对应 rank[] 的长度信息
         this.denseRankTable = denseRankPower == -1 ? null : new byte[DENSE_BLOCK_LONGS >> rankIndexShift];
         this.cost = cost;
     }
@@ -410,19 +411,19 @@ final class IndexedDISI extends DocIdSetIterator {
      * Helper method for using {@link #IndexedDISI(IndexInput, RandomAccessInput, int, byte, long)}.
      * Creates a disiSlice for the IndexedDISI data blocks, without the jump-table.
      *
-     * @param slice               backing data, holding both blocks and jump-table.    数据都存储在该输入流中
+     * @param slice               backing data, holding both blocks and jump-table.    之前存储disi数据的容器
      * @param sliceDescription    human readable slice designation.
-     * @param offset              relative to the backing data.     对应slice的某个偏移量
-     * @param length              full length of the IndexedDISI, including blocks and jump-table data.    代表这个DISI 的总大小  包含了 block数据 以及 jump-table 内的数据
-     * @param jumpTableEntryCount the number of blocks covered by the jump-table.
+     * @param offset              relative to the backing data.          代表disi数据块在 slice的起始偏移量
+     * @param length              full length of the IndexedDISI, including blocks and jump-table data.   代表disi数据的总长度
+     * @param jumpTableEntryCount the number of blocks covered by the jump-table.                 生成的 jump数量
      * @return a jumpTable containing the block jump-data or null if no such table exists.
      * @throws IOException if a RandomAccessInput could not be created from slice.
      */
     public static IndexInput createBlockSlice(
             IndexInput slice, String sliceDescription, long offset, long length, int jumpTableEntryCount) throws IOException {
-        // 这里在预估跳跃表的大小   每个块占用8 byte
+        // 每个 jump结构是由 2个int组成的 对应int[]中连续的2个值
         long jumpTableBytes = jumpTableEntryCount < 0 ? 0 : jumpTableEntryCount * Integer.BYTES * 2;
-        // 这里为block的数据创建分片
+        // 创建一个更精准的分片    jump结构是最后写入的也就是 length - jumpTableBytes 对应的就是docId的信息
         return slice.slice(sliceDescription, offset, length - jumpTableBytes);
     }
 
@@ -436,7 +437,7 @@ final class IndexedDISI extends DocIdSetIterator {
      * @param jumpTableEntryCount the number of blocks covered by the jump-table.
      * @return a jumpTable containing the block jump-data or null if no such table exists.
      * @throws IOException if a RandomAccessInput could not be created from slice.
-     *                     根据从 data中 还原jumpTable 内部的数据
+     *                     根据slice 创建一个仅定位到 jump[] 的数据分片
      */
     public static RandomAccessInput createJumpTable(
             IndexInput slice, long offset, long length, int jumpTableEntryCount) throws IOException {
@@ -444,7 +445,6 @@ final class IndexedDISI extends DocIdSetIterator {
             return null;
         } else {
             int jumpTableBytes = jumpTableEntryCount * Integer.BYTES * 2;
-            // 看来在data的连续数据中 前面存储的是元数据  后面的是 jumpTable数据
             return slice.randomAccessSlice(offset + length - jumpTableBytes, jumpTableBytes);
         }
     }
@@ -471,7 +471,7 @@ final class IndexedDISI extends DocIdSetIterator {
 
     int doc = -1;
     /**
-     * 当前读取到了block的哪个位置  一个block下有多个值
+     * index 代表当前读取到了全局范围内的第几个 doc
      */
     int index = -1;
 
@@ -508,18 +508,20 @@ final class IndexedDISI extends DocIdSetIterator {
      */
     @Override
     public int advance(int target) throws IOException {
-        // 看来每个 block 的大小是  0x0000FFFF  (2的16次)
+        // 先通过 去低16位 找到该docId 所在的 block
         final int targetBlock = target & 0xFFFF0000;
         // 代表需要切换到对应的 block的位置
         if (block < targetBlock) {
+            // 切换到目标block
             advanceBlock(targetBlock);
         }
         // 在定位到 block后 尝试寻找有没有匹配的doc
         if (block == targetBlock) {
+            // 只要当下block 有 >= target 的docId 就返回 true
             if (method.advanceWithinBlock(this, target)) {
                 return doc;
             }
-            // 代表已经读取到该block的末尾了 切换到下一个block
+            // 代表该block下都是小于目标doc的  切换到下一个block 尝试检测是否有大doc的
             readBlockHeader();
         }
         boolean found = method.advanceWithinBlock(this, block);
@@ -545,29 +547,28 @@ final class IndexedDISI extends DocIdSetIterator {
     }
 
     /**
-     * 转移到目标block
+     * 转移到目标block    每个block 按照docId的密集程度 使用3种结构存储docId
      *
      * @param targetBlock
      * @throws IOException
      */
     private void advanceBlock(int targetBlock) throws IOException {
-        // 这里兑换成一个 block下标   (每个block大小为2的16次)
+        // 这里兑换成一个 block下标   (每个block大小为1的16次)
         final int blockIndex = targetBlock >> 16;
         // If the destination block is 2 blocks or more ahead, we use the jump-table.
-        // 代表当前block与 目标block 相差2个block 及以上
+        // 当本次换取的 block 与当前block的 差距在2 或以上  不采用遍历的方式 而是通过之前存储的 jump[] 直接跳跃到目标位置
         if (jumpTable != null && blockIndex >= (block >> 16) + 2) {
             // If the jumpTableEntryCount is exceeded, there are no further bits. Last entry is always NO_MORE_DOCS
-            // 看来一个 jumpTableEntry 定位一个block的位置信息  （jumpTableEntryCount-1对应NO_MORE_DOCS）
             final int inRangeBlockIndex = blockIndex < jumpTableEntryCount ? blockIndex : jumpTableEntryCount - 1;
-            // 定位到 8的位置 读取到12
+            // 之前的所有block写入了多少docId
             final int index = jumpTable.readInt(inRangeBlockIndex * Integer.BYTES * 2);
-            // 12到16的位置对应 offset
+            // 距离起始位置的偏移量
             final int offset = jumpTable.readInt(inRangeBlockIndex * Integer.BYTES * 2 + Integer.BYTES);
             // 这个nextBlockIndex 主要是为了在之后为 index 赋值   总是当前读取的起始位置-1
             this.nextBlockIndex = index - 1; // -1 to compensate for the always-added 1 in readBlockHeader
-            // 将block分片定位到对应的位置  block 内部存储的就是 docValue
+            // 将block分片定位到对应的位置
             slice.seek(offset);
-            // 通过解析 block头部 获取一些基础信息
+            // 解析 特殊结构的相关信息
             readBlockHeader();
             return;
         }
@@ -585,27 +586,32 @@ final class IndexedDISI extends DocIdSetIterator {
      * @throws IOException
      */
     private void readBlockHeader() throws IOException {
-        // 通过 <<16 将下标还原成偏移量
+        // 读取出来的值 代表此时是第几个 block
         block = Short.toUnsignedInt(slice.readShort()) << 16;
         assert block >= 0;
-        // 代表该block 下存储了多少docValue
+        // 写入的时候-1了  这里刚好+1 进行补偿  代表该block下写入了多少docId
         final int numValues = 1 + Short.toUnsignedInt(slice.readShort());
+
+        // 之前的所有block写入了多少docId -1
         index = nextBlockIndex;
+        // 计算下一个block 对应的 index 值
         nextBlockIndex = index + numValues;
         // 这里以3种方式存储 对应那个叫啥的位图   当数据量本身就少的时候 采用稀疏的存储方式  也就是直接将doc连续存储在slice中
         if (numValues <= MAX_ARRAY_LENGTH) {
             method = Method.SPARSE;
+            // 因为每个 doc 以short的形式写入  所以这里 << 1
             blockEnd = slice.getFilePointer() + (numValues << 1);
-            // 65535 = 2<<15  也就是刚好一个block被填满
+            // 65535 = 2<<15  也就是刚好一个block被填满  这时就不写入任何docId了
         } else if (numValues == 65536) {
             method = Method.ALL;
             blockEnd = slice.getFilePointer();
-            // block 的起始值 代表 docId的起始值
             gap = block - index - 1;
         } else {
+            // 代表采用特殊结构存储
             method = Method.DENSE;
+            // 该结构 会先写入 rank[]
             denseBitmapOffset = slice.getFilePointer() + (denseRankTable == null ? 0 : denseRankTable.length);
-            // 后面的 1<<13 属于占位符
+            // 65535/64 = 1024 个long  然后要连续写入 1024个long 就是 8192 = 1 << 13
             blockEnd = denseBitmapOffset + (1 << 13);
             // Performance consideration: All rank (default 128 * 16 bits) are loaded up front. This should be fast with the
             // reusable byte[] buffer, but it is still wasted if the DENSE block is iterated in small steps.
@@ -613,7 +619,7 @@ final class IndexedDISI extends DocIdSetIterator {
             // are loaded on first in-block advance, if said advance is > X docIDs. The hope being that a small first
             // advance means that subsequent advances will be small too.
             // Another alternative is to maintain an extra slice for DENSE rank, but IndexedDISI is already slice-heavy.
-            // 先从分片中读取一部分数据
+            // 加载 rank[] 的数据
             if (denseRankPower != -1) {
                 slice.readBytes(denseRankTable, 0, denseRankTable.length);
             }
@@ -649,11 +655,11 @@ final class IndexedDISI extends DocIdSetIterator {
     enum Method {
 
         /**
-         * 当某个block内部的数据比较少时
+         * 当某个block内部的数据比较少时  这里是直接将所有docId 写入
          */
         SPARSE {
             /**
-             * 在当前block下寻找 doc
+             * 在当前block下寻找 doc   只要能找到大于docId的值 就认为能找到
              * @param disi
              * @param target
              * @return
@@ -661,8 +667,10 @@ final class IndexedDISI extends DocIdSetIterator {
              */
             @Override
             boolean advanceWithinBlock(IndexedDISI disi, int target) throws IOException {
+                // 获取落在该block后的docId值
                 final int targetInBlock = target & 0xFFFF;
                 // TODO: binary search
+                // nextBlockIndex - index 就代表该block下写入了多少 doc
                 for (; disi.index < disi.nextBlockIndex; ) {
                     // 该block下所有的docId 比较稀疏 直接连续存储
                     int doc = Short.toUnsignedInt(disi.slice.readShort());
@@ -688,6 +696,7 @@ final class IndexedDISI extends DocIdSetIterator {
             boolean advanceExactWithinBlock(IndexedDISI disi, int target) throws IOException {
                 final int targetInBlock = target & 0xFFFF;
                 // TODO: binary search
+                // 代表此时正在遍历到某个doc  exists 代表是否存在该值
                 if (target == disi.doc) {
                     return disi.exists;
                 }
@@ -697,7 +706,7 @@ final class IndexedDISI extends DocIdSetIterator {
                     if (doc >= targetInBlock) {
                         // 代表下个值超过了指定的doc
                         if (doc != targetInBlock) {
-                            // 回指到上一个值
+                            // 回指到上一个小于target的值
                             disi.index--;
                             disi.slice.seek(disi.slice.getFilePointer() - Short.BYTES);
                             break;
@@ -797,13 +806,16 @@ final class IndexedDISI extends DocIdSetIterator {
         ALL {
             @Override
             boolean advanceWithinBlock(IndexedDISI disi, int target) {
+                // 因为只要定位到该block 后  doc一定存在 所以直接读取数据
                 disi.doc = target;
+                //              gap = block - index - 1;
                 disi.index = target - disi.gap;
                 return true;
             }
 
             @Override
             boolean advanceExactWithinBlock(IndexedDISI disi, int target) {
+                //               gap = block - index - 1;
                 disi.index = target - disi.gap;
                 return true;
             }
@@ -836,10 +848,9 @@ final class IndexedDISI extends DocIdSetIterator {
         assert disi.denseRankPower >= 0 : disi.denseRankPower;
         // Resolve the rank as close to targetInBlock as possible (maximum distance is 8 longs)
         // Note: rankOrigoOffset is tracked on block open, so it is absolute (e.g. don't add origo)
-        // 看来数据存储还有不同的级别
         final int rankIndex = targetInBlock >> disi.denseRankPower; // Default is 9 (8 longs: 2^3 * 2^6 = 512 docIDs)
 
-        // TODO 这里还不清楚在算什么
+        // 把 之前存储在rank[]的数据读取出来 代表该block下总计使用了多少位
         final int rank =
                 (disi.denseRankTable[rankIndex << 1] & 0xFF) << 8 |
                         (disi.denseRankTable[(rankIndex << 1) + 1] & 0xFF);

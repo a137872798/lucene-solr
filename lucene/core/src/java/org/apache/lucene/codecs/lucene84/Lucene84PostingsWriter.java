@@ -166,21 +166,23 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
 
     /**
      * Creates a postings writer
+     * @param state 描述本次写入段数据的 上下文信息
      */
-    // 通过一个描述段信息的对象初始化
     public Lucene84PostingsWriter(SegmentWriteState state) throws IOException {
 
-        // 生成存储doc 的文件名
+        // 生成文件名 .doc
         String docFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.DOC_EXTENSION);
+        // 创建输出流
         docOut = state.directory.createOutput(docFileName, state.context);
         IndexOutput posOut = null;
         IndexOutput payOut = null;
         boolean success = false;
+        // 写入文件头
         try {
             CodecUtil.writeIndexHeader(docOut, DOC_CODEC, VERSION_CURRENT,
                     state.segmentInfo.getId(), state.segmentSuffix);
             ByteOrder byteOrder = ByteOrder.nativeOrder();
-            // 大端法/小端法
+            // 写入 大端法/小端法
             if (byteOrder == ByteOrder.BIG_ENDIAN) {
                 docOut.writeByte((byte) 'B');
             } else if (byteOrder == ByteOrder.LITTLE_ENDIAN) {
@@ -188,14 +190,15 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
             } else {
                 throw new Error();
             }
+            // 就简单看作是加工数据的好了
             final ForUtil forUtil = new ForUtil();
             forDeltaUtil = new ForDeltaUtil(forUtil);
             pforUtil = new PForUtil(forUtil);
-            // 只要有任意一个 field 设置了 prox
+            // 代表有field 包含 position 信息
             if (state.fieldInfos.hasProx()) {
                 // 初始大小为128
                 posDeltaBuffer = new long[BLOCK_SIZE];
-                // 创建存储 pos 的文件
+                // 创建 .pos文件
                 String posFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.POS_EXTENSION);
                 posOut = state.directory.createOutput(posFileName, state.context);
                 CodecUtil.writeIndexHeader(posOut, POS_CODEC, VERSION_CURRENT,
@@ -203,6 +206,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
 
                 // 如果field 携带了payload信息
                 if (state.fieldInfos.hasPayloads()) {
+                    // 分别用于写入 payload  以及记录 payload的长度
                     payloadBytes = new byte[128];
                     payloadLengthBuffer = new long[BLOCK_SIZE];
                 } else {
@@ -212,6 +216,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
 
                 // 如果携带了 offset 信息
                 if (state.fieldInfos.hasOffsets()) {
+                    // 用于记录 startOff 以及  (endOff - startOff)
                     offsetStartDeltaBuffer = new long[BLOCK_SIZE];
                     offsetLengthBuffer = new long[BLOCK_SIZE];
                 } else {
@@ -219,7 +224,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
                     offsetLengthBuffer = null;
                 }
 
-                // 只要存在 offset 或者 payload 任意一项 就创建对应的索引文件
+                // 当存在 payload 或者 offset时  创建 .pay 文件
                 if (state.fieldInfos.hasPayloads() || state.fieldInfos.hasOffsets()) {
                     String payFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, Lucene84PostingsFormat.PAY_EXTENSION);
                     payOut = state.directory.createOutput(payFileName, state.context);
@@ -227,6 +232,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
                             state.segmentInfo.getId(), state.segmentSuffix);
                 }
             } else {
+                // 当不存在 position 时  相关容器都不需要设置了
                 posDeltaBuffer = null;
                 payloadLengthBuffer = null;
                 offsetStartDeltaBuffer = null;
@@ -246,7 +252,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         freqBuffer = new long[BLOCK_SIZE];
 
         // TODO: should we try skipping every 2/4 blocks...?
-        // 基于跳表结构 将相关数据存储到3个输出流中
+        // 使用跳跃表结构  将数据写入到 .doc .pos .pay 3个索引文件中
         skipWriter = new Lucene84SkipWriter(MAX_SKIP_LEVELS,
                 BLOCK_SIZE,
                 state.segmentInfo.maxDoc(),
@@ -280,10 +286,13 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
      */
     @Override
     public void setField(FieldInfo fieldInfo) {
+        // 获取当前field下 哪些信息需要写入到索引文件中
         super.setField(fieldInfo);
+        // 设置 跳跃表内部的属性
         skipWriter.setField(writePositions, writeOffsets, writePayloads);
-        // 重置状态
+        // 因为开始处理一个新的 field 所以将用于描述存储上个field下term的 blockState对象重置
         lastState = emptyState;
+        // 当前field是否会生成标准因子
         fieldHasNorms = fieldInfo.hasNorms();
     }
 

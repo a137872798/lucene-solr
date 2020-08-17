@@ -147,7 +147,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
   }
 
   /**
-   * 该对象负责将 多个field 的数据写入到索引文件
+   * lucene 的词数据就是写入到该对象中
    */
   private class FieldsWriter extends FieldsConsumer {
     final SegmentWriteState writeState;
@@ -162,8 +162,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
 
     /**
-     * 在FreqProxTermsWriter中会调用该方法
-     * @param fields  这里传入的本身就是一个迭代器对象  而在merge的时候将多个参与merge的segment数据通过MergedIterator进行包装后 也变成了一个迭代器
+=     * @param fields  可以先当作是 FreqProxFields 对象
      * @param norms
      * @throws IOException
      */
@@ -174,6 +173,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       // Write postings
       boolean success = false;
       try {
+        // 分组后 以 format为单位 将归属到下面的所有field 信息写入到索引文件
         for (Map.Entry<PostingsFormat, FieldsGroup> ent : formatToGroups.entrySet()) {
           PostingsFormat format = ent.getKey();
           final FieldsGroup group = ent.getValue();
@@ -187,6 +187,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
             }
           };
 
+          // 使用 Lucene84PositionsFormat  写入数据
           FieldsConsumer consumer = format.fieldsConsumer(group.state);
           toClose.add(consumer);
           // 将相关数据写入到 索引文件
@@ -242,7 +243,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
 
     /**
-     * 将field分组
+     * 将 field 按照不同的写入格式分组
      * @param indexedFieldNames
      * @return
      */
@@ -285,6 +286,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           // 用新的后缀覆盖原来的值
           suffixes.put(formatName, suffix);
 
+          // 这里根据格式名  生成了不同的段后缀名
           String segmentSuffix = getFullSegmentSuffix(field,
                                                       writeState.segmentSuffix,
                                                       // 生成后缀名
@@ -302,7 +304,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
         // 将field 添加到相同 format的组中
         groupBuilder.addField(field);
 
-        // 在map中追加2个属性
+        // 在 fieldInfo 中 设置指定的 索引文件格式 以及后缀
         fieldInfo.putAttribute(PER_FIELD_FORMAT_KEY, formatName);
         fieldInfo.putAttribute(PER_FIELD_SUFFIX_KEY, Integer.toString(groupBuilder.suffix));
       }

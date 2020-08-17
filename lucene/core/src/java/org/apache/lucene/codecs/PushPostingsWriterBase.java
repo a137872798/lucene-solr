@@ -92,7 +92,7 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
     this.fieldInfo = fieldInfo;
     indexOptions = fieldInfo.getIndexOptions();
 
-    // 将相关标识修改成针对当前field的
+    // 根据当前field下 term的哪些信息需要写入到索引文件中 生成flag
     writeFreqs = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
     writePositions = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
     writeOffsets = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;        
@@ -118,21 +118,24 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
   }
 
   /**
-   * 大体上就是将 term 关联的 position信息 写入到索引文件
+   * 将 term的position等相关信息写入到该对象
    * @param term  本次要写入的term
-   * @param termsEnum   term所属的迭代器
-   * @param docsSeen   相关segment 的maxDoc
-   * @param norms  该对象可以根据field 获取一系列的标准因子
+   * @param termsEnum   term的迭代器
+   * @param docsSeen   docId位图
+   * @param norms  该对象可以通过指定field 获取相关的标准因子
    * @return
    * @throws IOException
    */
   @Override
   public final BlockTermState writeTerm(BytesRef term, TermsEnum termsEnum, FixedBitSet docsSeen, NormsProducer norms) throws IOException {
+
+    // 定义一种可迭代的模板  每次迭代对应到不同的doc 并且 可以获取此时的value
     NumericDocValues normValues;
     // 如果此时正在处理的 field 不包含标准因子信息 忽略
     if (fieldInfo.hasNorms() == false) {
       normValues = null;
     } else {
+      // 从索引文件中读取之前写入的 标准因子
       normValues = norms.getNorms(fieldInfo);
     }
     // 代表开始处理该term 会重置一些相关数据

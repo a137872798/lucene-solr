@@ -82,12 +82,12 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
 
   /**
    *
-   * @param maxSkipLevels   代表跳跃表最大层级为多少
-   * @param blockSize
-   * @param docCount   文档数
-   * @param docOut    3种用于写入数据的输出流
-   * @param posOut
-   * @param payOut
+   * @param maxSkipLevels   代表跳跃表最大层级为多少    默认为10
+   * @param blockSize    每个block内存储多少数据
+   * @param docCount   当前段预备 将多少doc 刷盘
+   * @param docOut    对应 .doc 索引文件
+   * @param posOut    对应 .pos 索引文件
+   * @param payOut    对应 .pay 索引文件
    */
   public Lucene84SkipWriter(int maxSkipLevels, int blockSize, int docCount, IndexOutput docOut, IndexOutput posOut, IndexOutput payOut) {
     super(blockSize, 8, maxSkipLevels, docCount);
@@ -95,16 +95,20 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
     this.posOut = posOut;
     this.payOut = payOut;
 
-    // 创建与层级相关的 数组
+    // 代表跳跃表每层包含多少doc
     lastSkipDoc = new int[maxSkipLevels];
+
     lastSkipDocPointer = new long[maxSkipLevels];
     if (posOut != null) {
+      // 跳跃表每层包含多少 position信息
       lastSkipPosPointer = new long[maxSkipLevels];
       if (payOut != null) {
+        // 每层包含多少 payload/offset 信息
         lastSkipPayPointer = new long[maxSkipLevels];
       }
       lastPayloadByteUpto = new int[maxSkipLevels];
     }
+    // 该对象负责记录 freq 和 norm
     curCompetitiveFreqNorms = new CompetitiveImpactAccumulator[maxSkipLevels];
     for (int i = 0; i < maxSkipLevels; ++i) {
       curCompetitiveFreqNorms[i] = new CompetitiveImpactAccumulator();
@@ -112,7 +116,7 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
   }
 
   /**
-   * 标明当前存储的字段 是否需要存储 position/offset/payload 信息
+   * 标记当前处理的 field 需要将哪些信息写入到索引文件
    * @param fieldHasPositions
    * @param fieldHasOffsets
    * @param fieldHasPayloads
