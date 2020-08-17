@@ -598,6 +598,11 @@ final class FrozenBufferedUpdates {
       Terms terms(String field) throws IOException;
     }
 
+    /**
+     *
+     * @param fields  负责遍历相关的所有 field   一般情况下就是 FreqProxFields
+     * @param sortedTerms  该field下的term 是否已经排序过了
+     */
     TermDocsIterator(Fields fields, boolean sortedTerms) {
       this(fields::terms, sortedTerms);
     }
@@ -611,16 +616,24 @@ final class FrozenBufferedUpdates {
       this.provider = provider;
     }
 
+    /**
+     * 切换内部的 term迭代器
+     * @param field
+     * @throws IOException
+     */
     private void setField(String field) throws IOException {
       // 切换内部的 termEnum
       if (this.field == null || this.field.equals(field) == false) {
         this.field = field;
 
+        // 返回的是  FreqProxTerms
         Terms terms = provider.terms(field);
         if (terms != null) {
+          // 返回的是  FreqProxTermsEnum
           termsEnum = terms.iterator();
           if (sortedTerms) {
             assert (lastTerm = null) == null; // need to reset otherwise we fail the assertSorted below since we sort per field
+            // 如果已经完成排序了 就可以先读取第一个值
             readerTerm = termsEnum.next();
           }
         } else {
@@ -630,7 +643,7 @@ final class FrozenBufferedUpdates {
     }
 
     /**
-     * 通过 field 和 term 信息 找到包含该term的所有doc信息
+     * 找到该field 关联的所有doc 且field在这些doc 中携带了 term 信息
      * @param field
      * @param term
      * @return
@@ -639,18 +652,23 @@ final class FrozenBufferedUpdates {
     DocIdSetIterator nextTerm(String field, BytesRef term) throws IOException {
       // 这里会将 term迭代器切换成该field下的
       setField(field);
+      // 代表成功生成了 term的迭代器对象
       if (termsEnum != null) {
+        // 代表term 已经按照大小顺序排序过了
         if (sortedTerms) {
           assert assertSorted(term);
           // in the sorted case we can take advantage of the "seeking forward" property
           // this allows us depending on the term dict impl to reuse data-structures internally
           // which speed up iteration over terms and docs significantly.
+          // 代表传入的term 比当前所有的term 都要小 也就无法找到对应的doc 返回null
           int cmp = term.compareTo(readerTerm);
           if (cmp < 0) {
             return null; // requested term does not exist in this segment
+            // 代表不需要继续遍历 此时 field下遍历到的term 就是查询的 term    将相关的所有docId 包装成迭代器返回
           } else if (cmp == 0) {
             return getDocs();
           } else {
+            // 这个时候就是检测 该term在 terms 中能否被找到
             TermsEnum.SeekStatus status = termsEnum.seekCeil(term);
             switch (status) {
               case FOUND:
@@ -666,7 +684,7 @@ final class FrozenBufferedUpdates {
                 throw new AssertionError("unknown status");
             }
           }
-          // 精确匹配文本内容后 返回包含该term的 docId 迭代器  (利用了倒排索引)
+          // 如果没有排序的话 精确匹配
         } else if (termsEnum.seekExact(term)) {
           return getDocs();
         }

@@ -65,6 +65,9 @@ class FreqProxFields extends Fields {
     throw new UnsupportedOperationException();
   }
 
+  /**
+   * 遍历某个field 下所有的term
+   */
   private static class FreqProxTerms extends Terms {
     final FreqProxTermsWriterPerField terms;
 
@@ -166,6 +169,7 @@ class FreqProxFields extends Fields {
     public FreqProxTermsEnum(FreqProxTermsWriterPerField terms) {
       this.terms = terms;
       this.numTerms = terms.bytesHash.size();
+      // sortedTermIDs 代表 term按照文本内容排序后  每个term对应的id     一开始按插入term的顺序生成 termID
       sortedTermIDs = terms.sortedTermIDs;
       assert sortedTermIDs != null;
       postingsArray = (FreqProxPostingsArray) terms.postingsArray;
@@ -176,7 +180,7 @@ class FreqProxFields extends Fields {
     }
 
     /**
-     * 返回 text的下一个text 所对应的 term
+     * 查询当前对象中是否有包含某个 term的数据
      * @param text
      * @return  SeekStatus 描述一个查询的结果
      */
@@ -189,8 +193,9 @@ class FreqProxFields extends Fields {
       int hi = numTerms - 1;
       while (hi >= lo) {
         int mid = (lo + hi) >>> 1;
-        // 找到目标位置对应的term 从哪里开始  因为将数据写入到pool的方式是 先写入数据长度 后写入数据 所以只要定位到起点 就能够准确的读取数据
+        // sortedTermIDs  已经按照文本大小进行排序了  先找到 中间term在 blockPool中的起始偏移量
         int textStart = postingsArray.textStarts[sortedTermIDs[mid]];
+        // 读取 term的信息
         terms.bytePool.setBytesRef(scratch, textStart);
         // 通过比较文本 确定查找范围
         int cmp = scratch.compareTo(text);
@@ -208,10 +213,11 @@ class FreqProxFields extends Fields {
 
       // 进入到这里已经代表没有找到了
       // not found:
-      ord = lo;  // lo 代表下限 当下限超过 numTerms 代表大于当前存储的所有term 所以没有找到
+      ord = lo;
       if (ord >= numTerms) {
         return SeekStatus.END;
       } else {
+        // 代表没有找到
         int textStart = postingsArray.textStarts[sortedTermIDs[ord]];
         terms.bytePool.setBytesRef(scratch, textStart);
         assert term().compareTo(text) > 0;
@@ -230,7 +236,7 @@ class FreqProxFields extends Fields {
     }
 
     /**
-     * 遍历 term   按照ord的顺序
+     * 读取某个term
      * @return
      */
     @Override
@@ -239,6 +245,7 @@ class FreqProxFields extends Fields {
       if (ord >= numTerms) {
         return null;
       } else {
+        // 找到 term 在 termHash的起始偏移量
         int textStart = postingsArray.textStarts[sortedTermIDs[ord]];
         terms.bytePool.setBytesRef(scratch, textStart);
         return scratch;
@@ -281,25 +288,25 @@ class FreqProxFields extends Fields {
 
     /**
      * 这里有多种 PostingsEnum
-     * @param reuse pass a prior PostingsEnum for possible reuse
-     * @param flags specifies which optional per-document values   会尽可能尝试复用之前的 实体 减少内存开销
-     *        you require; see {@link PostingsEnum#FREQS}    代表需要范围哪些维度的信息
+     * @param reuse pass a prior PostingsEnum for possible reuse  该对象本身会被复用
+     * @param flags specifies which optional per-document values
+     *        you require; see {@link PostingsEnum#FREQS}    代表是否需要携带其他信息
      * @return
      */
     @Override
     public PostingsEnum postings(PostingsEnum reuse, int flags) {
-      // 代表需要获取能够读取 term.position 的迭代器对象
+      // 如果需要携带 position信息
       if (PostingsEnum.featureRequested(flags, PostingsEnum.POSITIONS)) {
         FreqProxPostingsEnum posEnum;
 
-        // 这个 prox 就是 position 的意思    代表该field.IndexPosition 本身就没有存储 位置信息 直接抛出异常
+        // 代表需要携带 position  但是field 当时没有存储该信息
         if (!terms.hasProx) {
           // Caller wants positions but we didn't index them;
           // don't lie:
           throw new IllegalArgumentException("did not index positions");
         }
 
-        // 如果需要查询 offset 信息
+        // 如果需要查询 offset 信息 而之前没有存储
         if (!terms.hasOffsets && PostingsEnum.featureRequested(flags, PostingsEnum.OFFSETS)) {
           // Caller wants offsets but we didn't index them;
           // don't lie:
@@ -309,7 +316,7 @@ class FreqProxFields extends Fields {
         // 如果该对象已经是 存储position的对象了 选择直接复用
         if (reuse instanceof FreqProxPostingsEnum) {
           posEnum = (FreqProxPostingsEnum) reuse;
-          // 因为核心属性不一致 所以无法复用
+          // 内部的数组不同 无法复用
           if (posEnum.postingsArray != postingsArray) {
             posEnum = new FreqProxPostingsEnum(terms, postingsArray);
           }
@@ -325,13 +332,13 @@ class FreqProxFields extends Fields {
       // 进入到这里代表 本次不需要读取position相关的信息
       FreqProxDocsEnum docsEnum;
 
+      // 如果需要查询频率信息 而未存储  抛出异常
       if (!terms.hasFreq && PostingsEnum.featureRequested(flags, PostingsEnum.FREQS)) {
         // Caller wants freqs but we didn't index them;
         // don't lie:
         throw new IllegalArgumentException("did not index freq");
       }
 
-      // 创建一个信息量少些的对象
       if (reuse instanceof FreqProxDocsEnum) {
         docsEnum = (FreqProxDocsEnum) reuse;
         if (docsEnum.postingsArray != postingsArray) {
@@ -371,7 +378,7 @@ class FreqProxFields extends Fields {
   }
 
   /**
-   *
+   * docId 迭代器
    */
   private static class FreqProxDocsEnum extends PostingsEnum {
 
@@ -382,6 +389,10 @@ class FreqProxFields extends Fields {
     int docID = -1;
     int freq;
     boolean ended;
+
+    /**
+     * 此时分片数据是关于哪个 term的
+     */
     int termID;
 
     public FreqProxDocsEnum(FreqProxTermsWriterPerField terms, FreqProxPostingsArray postingsArray) {
@@ -396,6 +407,7 @@ class FreqProxFields extends Fields {
      */
     public void reset(int termID) {
       this.termID = termID;
+      // 这里读取的都是第一个维度的数据
       terms.initReader(reader, termID, 0);
       ended = false;
       docID = -1;
@@ -437,29 +449,43 @@ class FreqProxFields extends Fields {
       return null;
     }
 
+    /**
+     * 遍历该term 所在的所有doc
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
       if (docID == -1) {
         docID = 0;
       }
+      // 代表存储相关数据的容器已经读取到末尾
       if (reader.eof()) {
         if (ended) {
           return NO_MORE_DOCS;
         } else {
           ended = true;
+          // 获取该 term最后一次出现的doc
           docID = postingsArray.lastDocIDs[termID];
+          // 默认情况下 只要存储了频率信息 就顺便读取频率信息
           if (readTermFreq) {
+            // 代表该term在最后一个文档中出现的频率
             freq = postingsArray.termFreqs[termID];
           }
         }
       } else {
+        // 当不需要存储频率信息时  code 就是 2个docId 之间的差值   写入逻辑对应  FreqProxTermsWriterPerField.addTerm()
         int code = reader.readVInt();
+        // 所以这里要记录是否存储了频率信息
         if (!readTermFreq) {
+          // 还原docId
           docID += code;
         } else {
           docID += code >>> 1;
+          // 代表该term 在当前文档中只出现了一次
           if ((code & 1) != 0) {
             freq = 1;
+          // 这种情况是 连续写入了 docId 差值 与当前文档中term出现的频率
           } else {
             freq = reader.readVInt();
           }
@@ -488,6 +514,10 @@ class FreqProxFields extends Fields {
   private static class FreqProxPostingsEnum extends PostingsEnum {
 
     final FreqProxTermsWriterPerField terms;
+
+    /**
+     * term抽取出来的相关信息都暂存在该数组 以及 2个slice中
+     */
     final FreqProxPostingsArray postingsArray;
 
     /**

@@ -205,7 +205,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     /**
      *
      * @param fieldNum  field 编号
-     * @param numTerms   内部有多少 term
+     * @param numTerms   内部有多少 term  以去重
      * @param positions     是否记录这3种属性
      * @param offsets
      * @param payloads
@@ -233,7 +233,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
 
     /**
-     * 往该 field 中追加某个term
+     * 往该 field 中追加某个term    在处理前 term已经排序完成
      * @param freq   该term出现的频率
      * @param prefixLength   与上个词相同前缀的长度
      * @param suffixLength   剩余的部分就是后缀长度
@@ -525,8 +525,10 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       // 存储每个词的频率信息 这里存储的值还额外减了1  因为 freq总是>=1
       flushTermFreqs();
       // positions for all terms, when enabled
+      // 记录每个term的 position   position 就是term在 field.value 中被分词器拆解后的逻辑偏移量   比如 hello world  那么 hello的逻辑偏移量就是0 world的逻辑偏移量就是1
       flushPositions();
       // offsets for all terms, when enabled
+      // 记录每个term的 偏移量信息  就是该term起始的物理偏移量 与终止的物理偏移量
       flushOffsets(fieldNums);
       // payload lengths for all terms, when enabled
       // 写入payload的长度
@@ -536,7 +538,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       //
       // TODO: We could compress in the slices we already have in the buffer (min/max slice
       // can be set on the buffer itself).
-      // 取出后缀数据
+      // termSuffixes 负责存储每个 term的后缀信息   并且每当某个doc下所有的term处理完后 会将之前暂存payload数据的容器  全部转移到 termSuffixes中 这样相当于 payload和term后缀数据都存在这里
       byte[] content = termSuffixes.toArrayCopy();
       // 将后缀压缩后写入到 output中
       compressor.compress(content, 0, content.length, vectorsStream);
@@ -776,21 +778,23 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 写入 position 信息
+   * 记录每个term对应的position信息
    * @throws IOException
    */
   private void flushPositions() throws IOException {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
+        // 先确保field 需要存储position信息
         if (fd.hasPositions) {
           int pos = 0;
+          // 遍历该field下每个 term
           for (int i = 0; i < fd.numTerms; ++i) {
             int previousPosition = 0;
-            // 当某个词 出现了多次时   果然同一个词的position存放是连续的
+            // 根据每个词出现的频率 读取指定次数的 逻辑position 信息
             for (int j = 0; j < fd.freqs[i]; ++j) {
               final int position = positionsBuf[fd .posStart + pos++];
-              // 差值存储
+              // 使用差值存储
               writer.add(position - previousPosition);
               previousPosition = position;
             }
@@ -803,25 +807,31 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   }
 
   /**
-   * 写入每个词的偏移量信息
-   * @param fieldNums
+   * 写入每个词的偏移量信息  包含起始偏移量和终止偏移量
+   * @param fieldNums   代表在全局范围下 已经为field去重 且按照fieldNum 排序后的结果
    * @throws IOException
    */
   private void flushOffsets(int[] fieldNums) throws IOException {
     boolean hasOffsets = false;
+
+    // 下面2个数组存的是 某个field下所有term的 offset总和 和 position总和
     long[] sumPos = new long[fieldNums.length];
     long[] sumOffsets = new long[fieldNums.length];
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
         // 只要有一个 field 包含 offset 信息 设置该标识为true
         hasOffsets |= fd.hasOffsets;
+
+        // 如果同时包含 offset 和 position 信息
         if (fd.hasOffsets && fd.hasPositions) {
+          // 找到此时 field在全局范围下对应的位置
           final int fieldNumOff = Arrays.binarySearch(fieldNums, fd.fieldNum);
           int pos = 0;
-          // TODO 需要之后再捋一下
+          // 遍历该field下所有term
           for (int i = 0; i < fd.numTerms; ++i) {
-            // 这里只取 某个词最后一次出现的post 的总和
+            // 通过fieldNum 找到对应的槽  并将该槽下 某个term 所有的position信息求和   当某个term出现多次时 只取最后一个term的
             sumPos[fieldNumOff] += positionsBuf[fd.posStart + fd.freqs[i]-1 + pos];
+            // 该field下所有term的 startOff 总和
             sumOffsets[fieldNumOff] += startOffsetsBuf[fd.offStart + fd.freqs[i]-1 + pos];
             pos += fd.freqs[i];
           }
@@ -836,32 +846,43 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
       return;
     }
 
-    // 这里存储的是比率  md我到现在还不知道 啥是 position 啥是 offset
+    // 这里存储了  每个field 对应的所有term的  sumOffset/sumPos  主要看读取的时候怎么用
     final float[] charsPerTerm = new float[fieldNums.length];
     for (int i = 0; i < fieldNums.length; ++i) {
+      // 如果field未设置 position 信息 那么计算出来就是0
       charsPerTerm[i] = (sumPos[i] <= 0 || sumOffsets[i] <= 0) ? 0 : (float) ((double) sumOffsets[i] / sumPos[i]);
     }
 
     // start offsets
+    // 将 charsPerTerm 写入到索引文件中
     for (int i = 0; i < fieldNums.length; ++i) {
       vectorsStream.writeInt(Float.floatToRawIntBits(charsPerTerm[i]));
     }
 
+    // 使用位存储对象加工即将要写入到 vectorsStream的数据流
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
-        // 如果包含了 offset信息  这里准备存储 offset 信息
+        // 首先确保存储了 offset 信息
         if ((fd.flags & OFFSETS) != 0) {
+          // 找到当前 field在数组中的下标
           final int fieldNumOff = Arrays.binarySearch(fieldNums, fd.fieldNum);
+          // 找到对应的  sumOffset/sumPos的值   这时一个大概的斜率
           final float cpt = charsPerTerm[fieldNumOff];
           int pos = 0;
+          // 遍历 term
           for (int i = 0; i < fd.numTerms; ++i) {
             int previousPos = 0;
             int previousOff = 0;
+            // 按频率遍历多次 term
             for (int j = 0; j < fd.freqs[i]; ++j) {
+              // 定位到 term的逻辑位置
               final int position = fd.hasPositions ? positionsBuf[fd.posStart + pos] : 0;
+              // 定位到 term的 起始物理偏移量
               final int startOffset = startOffsetsBuf[fd.offStart + pos];
-              // TODO 这是神马 ???
+
+              // (cpt * (position - previousPos)) 会计算出一个 近似的  offset的变化量
+              // 这个实际上就是计算期望啊  这样写入的 offset的值就会比较小
               writer.add(startOffset - previousOff - (int) (cpt * (position - previousPos)));
               previousPos = position;
               previousOff = startOffset;
@@ -874,7 +895,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     writer.finish();
 
     // lengths
-    // 这里写入长度
+    // 这里写入  每个 term 对应的 endOffset - startOffset 的长度
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
       for (FieldData fd : dd.fields) {
@@ -882,6 +903,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
           int pos = 0;
           for (int i = 0; i < fd.numTerms; ++i) {
             for (int j = 0; j < fd.freqs[i]; ++j) {
+              // 只写入 - 前后缀长度后的值  这样就只会记录停词的长度了
               writer.add(lengthsBuf[fd.offStart + pos++] - fd.prefixLengths[i] - fd.suffixLengths[i]);
             }
           }
@@ -899,6 +921,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
   private void flushPayloadLengths() throws IOException {
     writer.reset(vectorsStream);
     for (DocData dd : pendingDocs) {
+      // 因为 payload是绑定在 field上的 所以不需要遍历 term 信息
       for (FieldData fd : dd.fields) {
         if (fd.hasPayloads) {
           for (int i = 0; i < fd.totalPositions; ++i) {
@@ -930,7 +953,7 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     }
     // 生成元数据文件
     indexWriter.finish(numDocs, vectorsStream.getFilePointer());
-    // 记录最后的信息 并且写入校验和
+    // 记录最后的信息 并且写入校验和   numChunks代表数据刷盘了几次 也就是内部的数据块分成几份存储
     vectorsStream.writeVLong(numChunks);
     vectorsStream.writeVLong(numDirtyChunks);
     CodecUtil.writeFooter(vectorsStream);

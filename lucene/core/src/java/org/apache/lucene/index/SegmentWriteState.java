@@ -50,7 +50,7 @@ public class SegmentWriteState {
 
   /** Number of deleted documents set while flushing the
    *  segment. */
-  // 记录本次刷盘过程中有多少doc无法被写入  这些doc被删除的原因是生成索引时失败
+  // 记录本次刷盘过程中有多少doc无法被写入  这些doc被删除的原因可能是生成索引时失败 / 也可能是因为 BufferedUpdates 不为空 导致命中了term的doc 将会被删除 也就不会写入到索引文件中
   public int delCountOnFlush;
   /** Number of only soft deleted documents set while flushing the
    *  segment. */

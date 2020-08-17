@@ -106,7 +106,7 @@ final class TermVectorsConsumerPerField extends TermsHashPerField {
         // 获取写入词向量信息的对象
         final TermVectorsWriter tv = termsWriter.writer;
 
-        // 将 termID 按照 term的大小排序  此时termID就是无序的
+        // 将 termID 按照 term的大小排序  这时就可以利用共享前缀的方式存储数据了
         final int[] termIDs = sortPostings();
 
         // writer 可以创建索引结构对象 这里是给索引对象追加field 信息   (对应实体 fieldData)

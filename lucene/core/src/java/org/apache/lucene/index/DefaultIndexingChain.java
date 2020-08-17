@@ -1052,6 +1052,7 @@ final class DefaultIndexingChain extends DocConsumer {
             if (first) {
                 // First time we're seeing this field (indexed) in
                 // this document:
+                // field 的信息以一个doc为单位 会选择复用 每当切换到一个新的doc时 之前存储的invert信息都要清除
                 invertState.reset();
             }
 

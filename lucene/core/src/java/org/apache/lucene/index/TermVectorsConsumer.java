@@ -163,7 +163,7 @@ class TermVectorsConsumer extends TermsHash {
 
     lastDocID++;
 
-    // 这里将 pool的内存释放   也就是每次处理一个新的doc时 初始化一次 bytePool/intPool/bytesHash  当数据写入到writer后 清空之前的数据
+    // 回收存储词向量分片的空间
     super.reset();
     resetFields();
   }

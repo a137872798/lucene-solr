@@ -46,7 +46,7 @@ final class FreqProxTermsWriter extends TermsHash {
   }
 
   /**
-   * 删除部分数据
+   * 检测是否有数据被删除 / 更新
    * @param state
    * @param fields
    * @throws IOException
@@ -54,23 +54,26 @@ final class FreqProxTermsWriter extends TermsHash {
   private void applyDeletes(SegmentWriteState state, Fields fields) throws IOException {
     // Process any pending Term deletes for this newly
     // flushed segment:
-    // 代表有数据发生了变化 并且某些数据需要被删除
+    // 代表命中某些term的doc 将要被删除    term倒排索引数据是只有在 提交时才会写入的  而termVector数据是可以提前写入到索引文件中的
     if (state.segUpdates != null && state.segUpdates.deleteTerms.size() > 0) {
+
+      // 获取查找哪些doc应该被删除的 term
       Map<Term,Integer> segDeletes = state.segUpdates.deleteTerms;
       List<Term> deleteTerms = new ArrayList<>(segDeletes.keySet());
       Collections.sort(deleteTerms);
       FrozenBufferedUpdates.TermDocsIterator iterator = new FrozenBufferedUpdates.TermDocsIterator(fields, true);
       for(Term deleteTerm : deleteTerms) {
-        // 通过精确匹配term的值 返回该term所在的所有docId
+        // 获取该field 关联的所有doc 且 field在该doc下 包含term
         DocIdSetIterator postings = iterator.nextTerm(deleteTerm.field(), deleteTerm.bytes());
         if (postings != null ) {
+          // 只有小于该 limit的 doc会被删除
           int delDocLimit = segDeletes.get(deleteTerm);
           assert delDocLimit < PostingsEnum.NO_MORE_DOCS;
           int doc;
           // 在docId 小于 limit前的 doc都会被删除
           while ((doc = postings.nextDoc()) < delDocLimit) {
+            // 这种情况代表此时所有doc都是有效的  也就是没有写入失败的doc
             if (state.liveDocs == null) {
-              // TODO 如果 liveDocs 还没有被创建 这里默认 doc是连续的
               state.liveDocs = new FixedBitSet(state.segmentInfo.maxDoc());
               state.liveDocs.set(0, state.segmentInfo.maxDoc());
             }
@@ -86,7 +89,8 @@ final class FreqProxTermsWriter extends TermsHash {
   }
 
   /**
-   * 当 DefaultIndexingChain 处理完所有的doc 后  会调用该方法
+   * 将暂存在内存中的数据 全部刷盘到索引文件上    跟 TermVector 对象不同 该对象只有在刷盘时 才会将所有term信息写入
+   * TermVector对象每当某个doc处理完毕后 就要将 term此时的向量信息结构化后存储在内存中 并等待满足一定量时 进行刷盘 或者手动触发刷盘
    * @param fieldsToFlush  每个value 都代表某个field下所有的 term信息
    * @param state  这个对象描述了 将数据写入到段索引中相关的参数
    * @param sortMap
@@ -100,13 +104,13 @@ final class FreqProxTermsWriter extends TermsHash {
     super.flush(fieldsToFlush, state, sortMap, norms);
 
     // Gather all fields that saw any postings:
-    // 这里存储 做好 term排序的 perField 对象
     List<FreqProxTermsWriterPerField> allFields = new ArrayList<>();
 
     for (TermsHashPerField f : fieldsToFlush.values()) {
+      // 上游对象就是 FreqProx 对象   它的数据一开始都还没有在内存中形成结构化数据
       final FreqProxTermsWriterPerField perField = (FreqProxTermsWriterPerField) f;
       if (perField.bytesHash.size() > 0) {
-        // 这里为 term 排序
+        // 这里为 term 排序  并在 perField中 填充了一个排序后的 termID 数组
         perField.sortPostings();
         assert perField.fieldInfo.getIndexOptions() != IndexOptions.NONE;
         allFields.add(perField);
@@ -114,14 +118,14 @@ final class FreqProxTermsWriter extends TermsHash {
     }
 
     // Sort by field name
-    // 按照 fieldName 再进行一次排序
+    // 这里按照 fieldName 对  perField对象进行排序
     CollectionUtil.introSort(allFields);
 
     // 包装成一组field 对象 该对象可以遍历内部的 field 以及 term (通过指定field 可以获取到 包含该field下所有 term的 FreqProxTerms 对象)
     Fields fields = new FreqProxFields(allFields);
     // 检查 segmentWriterState中是否有标记为需要删除的doc 有的话从 aliveDoc的位图中移除对应标记位
     applyDeletes(state, fields);
-    // 该对象会包装返回的 terms (terms 是该对象通过传入field获取到的)
+    // TODO 先忽略该对象
     if (sortMap != null) {
       fields = new SortingLeafReader.SortingFields(fields, state.fieldInfos, sortMap);
     }

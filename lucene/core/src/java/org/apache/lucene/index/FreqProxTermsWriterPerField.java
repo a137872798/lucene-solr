@@ -182,18 +182,20 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
 
     // 记录该词 属于哪个 doc   每次调用PerThread.updateDocuments时 会为正在处理的doc分配一个docId
     postings.lastDocIDs[termID] = docState.docID;
-    // 从 fieldIndexOptional 可以知道是否要s存储频率信息     在TermVectorsConsumerPerField中不是自动存储了 频率信息吗???
+    // 从 fieldIndexOptional 可以知道是否要存储频率信息
     if (!hasFreq) {
       assert postings.termFreqs == null;
       postings.lastDocCodes[termID] = docState.docID;
       // 保持原封不动 如果数据异常则使用1
       fieldState.maxTermFrequency = Math.max(1, fieldState.maxTermFrequency);
     } else {
+      // prox offset 都是 stream = 1 对应的数据流
+
       // 最低位为0 代表需要记录频率信息
       postings.lastDocCodes[termID] = docState.docID << 1;
       // 获取频率信息 并记录
       postings.termFreqs[termID] = getTermFreq();
-      // 如果携带了 位置信息和偏移量信息 写入到 BytePool中    TODO 这里的存储逻辑跟TermVectorsConsumerPerField 很相似 为什么又存储了 一遍 position 和 offset呢???
+      // 如果携带了 位置信息和偏移量信息 写入到 BytePool中
       if (hasProx) {
         writeProx(termID, fieldState.position);
         if (hasOffsets) {
@@ -221,7 +223,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       if (termFreqAtt.getTermFrequency() != 1) {
         throw new IllegalStateException("field \"" + fieldInfo.name + "\": must index term freq while using custom TermFrequencyAttribute");
       }
-      // 代表此时跨文档了
+      // 代表此时跨文档了   不需要记录频率的时候 只要记录关联的文档就可以
       if (docState.docID != postings.lastDocIDs[termID]) {
         // New document; now encode docCode for previous doc:
         assert docState.docID > postings.lastDocIDs[termID];
@@ -243,7 +245,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       // 当发生跨文档时  代表着此时termFreqs[termID] 中记录的就是上一个文档中该term出现的总次数
       // 代表上一次文档中该term只出现一次
       if (1 == postings.termFreqs[termID]) {
-        // 最低位为1的时候 代表该term在
+        // 最低位为1的时候 代表该term在上个文档中只出现一次
         writeVInt(0, postings.lastDocCodes[termID]|1);
       } else {
         // 最低位为0 时 将上次docId 与上上个docID的差值写入  以及该term在上个doc出现的频率
@@ -271,7 +273,7 @@ final class FreqProxTermsWriterPerField extends TermsHashPerField {
       }
       // 跨文档 看作独立的 term
       fieldState.uniqueTermCount++;
-      // 代表在同一文档中 并且 需要记录频率
+      // 代表需要记录频率信息  并且没有发生跨文档
     } else {
       // 没有发生跨文档 增加该 term在该doc中出现的次数
       postings.termFreqs[termID] = Math.addExact(postings.termFreqs[termID], getTermFreq());

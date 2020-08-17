@@ -169,7 +169,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
     // because token text has already been "interned" into
     // textStart, so we hash by textStart.  term vectors use
     // this API.
-    // 这是传播到下游时 使用的api
+    // 这是传播到下游时 使用的api  下游是  TermVector
     public void add(int textStart) throws IOException {
         // 因为上游和下游使用的 bytesHash内部的 termPool指向同一地址 所以数据是可以共用的(但是指针是各自维护的)  这里是在初始化该hash的指针
         int termID = bytesHash.addByPoolOffset(textStart);
@@ -231,7 +231,7 @@ abstract class TermsHashPerField implements Comparable<TermsHashPerField> {
         // We are first in the chain so we must "intern" the
         // term text into textStart address
         // Get the text & hash of this term.
-        // 将 term 写入到 hash桶中  注意 该hash桶与上游的 hash桶连接到同一个bytesPool上
+        // 将 term 写入到 hash桶中  注意 该hash桶与下游的 hash桶连接到同一个bytesPool上
         int termID = bytesHash.add(termAtt.getBytesRef());
 
         //System.out.println("add term=" + termBytesRef.utf8ToString() + " doc=" + docState.docID + " termID=" + termID);
