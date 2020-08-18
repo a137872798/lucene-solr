@@ -80,7 +80,8 @@ public abstract class MultiLevelSkipListWriter {
     /**
      * Creates a {@code MultiLevelSkipListWriter}.
      *
-     * @param skipInterval   对应block的大小
+     * @param skipInterval   对应block的大小     在Lucene84PositionsWriter的构造函数中可以看到  使用BLOCK_SIZE 来初始化跳跃表的 skipInterval  也就是每当  Lucene84PositionsWriter 写入一定数量的doc时 会将数据存储到跳跃表中
+     *                       也刚好在跳跃表中对应了一个 block的大小
      * @param skipMultiplier 默认为8
      * @param maxSkipLevels  跳跃表最大层级   默认为10
      * @param df             当前段预备写入多少doc
@@ -160,17 +161,19 @@ public abstract class MultiLevelSkipListWriter {
      *
      * @param df the current document frequency
      * @throws IOException If an I/O error occurs
-     * 代表此时写入了多个 doc
+     * 代表此时处理到 term关联的第几个 doc
      */
     public void bufferSkip(int df) throws IOException {
 
+        // 整个跳跃表结构是这样的  在最下层 存储了所有的 block 然后每当满足 skipMultiplier 个block时 会在上层增加一个 block作为索引项
+
         assert df % skipInterval == 0;
         int numLevels = 1;
-        // 这样才转换成 skip[0]   对照该类上方的图   最底层包含了所有的数据 切换到skip[0] 时 要将数据/skipInterval
+        // 转换成 block的下标   因为传入的doc 必然能被blockSize(skipInterval) 整除
         df /= skipInterval;
 
         // determine max level
-        // 计算该数据 会存储在多少级中   再skip[] 内部 每级往少 元素变成 n/skipMultiplier
+        // 计算数据总计要写入几层
         while ((df % skipMultiplier) == 0 && numLevels < numberOfSkipLevels) {
             numLevels++;
             df /= skipMultiplier;

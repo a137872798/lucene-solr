@@ -29,10 +29,10 @@ import org.apache.lucene.index.TermState;
  */
 public class BlockTermState extends OrdTermState {
   /** how many docs have this term */
-  // 该词中有多少doc   倒排索引那  这个代表的是 该term出现在了多少doc中 而不是term包含多少doc
+  // 该term 关联了多少doc
   public int docFreq;
   /** total number of occurrences of this term */
-  // 该term在所有存在的doc中一共出现了多少次
+  // 该term 在所有的doc中出现了多少次  就是将出现在每个doc中的次数累加起来
   public long totalTermFreq;
 
   /** the term's ord in the current block */

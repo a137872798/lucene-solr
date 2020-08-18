@@ -49,7 +49,6 @@ public abstract class TermsEnum implements BytesRefIterator {
   }
 
   /** Returns the related attributes. */
-  // 该对象为什么会绑定一个 attr ???
   public abstract AttributeSource attributes();
   
   /** Represents returned result from {@link #seekCeil}. */

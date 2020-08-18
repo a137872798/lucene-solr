@@ -313,7 +313,7 @@ class FreqProxFields extends Fields {
           throw new IllegalArgumentException("did not index offsets");
         }
 
-        // 如果该对象已经是 存储position的对象了 选择直接复用
+        // 如果该对象已经是 存储position的对象了 选择直接复用   当reuse为null时 这里会返回false
         if (reuse instanceof FreqProxPostingsEnum) {
           posEnum = (FreqProxPostingsEnum) reuse;
           // 内部的数组不同 无法复用
@@ -522,6 +522,7 @@ class FreqProxFields extends Fields {
 
     /**
      * 每当调整当前 term时 对应的分片读取对象会移动到 pool对应的起点
+     * 2个分片 一个是存储 docId的 一个是存储该term在该docId的 位置信息
      */
     final ByteSliceReader reader = new ByteSliceReader();
     final ByteSliceReader posReader = new ByteSliceReader();
@@ -579,6 +580,8 @@ class FreqProxFields extends Fields {
       if (docID == -1) {
         docID = 0;
       }
+
+      // 代表term在当前选中的doc中出现多次  这里切换到同一doc的下一个位置
       while (posLeft != 0) {
         nextPosition();
       }
@@ -588,15 +591,19 @@ class FreqProxFields extends Fields {
           return NO_MORE_DOCS;
         } else {
           ended = true;
+          // 从之前设置好的数组中 读取该term最后一次出现时对应的 docId 以及该term在最后一个doc中出现的次数
           docID = postingsArray.lastDocIDs[termID];
           freq = postingsArray.termFreqs[termID];
         }
       } else {
+        // 获取该term所在的第一个docId  也可能就是0
         int code = reader.readVInt();
         docID += code >>> 1;
+        // 最低位为0 代表频率是1
         if ((code & 1) != 0) {
           freq = 1;
         } else {
+          // 最低位为0 代表下一个int值是 freq
           freq = reader.readVInt();
         }
 
@@ -619,22 +626,32 @@ class FreqProxFields extends Fields {
       throw new UnsupportedOperationException();
     }
 
+    /**
+     * doc不会发生变化 同时找到term在doc中的下一个位置
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextPosition() throws IOException {
       assert posLeft > 0;
       posLeft--;
+      // 对应 position  最低位代表是否携带 payload
       int code = posReader.readVInt();
       pos += code >>> 1;
+      // 代表存在payload
       if ((code & 1) != 0) {
         hasPayload = true;
         // has a payload
+        // 对应payload的长度
         payload.setLength(posReader.readVInt());
         payload.grow(payload.length());
+        // 读取payload的数据
         posReader.readBytes(payload.bytes(), 0, payload.length());
       } else {
         hasPayload = false;
       }
 
+      // 如果还携带了 offset信息   一个数据对应 startOff 另一个对应 endOff - startOff 这里进行还原
       if (readOffsets) {
         startOffset += posReader.readVInt();
         endOffset = startOffset + posReader.readVInt();

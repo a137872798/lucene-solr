@@ -468,7 +468,7 @@ public final class Lucene84PostingsFormat extends PostingsFormat {
    * {@link org.apache.lucene.index.PostingsEnum} without re-seeking the terms dict.
    *
    * @lucene.internal
-   * 描述将term信息写入到 block中 此时 block的状态信息
+   * 该对象描述了 处理某个term关联的所有doc后的结果信息
    */
   public static final class IntBlockTermState extends BlockTermState {
     /** file pointer to the start of the doc ids enumeration, in {@link #DOC_EXTENSION} file */

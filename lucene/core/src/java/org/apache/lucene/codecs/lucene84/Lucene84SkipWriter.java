@@ -142,7 +142,7 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
    */
   @Override
   public void resetSkip() {
-    // 根据此时正在处理的 field     记录相关偏移量
+    // 在开始处理一个新的 term前  记录之前的文件偏移量
     lastDocFP = docOut.getFilePointer();
     if (fieldHasPositions) {
       lastPosFP = posOut.getFilePointer();
@@ -150,12 +150,14 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
         lastPayFP = payOut.getFilePointer();
       }
     }
-    if (initialized) {
 
+    // 清空之前记录的 norm/impact 信息
+    if (initialized) {
       for (CompetitiveImpactAccumulator acc : curCompetitiveFreqNorms) {
         acc.clear();
       }
     }
+    // 标记成需要重新创建跳跃表结构  惰性初始化
     initialized = false;
   }
 
@@ -163,11 +165,11 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
    * 初始化跳跃表
    */
   private void initSkip() {
-    // 每次处理一个新的 field时 会将 initialized修改成 false 然后每当处理的 doc数量满足一个block时 会触发一次bufferSkip
+    // 需要重新构建 跳跃表结构
     if (!initialized) {
-      // 回收之前 buffer中写入的数据
+      // 分配跳跃表数组
       super.resetSkip();
-      // 重置相关数组
+      // 使用上次重置前最后的 文件偏移量初始化相关属性
       Arrays.fill(lastSkipDoc, 0);
       Arrays.fill(lastSkipDocPointer, lastDocFP);
       if (fieldHasPositions) {
@@ -190,12 +192,17 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
 
   /**
    * Sets the values for the current skip data.
-   * @param numDocs 此时写入了多少doc
-   * 将这些数据 写入到跳跃表结构
+   * @param doc 此时对应的docId
+   * @param competitiveFreqNorms  当前累加器内已经存储的 term 的频率和 norm 信息
+   * @param numDocs  代表处理到该term关联的 第几个 doc
+   * @param posFP  当前 .pos文件的起始偏移量
+   * @param payFP  当前 .pay文件的起始偏移量
+   * @param posBufferUpto 当前 pos相关数组的下标
+   * @param payloadByteUpto  对应存储 payload 数组的下标
    */
   public void bufferSkip(int doc, CompetitiveImpactAccumulator competitiveFreqNorms,
       int numDocs, long posFP, long payFP, int posBufferUpto, int payloadByteUpto) throws IOException {
-    // 开始初始化数据块
+    // 重建跳跃表结构 以及更新 lastXXX属性
     initSkip();
     // 更新当前的最新信息
     this.curDoc = doc;
@@ -212,7 +219,7 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
 
 
   /**
-   * 因为一开始 跳跃表的 间隔 层级 等都是确定的 所以能够确定要将数据写入到哪里
+   * 因为一开始 跳跃表的 间隔 层级 等都是确定的 所以能够确定要将数据写入到哪里       能够确保每次写入都是往后叠加的一个原因是  每个跳跃表是针对 term在所有doc下的数据 它的相关数据都是单调递增的
    * @param level      the level skip data shall be writing for  标记此时往跳跃表的第几层写入数据
    * @param skipBuffer the skip buffer to write to   对应存储数据的容器
    * @throws IOException
@@ -223,12 +230,12 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
     // 计算与上一次写入该层数据的差值
     int delta = curDoc - lastSkipDoc[level];
 
-    // 这里写入的是差值
+    // 这里写入的是差值   也就是即使在跳跃表结构中 同一层的数据 每项还是依赖前一项(差值存储)
     skipBuffer.writeVInt(delta);
     // 更新该level 上次写入的doc数量
     lastSkipDoc[level] = curDoc;
 
-    // 这里也是写入增量数据
+    // 写入  .doc文件的 filePoint增量信息
     skipBuffer.writeVLong(curDocPointer - lastSkipDocPointer[level]);
     lastSkipDocPointer[level] = curDocPointer;
 
@@ -236,6 +243,8 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
 
       skipBuffer.writeVLong(curPosPointer - lastSkipPosPointer[level]);
       lastSkipPosPointer[level] = curPosPointer;
+
+      // 2个下标信息 不使用差值存储
       skipBuffer.writeVInt(curPosBufferUpto);
 
       if (fieldHasPayloads) {
@@ -248,9 +257,10 @@ final class Lucene84SkipWriter extends MultiLevelSkipListWriter {
       }
     }
 
-    // 以上都是只存储差值
+    // 上面是处理 filePoint  docId  2个数组下标 等信息
 
-    // 找到当前level的impact累加器  TODO 这里写入时 额外增加一个 level 不知道为啥
+
+    // 找到当前level的impact累加器
     CompetitiveImpactAccumulator competitiveFreqNorms = curCompetitiveFreqNorms[level];
     assert competitiveFreqNorms.getCompetitiveFreqNormPairs().size() > 0;
     if (level + 1 < numberOfSkipLevels) {

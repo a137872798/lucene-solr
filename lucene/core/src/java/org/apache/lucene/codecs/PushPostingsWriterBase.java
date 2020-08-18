@@ -140,40 +140,43 @@ public abstract class PushPostingsWriterBase extends PostingsWriterBase {
     }
     // 代表开始处理该term 会重置一些相关数据
     startTerm(normValues);
-    // 从term中获取 pos信息   如果是 merge对象 那么返回的就是每个segment下有关该term的postingsEnum的整合对象
-    // postings 代表了多种描述信息 比如freq payload etc..
+    // 生成遍历 所有term位置信息的迭代器   enumFlags 代表需要存储的类型   传入postingEnum是尝试复用该对象 如果该对象还未创建 那么会在该方法内新建
+    // 从 doc的解析来看 每个term在termHash中 会维护自己的一个数据分片 用于记录该term出现在哪些doc下 以及 pos/offset/freq 等信息
     postingsEnum = termsEnum.postings(postingsEnum, enumFlags);
     assert postingsEnum != null;
 
-    // 代表该term下包含多少 doc (或者说处理了多少doc)
     int docFreq = 0;
     long totalTermFreq = 0;
     while (true) {
+      // 遍历该 term所在的 docId  便于构成倒排索引
       int docID = postingsEnum.nextDoc();
-      // 代表此时无数据可读
+      // 代表已经遍历完 该term相关的所有 doc了
       if (docID == PostingsEnum.NO_MORE_DOCS) {
         break;
       }
       docFreq++;
+      // 记录当前term出现在哪些doc中
       docsSeen.set(docID);
       int freq;
-      // 如果这个field内的数据都写入了 freq信息 那么可以尝试读取
+      // 如果在解析doc时 标记了需要存储 term在某个doc下出现的频率 那么这时可以读取之前写入的数据
       if (writeFreqs) {
         freq = postingsEnum.freq();
         totalTermFreq += freq;
       } else {
+        // 未设置频率的情况下 使用-1
         freq = -1;
       }
-      // 代表开始处理某个doc  也就是doc实际上才是最小单位  在解析数据流的时候 某doc出现的频率等都是已知的  这里只是做一些存储工作
+
+      // 存储 freq docId 信息 以及将freq和 norm 记录到一个 accumulator对象中
       startDoc(docID, freq);
 
       // 如果当前处理的 field 携带 position信息
       if (writePositions) {
-        // position 记录了每次doc所在的位置   根据出现的频率次数 读取多个位置
+        // 有多少频率信息 就有多少位置信息
         for(int i=0;i<freq;i++) {
           // 读取当前doc所在位置信息
           int pos = postingsEnum.nextPosition();
-          // 如果还有其他携带信息 也一并读取
+          // 如果存在 payload 信息 那么也加载出来
           BytesRef payload = writePayloads ? postingsEnum.getPayload() : null;
           int startOffset;
           int endOffset;

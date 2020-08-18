@@ -1192,7 +1192,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             }
             */
 
-            // 将 term的相关信息先写入到  负责存储 term position信息的  positionWriter中   该对象内部还使用了跳跃表
+            // 将 term的相关信息先写入到  负责存储 term position信息的  positionWriter中   该对象内部还使用了跳跃表  返回的结果是表述存储信息的
             BlockTermState state = postingsWriter.writeTerm(text, termsEnum, docsSeen, norms);
             // 代表数据有效   当该term没有写入到任何doc时 返回null
             if (state != null) {
@@ -1200,6 +1200,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 assert state.docFreq != 0;
                 assert fieldInfo.getIndexOptions() == IndexOptions.DOCS || state.totalTermFreq >= state.docFreq : "postingsWriter=" + postingsWriter;
 
+                // 存储term字面量信息   term在写入前已经按照字面量大小排序过了
                 pushTerm(text);
 
                 // 将term 包装成一个 hold对象  并存储到一个栈结构中
@@ -1220,12 +1221,14 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
         /**
          * Pushes the new term to the top of the stack, and writes new blocks.
+         * 将 term字面值存储到 term
          */
         private void pushTerm(BytesRef text) throws IOException {
             // Find common prefix between last term and current term:
             // 返回相同的前缀长度 ！！！注意不是数组下标
             int prefixLength = Arrays.mismatch(lastTerm.bytes(), 0, lastTerm.length(), text.bytes, text.offset, text.offset + text.length);
-            // -1代表2个term完全相同  然而在同一个field下 是不可能出现2个相同的term的 所以这里重置成0
+            // -1代表2个term完全相同    这种情况应该不会出现 因为term已经去重过了 在 termHash的 newTerm addTerm中 相同的term只会累加值 而不会重复存储
+            // TODO 先忽略吧 不知道怎么出现这种情况
             if (prefixLength == -1) { // Only happens for the first term, if it is empty
                 assert lastTerm.length() == 0;
                 prefixLength = 0;

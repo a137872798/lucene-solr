@@ -16,9 +16,6 @@
  */
 package org.apache.lucene.codecs.lucene80;
 
-import java.io.DataInput;
-import java.io.IOException;
-
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
@@ -27,6 +24,9 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.RoaringDocIdSet;
+
+import java.io.DataInput;
+import java.io.IOException;
 
 /**
  * Disk-based implementation of a {@link DocIdSetIterator} which can return
@@ -111,6 +111,7 @@ final class IndexedDISI extends DocIdSetIterator {
 
     /**
      * 当此时的docId 切换到下一个block时 需要将之前的数据写入到 文件中
+     *
      * @param block          本次 buffer数据对应的block
      * @param buffer         存储数据的位图对象  长度固定为 65535  此时位图已经存储了划分到该block下的所有doc
      * @param cardinality    当前block中总计写入了多少数据
@@ -140,7 +141,7 @@ final class IndexedDISI extends DocIdSetIterator {
                     // 将rank数组信息写入到 out中
                     out.writeBytes(rank, rank.length);
                 }
-                // 这里直接将压缩的long值写入 使用者读取时自己进行解析
+                // 这里直接将压缩的long值写入 使用者读取时自己进行解析   每个long 被当作一个 字    而 rank以每多少个字为单位 记录了目标位置下之前所有字中总计写入了多少docId
                 for (long word : buffer.getBits()) {
                     out.writeLong(word);
                 }
@@ -161,15 +162,15 @@ final class IndexedDISI extends DocIdSetIterator {
      * 创建rank[] 此时还没有填充数据
      *
      * @param buffer
-     * @param denseRankPower 取值范围为 7~15   该值越大代表block被拆解的越细
+     * @param denseRankPower 取值范围为 7~15   该值越大代表 rank数组越小 每个rank 记录的word就越多
      * @return
      */
     private static byte[] createRank(FixedBitSet buffer, byte denseRankPower) {
-        // 取值范围为 2~512
+        // 取值范围为 2~512       -6 代表换算成字  也就是每个rank下要存储多少个字
         final int longsPerRank = 1 << (denseRankPower - 6);
         // 获得掩码
         final int rankMark = longsPerRank - 1;
-        // 取值范围为 0~8
+        // 取值范围为 0~8      -7 首先是 -6 代表总计要存储多少字 -1 代表每个字占用2个rank[] 槽
         final int rankIndexShift = denseRankPower - 7; // 6 for the long (2^6) + 1 for 2 bytes/entry
         // rank[]的大小范围  1024 >> 0 =1024 ~  1024 >> 8=4   当 rank长度为1024时  longsPerRank 为2   当rank长度为 4时 longsPerRank为 512   可以看到 rank.length*longsPerRank 的值总是2048
         // longsPerRank的意思是 每多少个long值 允许写入到一个rank中
@@ -182,11 +183,13 @@ final class IndexedDISI extends DocIdSetIterator {
             // 代表每多少个word 才允许写入一个到 rank中
             if ((word & rankMark) == 0) { // Every longsPerRank longs
                 // 连续写入2个值 一个只记录高8位的值  一个只记录低8位
-                // 下标的取值范围是 4~ 1024 刚好匹配    当rank长度越大 代表每个block被拆分的越细
+                // 下标的取值范围是 4~ 1024 刚好匹配
+                // 当rank长度越大时  代表 记录的粒度更细     每个rank 代表之前所有字记录的docId 数量总和
                 rank[word >> rankIndexShift] = (byte) (bitCount >> 8);
                 rank[(word >> rankIndexShift) + 1] = (byte) (bitCount & 0xFF);
             }
             // 记录该long 下有多少值是有效的    当 longsPerRank为512时 该值最大值为32768  =  65536/2  代表可以用15位去表示  也就是2个long值 也就是占用2个rank的slot
+            // 这个值是不断累加的
             bitCount += Long.bitCount(bits[word]);
         }
         return rank;
@@ -460,7 +463,10 @@ final class IndexedDISI extends DocIdSetIterator {
      */
     long blockEnd;
     /**
-     * 代表视图的起始偏移量 用于计算seek的位置
+     * 对应  rank[] 数组后
+     * for (long word : buffer.getBits()) {
+     * out.writeLong(word);
+     * }
      */
     long denseBitmapOffset = -1; // Only used for DENSE blocks
     /**
@@ -723,7 +729,7 @@ final class IndexedDISI extends DocIdSetIterator {
             /**
              * 找到大于等于 target的最小的值
              * @param disi
-             * @param target
+             * @param target  这个应该是从0开始把 所以 >>> 后会至少保留一位不为0
              * @return
              * @throws IOException
              */
@@ -731,42 +737,49 @@ final class IndexedDISI extends DocIdSetIterator {
             boolean advanceWithinBlock(IndexedDISI disi, int target) throws IOException {
                 // target 在该block下的起始位置
                 final int targetInBlock = target & 0xFFFF;
-                // 同样的套路 将 65535 通过位运算 拆解成2个值
-                // 2<<6 对应64  也就是 64*1024     这个跟那个稀疏位图的实现是类似的      每个word 代表一个标识 代表它下属的64个docId中至少有一个值 总计1024个标识 可以表达65535个docId
+                // 找到 word 的下标
                 final int targetWordIndex = targetInBlock >>> 6;
 
                 // If possible, skip ahead using the rank cache
                 // If the distance between the current position and the target is < rank-longs
                 // there is no sense in using rank
-                // 每次应该是读取批量数据 并存储在 denseRank容器中 后面的  公式应该是计算大小之类的  也就是wordIndex的差距超过了容器大小 需要重新读取数据到容器中
+                // 2个word 的差距刚好满足一个 rank的大小 就直接通过读取下一个rank的值来快速查询
                 if (disi.denseRankPower != -1 && targetWordIndex - disi.wordIndex >= (1 << (disi.denseRankPower - 6))) {
                     rankSkip(disi, targetInBlock);
                 }
 
-                // 正常流程从这里开始  也就是 word 应该是连续设置的
+                // 正常流程从这里开始 挨个读取word的值 并计算当前总的 docId数
                 for (int i = disi.wordIndex + 1; i <= targetWordIndex; ++i) {
                     disi.word = disi.slice.readLong();
-                    // 累加word消耗的总bit
+                    // 更新当前总的doc数量
                     disi.numberOfOnes += Long.bitCount(disi.word);
                 }
+                // 对应 word的下标  代表读取到第几个word
                 disi.wordIndex = targetWordIndex;
 
-                // 左侧除了 目标值外 还有多少bit
+                // 左侧除了 目标值外 还有多少bit    target会变成64的余数
                 long leftBits = disi.word >>> target;
+                // 此时代表一定能大于target的值
                 if (leftBits != 0L) {
+                    // 有多少0 就代表比目标值大多少
                     disi.doc = target + Long.numberOfTrailingZeros(leftBits);
+                    // 剩余的部分 代表不被处理的 docId数量  将总的-不被处理的 就是当前已经遍历到的
                     disi.index = disi.numberOfOnes - Long.bitCount(leftBits);
                     return true;
                 }
 
                 // There were no set bits at the wanted position. Move forward until one is reached
+                // 当为满足 1024个字  也就是还没有到 block的末尾时 就不断读取
                 while (++disi.wordIndex < 1024) {
                     // This could use the rank cache to skip empty spaces >= 512 bits, but it seems unrealistic
                     // that such blocks would be DENSE
                     disi.word = disi.slice.readLong();
+                    // 代表内部有 docId  如果是空的位图就要跳过(空的long不记录任何docId )
                     if (disi.word != 0) {
+                        // 当发现了下一个有效的值时  更新index
                         disi.index = disi.numberOfOnes;
                         disi.numberOfOnes += Long.bitCount(disi.word);
+                        // 计算 docId的值
                         disi.doc = disi.block | (disi.wordIndex << 6) | Long.numberOfTrailingZeros(disi.word);
                         return true;
                     }
@@ -841,24 +854,31 @@ final class IndexedDISI extends DocIdSetIterator {
      * responsibility of the caller to iterate further to reach target.
      *
      * @param disi          standard DISI.
-     * @param targetInBlock lower 16 bits of the target   docId >> block  也就是docId在该block的相对偏移量
+     * @param targetInBlock lower 16 bits of the target
      * @throws IOException if a DISI seek failed.
      */
     private static void rankSkip(IndexedDISI disi, int targetInBlock) throws IOException {
         assert disi.denseRankPower >= 0 : disi.denseRankPower;
         // Resolve the rank as close to targetInBlock as possible (maximum distance is 8 longs)
         // Note: rankOrigoOffset is tracked on block open, so it is absolute (e.g. don't add origo)
+        // 先确定目标位置应该被 划分正在 rank[] 的下标   这里与写入是对应的  每个word 对应rank[]中2个位置  word  =  block/64  = block/ 1<<6
+        // rank 的计算又是通过  rankIndexShift = denseRankPower - 7
+        // 整个后  rankIndex = denseRankPower - 7 + 6
         final int rankIndex = targetInBlock >> disi.denseRankPower; // Default is 9 (8 longs: 2^3 * 2^6 = 512 docIDs)
 
-        // 把 之前存储在rank[]的数据读取出来 代表该block下总计使用了多少位
+        // 在这里又多了 << 1 就与写入是一样的
+        // 这里就是还原划分到整个小范围内 写入了多少docId
         final int rank =
                 (disi.denseRankTable[rankIndex << 1] & 0xFF) << 8 |
                         (disi.denseRankTable[(rankIndex << 1) + 1] & 0xFF);
 
         // Position the counting logic just after the rank point
+        // 计算此时是第几个 word
         final int rankAlignedWordIndex = rankIndex << disi.denseRankPower >> 6;
         disi.slice.seek(disi.denseBitmapOffset + rankAlignedWordIndex * Long.BYTES);
+        // 这里就记录了 该word下 有多少docId
         long rankWord = disi.slice.readLong();
+        // 之前所有 rank内记录的 docId总数 加上本次的 才是当前总的 docId 数
         int denseNOO = rank + Long.bitCount(rankWord);
 
         disi.wordIndex = rankAlignedWordIndex;

@@ -29,7 +29,7 @@ import org.apache.lucene.index.Impact;
 
 /**
  * This class accumulates the (freq, norm) pairs that may produce competitive scores.
- * 该对象是用来记录频率 和标准因子的
+ * 该对象是用来记录频率 和标准因子的    这个是用于打分的
  */
 public final class CompetitiveImpactAccumulator {
 
@@ -55,6 +55,7 @@ public final class CompetitiveImpactAccumulator {
         int cmp = Integer.compare(o1.freq, o2.freq);
         if (cmp == 0) {
           // greater norms compare lower
+          // 标准因子 越小越好
           cmp = Long.compareUnsigned(o2.norm, o1.norm);
         }
         return cmp;
@@ -73,14 +74,15 @@ public final class CompetitiveImpactAccumulator {
 
   /** Accumulate a (freq,norm) pair, updating this structure if there is no
    *  equivalent or more competitive entry already. */
-  // 添加一个 频率和 标准因子信息
+  // 在处理某个term时  累加它在所有 doc出现的 频率以及 term所在field在该doc下获得的 norm 值
   public void add(int freq, long norm) {
     if (norm >= Byte.MIN_VALUE && norm <= Byte.MAX_VALUE) {
-      // 更新最大值
+      // 转换成无符号数   转换成无符号数 就是 0~127
       int index = Byte.toUnsignedInt((byte) norm);
+      // 更新对应的频率值
       maxFreqs[index] = Math.max(maxFreqs[index], freq); 
     } else {
-      // 当标准因子的值 在 byte能表示的范围之外时  添加到otherFreqNormPairs 中  同样只允许freq不断递增 否则忽略添加
+      // 当标准因子的值 在 byte能表示的范围之外时  添加到otherFreqNormPairs 中  同样只取freq最大值
       add(new Impact(freq, norm), otherFreqNormPairs);
     }
     assert assertConsistent();
@@ -108,7 +110,7 @@ public final class CompetitiveImpactAccumulator {
     int maxFreqForLowerNorms = 0;
     for (int i = 0; i < maxFreqs.length; ++i) {
       int maxFreq = maxFreqs[i];
-      // 只有当频率不断增大时 才允许添加 Impact 同时这时的 norm 最小为0 而不是-128
+      // 只有当频率不断增大时 才允许添加 Impact
       if (maxFreq > maxFreqForLowerNorms) {
         impacts.add(new Impact(maxFreq, (byte) i));
         maxFreqForLowerNorms = maxFreq;
@@ -133,25 +135,27 @@ public final class CompetitiveImpactAccumulator {
    * @param freqNormPairs
    */
   private void add(Impact newEntry, TreeSet<Impact> freqNormPairs) {
-    // 获取比目标值更大 或者相等的值
+    // 获取频率比传入参数更大的 impact
     Impact next = freqNormPairs.ceiling(newEntry);
     if (next == null) {
       // nothing is more competitive
-      // 不存在时 直接添加该值
+      // 本次频率更大 直接添加
       freqNormPairs.add(newEntry);
+    // 在频率小于<= 当前树中已经有的 impact时     标准因子大的 就会被忽略
     } else if (Long.compareUnsigned(next.norm, newEntry.norm) <= 0) {
       // we already have this entry or more competitive entries in the tree
       return;
     } else {
       // some entries have a greater freq but a less competitive norm, so we
       // don't know which one will trigger greater scores, still add to the tree
-      // 这里 freq 和 nrom 都大的情况 还是选择添加
+      // 频率 小于等于当前树中的 impact时 只要标准因子小 那么此时得分就不确定了 选择加入
       freqNormPairs.add(newEntry);
     }
 
-    // 从大往下的顺序 剔除掉  norm大于newEntry的entry
+    // 从后往前 遍历 比 newEntry小的 impact
     for (Iterator<Impact> it = freqNormPairs.headSet(newEntry, false).descendingIterator(); it.hasNext(); ) {
       Impact entry = it.next();
+      // 这些 impact 频率肯定都是小于 newEntry的  只要 norm>= newEntry的就是必然要被剔除的
       if (Long.compareUnsigned(entry.norm, newEntry.norm) >= 0) {
         // less competitive
         it.remove();

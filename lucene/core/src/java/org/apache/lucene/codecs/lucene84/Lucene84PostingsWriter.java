@@ -116,7 +116,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
      */
     final long[] offsetLengthBuffer;
     /**
-     * 同一个doc下 当前读取了多少个position
+     * 对应当前应该写入的  位置信息相关的几个数组的下标 position/payloadLength/offsetStart/offsetLength
      */
     private int posBufferUpto;
 
@@ -297,33 +297,36 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     }
 
     /**
-     * 开始处理某个term
+     * 在处理某个 term之前 需要将相关数据重置
      *
-     * @param norms 同时需要处理的标准因子
+     * @param norms 该term关联的 field 的标准因子迭代器
      */
     @Override
     public void startTerm(NumericDocValues norms) {
-        // 根据当前field是否记录了某些信息   更新相关偏移量
+        // 获取此时 .doc文件的偏移量
         docStartFP = docOut.getFilePointer();
+        // 如果同时还需要写入 其他信息 就获取此时的文件偏移量
         if (writePositions) {
             posStartFP = posOut.getFilePointer();
             if (writePayloads || writeOffsets) {
                 payStartFP = payOut.getFilePointer();
             }
         }
+        // 重置 lastDocId   lastBlockDocId
         lastDocID = 0;
         lastBlockDocID = -1;
         // 将跳跃表内相关信息也进行更新
         skipWriter.resetSkip();
+        // 设置标准因子  以及 清空累加器的数据
         this.norms = norms;
         competitiveFreqNormAccumulator.clear();
     }
 
     /**
-     * 开始写入某个doc的值   调用顺序是 setField -> startTerm -> startDoc
+     * 代表term出现在某个doc下   这里只要记录freq 和 norm docID 信息
      *
-     * @param docID
-     * @param termDocFreq 当前doc出现的频率
+     * @param docID   记录该term在 docId 对应的doc时的数据
+     * @param termDocFreq 该term在doc中出现的次数
      * @throws IOException
      */
     @Override
@@ -331,33 +334,35 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         // Have collected a block of docs, and get a new doc.
         // Should write skip data as well as postings list for
         // current block.
-        // 代表此时处理的doc数量满足一个 block大小   这时将数据写入到skip结构中
+        // 每当处理的doc 数量满足一个 block时  将数据写入到 跳跃表中    这样就可以利用跳跃表结构快速检索某个doc相关的数据
         if (lastBlockDocID != -1 && docBufferUpto == 0) {
             skipWriter.bufferSkip(lastBlockDocID, competitiveFreqNormAccumulator, docCount,
                     lastBlockPosFP, lastBlockPayFP, lastBlockPosBufferUpto, lastBlockPayloadByteUpto);
+            // 因为累加的数据已经转移到  跳跃表结构了 所以可以清空该累加器
             competitiveFreqNormAccumulator.clear();
         }
 
-        // 如果是merge的情况 会对doc做整理  也就是doc会变成连续的 delta始终是1
-        // 如果是正常情况  如果发生了 删除doc的事件 那么doc就不是连续的
+        // 获取当前 doc 与上一个doc 的差值
         final int docDelta = docID - lastDocID;
 
         if (docID < 0 || (docCount > 0 && docDelta <= 0)) {
             throw new CorruptIndexException("docs out of order (" + docID + " <= " + lastDocID + " )", docOut);
         }
 
+        // docBufferUpto 初始状态为 0     这里记录 docId 差值 以及频率信息
         docDeltaBuffer[docBufferUpto] = docDelta;
         if (writeFreqs) {
             freqBuffer[docBufferUpto] = termDocFreq;
         }
 
-        // 增加当前block 处理的doc数量
+        // 增加当前处理的 doc数量
         docBufferUpto++;
         // 增加总的 doc 处理数
         docCount++;
 
         // 代表此时大小已经满足一个block 需要将数据持久化
         if (docBufferUpto == BLOCK_SIZE) {
+            // 这个util 的 读写就不细看了 涉及的位运算比较恶心
             forDeltaUtil.encodeDeltas(docDeltaBuffer, docOut);
             if (writeFreqs) {
                 // 将频率信息写入 out
@@ -369,7 +374,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         }
 
 
-        // 记录上次处理的 doc
+        // 记录上次处理的 doc  同时由于切换了文档 将之前在同一doc内使用差值存储的基准值重置
         lastDocID = docID;
         lastPosition = 0;
         lastStartOffset = 0;
@@ -377,11 +382,13 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         long norm;
         // 如果该field 携带了标准因子
         if (fieldHasNorms) {
+            // 检测是否有针对该 doc 生成的标准因子
             boolean found = norms.advanceExact(docID);
             if (found == false) {
                 // This can happen if indexing hits a problem after adding a doc to the
                 // postings but before buffering the norm. Such documents are written
                 // deleted and will go away on the first merge.
+                // 标准因子默认为 1
                 norm = 1L;
             } else {
                 // 获取该文档对应的标准因子
@@ -389,6 +396,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
                 assert norm != 0 : docID;
             }
         } else {
+            // 未设置标准因子时 也使用1
             norm = 1L;
         }
 
@@ -397,12 +405,12 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     }
 
     /**
-     * 将描述某个doc位置信息的数据写入索引文件   一个doc会根据它的freq存在等量的 position
+     * 将描述 term位置信息的数据写入
      *
-     * @param position
-     * @param payload
-     * @param startOffset
-     * @param endOffset
+     * @param position   该term 在 field.value(doc) 中的逻辑位置
+     * @param payload     携带的payload
+     * @param startOffset    该term在 doc的起始偏移量
+     * @param endOffset      该term在 doc的终止偏移量
      * @throws IOException
      */
     @Override
@@ -414,7 +422,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
             throw new CorruptIndexException("position=" + position + " is < 0", docOut);
         }
 
-        // 记录距上次调用 addPosition 的增量
+        // 只存储增量信息
         posDeltaBuffer[posBufferUpto] = position - lastPosition;
         // 如果有携带 负载信息
         if (writePayloads) {
@@ -423,6 +431,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
                 // no payload
                 payloadLengthBuffer[posBufferUpto] = 0;
             } else {
+                // 记录长度信息  以及写下 payload
                 payloadLengthBuffer[posBufferUpto] = payload.length;
                 if (payloadByteUpto + payload.length > payloadBytes.length) {
                     payloadBytes = ArrayUtil.grow(payloadBytes, payloadByteUpto + payload.length);
@@ -441,7 +450,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
             lastStartOffset = startOffset;
         }
 
-        // 增加当前block 已经处理的 position 数量
+        // 使用 特殊的util写入数据
         posBufferUpto++;
         lastPosition = position;
         if (posBufferUpto == BLOCK_SIZE) {
@@ -472,7 +481,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         // Since we don't know df for current term, we had to buffer
         // those skip data for each block, and when a new doc comes,
         // write them to skip file.
-        // 如果此时刚好填满了一个block
+        // 如果此时刚好填满了一个block   更新lastXXX 信息 并重置 docBufferUpto
         if (docBufferUpto == BLOCK_SIZE) {
             lastBlockDocID = lastDocID;
             if (posOut != null) {
@@ -490,7 +499,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
 
     /**
      * Called when we are done adding docs to this term
-     * 代表当前数据写入完成  这里是将一些当前状态回填到 state中
+     * 代表某个term相关的所有doc的位置信息已经写完了  这时将一些描述结果的属性设置到 state 中
      */
     @Override
     public void finishTerm(BlockTermState _state) throws IOException {
@@ -507,14 +516,15 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         // 代表该term只在一个doc中出现过
         if (state.docFreq == 1) {
             // pulse the singleton docid into the term dictionary, freq is implicitly totalTermFreq
+            // 读取docId
             singletonDocID = (int) docDeltaBuffer[0];
         } else {
             singletonDocID = -1;
             // vInt encode the remaining doc deltas and freqs:
-            // 注意docDeltaBuffer 存储的是据上一个doc的差值信息    倒排索引的doc一般情况下是非连续的
+            // 注意docDeltaBuffer 存储的是据上一个doc的差值信息
             for (int i = 0; i < docBufferUpto; i++) {
                 final int docDelta = (int) docDeltaBuffer[i];
-                // 这个频率应该是指term在单个doc中出现了多少次
+                // 对应的值是 该term 在该doc中的freq
                 final int freq = (int) freqBuffer[i];
                 if (!writeFreqs) {
                     docOut.writeVInt(docDelta);
@@ -536,14 +546,15 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
             // totalTermFreq is just total number of positions(or payloads, or offsets)
             // associated with current term.
             assert state.totalTermFreq != -1;
-            // 代表该term在所有doc中出现的次数总和 超过了128  如果超过了一个block的大小 就记录开始写入该term 到写完该term所有相关信息后的总偏移量变化
+            // 每个term每次出现都对应一个位置   所以计算位置信息的 block数量 就是将 totalTermFreq 与 blockSize 做比较
             if (state.totalTermFreq > BLOCK_SIZE) {
                 // record file offset for last pos in last block
+                // 记录 总计往 posOut 中写入了多少数据    因为只有当超过一个block的数据时 才会强制将数据写入到索引文件中
                 lastPosBlockOffset = posOut.getFilePointer() - posStartFP;
             } else {
                 lastPosBlockOffset = -1;
             }
-            // 这里记录了在某个doc下term出现的位置数量
+            // 代表还有部分数据没有写入到磁盘  将这些数据单独写入
             if (posBufferUpto > 0) {
                 // TODO: should we send offsets/payloads to
                 // .pay...?  seems wasteful (have to store extra
@@ -560,7 +571,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
                 for (int i = 0; i < posBufferUpto; i++) {
                     // 这里记录的是位置的增量值
                     final int posDelta = (int) posDeltaBuffer[i];
-                    // 如果额外写入了负载信息
+                    // 如果携带了 payload
                     if (writePayloads) {
                         // 记录负载信息的长度
                         final int payloadLength = (int) payloadLengthBuffer[i];
@@ -613,10 +624,9 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         }
 
         long skipOffset;
-        // 代表该term关联的doc总数 超过了一个 block的大小
+        // 代表有数据已经写入到跳跃表中了  需要将数据持久化到索引文件中    跳跃表应该只是检索用的 就像 disi中的rank[] 实际数据 docId 和 freq已经通过util写入到docOut了
         if (docCount > BLOCK_SIZE) {
-            // 每个跳跃表记录的数据 以 term为单位  每当处理超一个block长度的数据时 会生成一些差值数据 并存储到跳跃表中 这里将数据写回到output中
-            // skipOffset 代表 处理该term写入的总长度
+            // 差值就是 跳跃表写入的长度
             skipOffset = skipWriter.writeSkip(docOut) - docStartFP;
         } else {
             // 没有跨block的情况 就不需要写入这些信息
