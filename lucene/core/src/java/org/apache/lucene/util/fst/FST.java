@@ -589,6 +589,10 @@ public final class FST<T> implements Accountable {
         return emptyOutput;
     }
 
+    /**
+     * 当输入为 "" 时对应的权重
+     * @param v
+     */
     void setEmptyOutput(T v) {
         if (emptyOutput != null) {
             emptyOutput = outputs.merge(emptyOutput, v);
@@ -610,17 +614,21 @@ public final class FST<T> implements Accountable {
         CodecUtil.writeHeader(out, FILE_FORMAT_NAME, VERSION_CURRENT);
         // TODO: really we should encode this as an arc, arriving
         // to the root node, instead of special casing here:
+        // 如果 "" 对应了某个权重,走这个逻辑  不过有限制条件应该不会出现这种情况
         if (emptyOutput != null) {
             // Accepts empty string
+            // 代表允许出现空的字符串
             out.writeByte((byte) 1);
 
             // Serialize empty-string output:
             ByteBuffersDataOutput ros = new ByteBuffersDataOutput();
+            // 这里outputs 只是定义了写入的动作
             outputs.writeFinalOutput(emptyOutput, ros);
             byte[] emptyOutputBytes = ros.toArrayCopy();
             int emptyLen = emptyOutputBytes.length;
 
             // reverse
+            // 将数据反向写入
             final int stopAt = emptyLen / 2;
             int upto = 0;
             while (upto < stopAt) {
@@ -629,14 +637,15 @@ public final class FST<T> implements Accountable {
                 emptyOutputBytes[emptyLen - upto - 1] = b;
                 upto++;
             }
+            // 将empty string 对应的 output写入到 索引文件中
             out.writeVInt(emptyLen);
             out.writeBytes(emptyOutputBytes, 0, emptyLen);
         } else {
-            // 先写入一个0
+            // 当empty string 没有权重时 写入0
             out.writeByte((byte) 0);
         }
         final byte t;
-        // 这里写入类型
+        // 这里写入fst输入的类型
         if (inputType == INPUT_TYPE.BYTE1) {
             t = 0;
         } else if (inputType == INPUT_TYPE.BYTE2) {
@@ -645,7 +654,9 @@ public final class FST<T> implements Accountable {
             t = 2;
         }
         out.writeByte(t);
+        // 记录fst起点的偏移量
         out.writeVLong(startNode);
+        // fst中编译完成的节点数据就是存储在 bytes中的
         if (bytes != null) {
             long numBytes = bytes.getPosition();
             out.writeVLong(numBytes);

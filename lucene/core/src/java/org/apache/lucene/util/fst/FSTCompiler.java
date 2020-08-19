@@ -628,8 +628,7 @@ public class FSTCompiler<T> {
         assert validOutput(output);
 
         //System.out.println("\nadd: " + input);
-        // TODO 共享前缀长度是0的时候 首先要求 那个minItem的限制先去除吧 否则应该是不会出现这种情况的
-        // TODO 场景应该是这样 第一个term 传入一个长度为0的值 之后传入一个新值 这时代表 长度为0的值不再被共享 同时满足 minItem的限制 才会进入到这里
+        // 代表某个 "" 空输入 有对应的权重    这个在业务层面上应该是没有意义的
         if (input.length == 0) {
             // empty input: only allowed as first input.  we have
             // to special case this because the packed FST
@@ -639,7 +638,6 @@ public class FSTCompiler<T> {
             // 这个时候 FST的构建是最简单的 增加终止节点的共享数 并标记以完成 退出   数组下标也对应着深度的概念
             frontier[0].inputCount++;  // frontier[0] 是特殊的 arc 所有字符串都会共享该节点 同时 inputCount 就是共享计数
             frontier[0].isFinal = true;
-            // TODO 待处理
             fst.setEmptyOutput(output);
             return;
         }

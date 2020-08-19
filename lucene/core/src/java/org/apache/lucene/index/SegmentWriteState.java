@@ -54,7 +54,7 @@ public class SegmentWriteState {
   public int delCountOnFlush;
   /** Number of only soft deleted documents set while flushing the
    *  segment. */
-  // 本次刷盘中  有关软删除的doc数量
+  // 本次刷盘中  有关软删除的doc数量    当未设置软删除的字段时 当刷盘完成时 该字段为0
   public int softDelCountOnFlush;
   /**
    * Deletes and updates to apply while we are flushing the segment. A Term is
@@ -66,8 +66,11 @@ public class SegmentWriteState {
   public final BufferedUpdates segUpdates;
 
   /** {@link FixedBitSet} recording live documents; this is
-   *  only set if there is one or more deleted documents. */
-  // 这个位图对象记录了 需要保留的 doc  如果不需要保留 对应的位置会置0
+   *  only set if there is one or more deleted documents.
+   *  这个位图对象记录了此时该段下所有存活的doc
+   *  如果该属性未设置 默认就是所有doc都存活
+   *  如果在 pendingUpdates 中存在 termNode  那么在 defaultIndexingChain.flush 过程中 会将termNode命中的doc从该位图中删除
+   */
   public FixedBitSet liveDocs;
 
   /** Unique suffix for any postings files written for this

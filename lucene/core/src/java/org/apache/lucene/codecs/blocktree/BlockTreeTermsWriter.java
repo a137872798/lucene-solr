@@ -238,7 +238,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
     final FieldInfos fieldInfos;
 
     /**
-     * field 相关的元数据信息
+     * 当某个field下所有term信息都处理完后 将相关信息抽取出来生成 metaData
      */
     private static class FieldMetaData {
 
@@ -246,13 +246,28 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
          * 该field的描述信息
          */
         public final FieldInfo fieldInfo;
+        /**
+         * 所有term信息抽取整合成一个fst对象后 (作为term词典) 该fst下 emptyString 对应的权重
+         */
         public final BytesRef rootCode;
+        /**
+         * 该field下有多少term
+         */
         public final long numTerms;
+        /**
+         * 在写入fst之前  tim文件的偏移量
+         */
         public final long indexStartFP;
+        /**
+         * 该field 下所有term的 频率总和
+         */
         public final long sumTotalTermFreq;
+        /**
+         * field下所有term 对应相关的doc数量总和
+         */
         public final long sumDocFreq;
         /**
-         *
+         * 该field 总计出现多少个doc下
          */
         public final int docCount;
 
@@ -276,6 +291,9 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         }
     }
 
+    /**
+     * 每当某个field的数据处理完成时  将相关信息抽取出来生成 metaData对象 并添加到该list中
+     */
     private final List<FieldMetaData> fields = new ArrayList<>();
 
     /**
@@ -410,6 +428,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 termsWriter.write(term, termsEnum, norms);
             }
 
+            // 每当某个field下所有term写完后 需要将剩余不足block的部分也写入到索引文件中
             termsWriter.finish();
 
             //if (DEBUG) System.out.println("\nBTTW.write done seg=" + segment + " field=" + field);
@@ -575,9 +594,12 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             fstCompiler.add(Util.toIntsRef(prefix, scratchIntsRef), new BytesRef(bytes, 0, bytes.length));
             scratchBytes.reset();
 
+
+            // 这里以fst作为一个索引 有点像disi中rank的定位 实际上在 termOut中已经包含了所有term的信息了  这里只要存储前缀信息就可以 便于快速检测定位term的位置
             // Copy over index for all sub-blocks
-            // 将所有fst数据整合到一个fst中
+            // 将所有子block 整合到 fst中
             for (PendingBlock block : blocks) {
+                // 如果blocks只包含一个block
                 if (block.subIndices != null) {
                     for (FST<BytesRef> subIndex : block.subIndices) {
                         append(fstCompiler, subIndex, scratchIntsRef);
@@ -586,6 +608,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 }
             }
 
+            // 将所有子block的数据 抽取到本block上
             index = fstCompiler.compile();
 
             assert subIndices == null;
@@ -598,9 +621,15 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
       */
         }
 
-        // TODO: maybe we could add bulk-add method to
-        // Builder?  Takes FST and unions it w/ current
-        // FST.  将子block的fst数据汇总到一个fst
+        /**
+         * TODO: maybe we could add bulk-add method to
+         *       Builder?  Takes FST and unions it w/ current
+         *       FST.
+         * @param fstCompiler   构建fst的对象
+         * @param subIndex      本次要加入到fst的数据
+         * @param scratchIntsRef      临时容器
+         * @throws IOException
+         */
         private void append(FSTCompiler<BytesRef> fstCompiler, FST<BytesRef> subIndex, IntsRefBuilder scratchIntsRef) throws IOException {
             final BytesRefFSTEnum<BytesRef> subIndexEnum = new BytesRefFSTEnum<>(subIndex);
             BytesRefFSTEnum.InputOutput<BytesRef> indexEnt;
@@ -1199,7 +1228,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 assert state.docFreq != 0;
                 assert fieldInfo.getIndexOptions() == IndexOptions.DOCS || state.totalTermFreq >= state.docFreq : "postingsWriter=" + postingsWriter;
 
-                // 存储term字面量信息   term在写入前已经按照字面量大小排序过了
+                // 存储term字面量信息   内部每次以block为单位 写入索引文件中 并且block对应的前缀信息 (也许还会携带label标签)  会存入到fst结构中 便于快速查询
                 pushTerm(text);
 
                 // 将term 包装成一个entry对象  并存储到一个栈结构中
@@ -1230,7 +1259,6 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             // 返回相同的前缀长度 ！！！注意不是数组下标
             int prefixLength = Arrays.mismatch(lastTerm.bytes(), 0, lastTerm.length(), text.bytes, text.offset, text.offset + text.length);
             // -1代表2个term完全相同    这种情况应该不会出现 因为term已经去重过了 在 termHash的 newTerm addTerm中 相同的term只会累加值 而不会重复存储
-            // TODO 先忽略吧 不知道怎么出现这种情况
             if (prefixLength == -1) { // Only happens for the first term, if it is empty
                 assert lastTerm.length() == 0;
                 prefixLength = 0;
@@ -1252,6 +1280,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                     // if (DEBUG) System.out.println("pushTerm i=" + i + " prefixTopSize=" + prefixTopSize + " minItemsInBlock=" + minItemsInBlock);
                     // 代表写入的起始位置  直到第一个非共享的位置结束
                     writeBlocks(i + 1, prefixTopSize);
+                    // 这一步???  下面会重新设置啊 这一步设置的结果并不重要
                     prefixStarts[i] -= prefixTopSize - 1;
                 }
             }
@@ -1271,28 +1300,37 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             lastTerm.copyBytes(text);
         }
 
-        // Finishes all terms in this field
+        /**
+         * Finishes all terms in this field
+         * 当某个field下所有的term写入完成时  要将剩余的部分写入到索引文件中  (之前的term数据以block为单位写入)
+         * @throws IOException
+         */
         public void finish() throws IOException {
             if (numTerms > 0) {
                 // if (DEBUG) System.out.println("BTTW: finish prefixStarts=" + Arrays.toString(prefixStarts));
 
                 // Add empty term to force closing of all final blocks:
+                // 通过写入空的 term 使得本次共享前缀长度为0 促使之前所有的term 都写入到索引文件中   但是如果写入的term总数就比较少的话 不满足一个block的大小还是不会写入
                 pushTerm(new BytesRef());
 
                 // TODO: if pending.size() is already 1 with a non-zero prefix length
                 // we can save writing a "degenerate" root block, but we have to
                 // fix all the places that assume the root block's prefix is the empty string:
                 pushTerm(new BytesRef());
+                // 这里强制将栈中待处理的所有term 都写入到索引文件中
                 writeBlocks(0, pending.size());
 
                 // We better have one final "root" block:
                 assert pending.size() == 1 && !pending.get(0).isTerm : "pending.size()=" + pending.size() + " pending=" + pending;
+                // 这时所有term 都合成为一个blockNode  并且每个被共享次数超过 block的 前缀 都会加入到fst结构中形成一个索引   (这个索引应该就是term的词典)
                 final PendingBlock root = (PendingBlock) pending.get(0);
                 assert root.prefix.length == 0;
                 assert root.index.getEmptyOutput() != null;
 
                 // Write FST to index
+                // 获取此时termIndex的起始偏移量 （FST就是构成term词典的核心结构）
                 indexStartFP = indexOut.getFilePointer();
+                // 将fst的数据持久化到索引文件中
                 root.index.save(indexOut);
                 //System.out.println("  write FST " + indexStartFP + " field=" + fieldInfo.name);
 
@@ -1305,6 +1343,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
           w.close();
         }
         */
+        // 将相关信息包装成一个 metaData对象 并保存在全局 field容器中
                 assert firstPendingTerm != null;
                 BytesRef minTerm = new BytesRef(firstPendingTerm.termBytes);
 
@@ -1351,6 +1390,10 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
     private boolean closed;
 
+    /**
+     * 当所有field信息写完后 触发close
+     * @throws IOException
+     */
     @Override
     public void close() throws IOException {
         if (closed) {
@@ -1366,6 +1409,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
             termsOut.writeVInt(fields.size());
 
+            // 就是把 metaData 数据写入到索引文件中
             for (FieldMetaData field : fields) {
                 //System.out.println("  field " + field.fieldInfo.name + " " + field.numTerms + " terms");
                 termsOut.writeVInt(field.fieldInfo.number);

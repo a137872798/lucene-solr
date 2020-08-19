@@ -246,7 +246,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 // 这里会创建一个副本对象
                 normsMergeInstance = norms.getMergeInstance();
             }
-            // 将term信息写入到索引文件中  就是在这里利用了 FST 生成了倒排索引  还有使用了跳跃表 用于快速定位  fst
+            // 在这里已经将所有term信息写入到索引文件中了   利用跳跃表做了 doc的索引结构  利用fst做了 term的词典
             termsHash.flush(fieldsToFlush, state, sortMap, normsMergeInstance);
         }
         if (docState.infoStream.isEnabled("IW")) {
