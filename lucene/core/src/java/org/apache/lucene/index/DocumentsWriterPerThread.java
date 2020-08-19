@@ -144,15 +144,24 @@ final class DocumentsWriterPerThread {
          */
         final SegmentCommitInfo segmentInfo;
         /**
-         * 描述 段下所有的doc 下所有的域信息
+         * 该段对应的所有doc下存在的field
          */
         final FieldInfos fieldInfos;
+        /**
+         * 使用记录更新/删除信息的数据包装后生成的对象
+         */
         final FrozenBufferedUpdates segmentUpdates;
         /**
-         * 位图对象
+         * 描述此时还存在的所有doc  在flush时 已经处理过一轮针对term的删除了   不过这些doc信息还是写入到索引文件中了
          */
         final FixedBitSet liveDocs;
+        /**
+         * flush 时返回的排序容器  先忽略
+         */
         final Sorter.DocMap sortMap;
+        /**
+         * 记录在刷盘时删除的doc数量  包括解析失败的 和 命中  termNode 导致被删除的
+         */
         final int delCount;
 
         private FlushedSegment(InfoStream infoStream, SegmentCommitInfo segmentInfo, FieldInfos fieldInfos,
@@ -232,7 +241,7 @@ final class DocumentsWriterPerThread {
      */
     private volatile long lastCommittedBytesUsed;
     /**
-     * 代表 本次刷盘已经完成
+     * 代表 本次刷盘已经完成  该对象代表着整个解析/刷盘过程都是单线程完成的
      */
     private SetOnce<Boolean> hasFlushed = new SetOnce<>();
 
@@ -583,7 +592,10 @@ final class DocumentsWriterPerThread {
             } else {
                 softDeletedDocs = null;
             }
+            // 将之前解析doc 后生成的各种数据写入到索引文件中  返回一个排序相关的map
+            // TODO 先忽略排序的逻辑 所以sortMap返回null
             sortMap = consumer.flush(flushState);
+            // 忽略软删除
             if (softDeletedDocs == null) {
                 flushState.softDelCountOnFlush = 0;
             } else {
@@ -591,12 +603,12 @@ final class DocumentsWriterPerThread {
                 assert flushState.segmentInfo.maxDoc() >= flushState.softDelCountOnFlush + flushState.delCountOnFlush;
             }
             // We clear this here because we already resolved them (private to this segment) when writing postings:
-            // 当所有更新动作都执行完毕时 清理之前暂存在内存中的数据
+            // 因为刷盘过程中  pendingUpdates中有关term要删除的doc的部分 已经处理过了 所以不需要继续维护这部分数据了
             pendingUpdates.clearDeleteTerms();
             // 存储本次操作所创建的所有文件
             segmentInfo.setFiles(new HashSet<>(directory.getCreatedFiles()));
 
-            // 生成一个代表 刷盘完成的对象   注意这里传入的delCount == 0
+            // 当segment的数据刷盘完成时  会创建一个 commitInfo对象   初始化的这个对象很多属性都是默认值
             final SegmentCommitInfo segmentInfoPerCommit = new SegmentCommitInfo(segmentInfo, 0, flushState.softDelCountOnFlush, -1L, -1L, -1L, StringHelper.randomId());
             if (infoStream.isEnabled("DWPT")) {
                 infoStream.message("DWPT", "new segment has " + (flushState.liveDocs == null ? 0 : flushState.delCountOnFlush) + " deleted docs");
@@ -613,11 +625,12 @@ final class DocumentsWriterPerThread {
 
             // 对应本 preThread 记录的所有需要删除/更新的doc
             final BufferedUpdates segmentDeletes;
-            // 此时没有待更新的数据 清空队列
+            // 检查此时是否还有待更新/删除的数据
             if (pendingUpdates.deleteQueries.isEmpty() && pendingUpdates.numFieldUpdates.get() == 0) {
                 pendingUpdates.clear();
                 segmentDeletes = null;
             } else {
+                // 还有就要继续使用这个对象
                 segmentDeletes = pendingUpdates;
             }
 
@@ -631,7 +644,7 @@ final class DocumentsWriterPerThread {
 
             assert segmentInfo != null;
 
-            // 也就是做一些简单的 属性填充
+            // 这里生成一个叫做  已经完成刷盘的 segment对象   代表着之前解析doc的数据已经写入到磁盘中了
             FlushedSegment fs = new FlushedSegment(infoStream, segmentInfoPerCommit, flushState.fieldInfos,
                     segmentDeletes, flushState.liveDocs, flushState.delCountOnFlush, sortMap);
             sealFlushedSegment(fs, sortMap, flushNotifications);

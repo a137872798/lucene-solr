@@ -33,7 +33,6 @@ import org.apache.lucene.util.StringHelper;
  *  fields.
  *
  *  @lucene.experimental */
-// 该对象在 IndexWriter创建时 读取索引文件的数据并还原成该对象
 public class SegmentCommitInfo {
   
   /** The {@link SegmentInfo} that we wrap. */

@@ -299,7 +299,7 @@ public final class SegmentInfo {
   private Set<String> setFiles;
 
   /** Sets the files written for this segment. */
-  // 该segment将数据写入到了哪些文件
+  // 记录该段下所有的索引文件
   public void setFiles(Collection<String> files) {
     setFiles = new HashSet<>();
     addFiles(files);

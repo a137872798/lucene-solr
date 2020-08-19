@@ -124,6 +124,7 @@ final class FreqProxTermsWriter extends TermsHash {
     // 包装成一组field 对象 该对象可以遍历内部的 field 以及 term (通过指定field 可以获取到 包含该field下所有 term的 FreqProxTerms 对象)
     Fields fields = new FreqProxFields(allFields);
     // 检查 segmentWriterState中是否有标记为需要删除的doc 有的话从 aliveDoc的位图中移除对应标记位
+    // 可以看到在下面写入 term的逻辑中 实际上跟这里删除多少doc没关系  因为某个term关联哪些doc是在解析doc时就写入的信息 这里并没有修改之前的数据
     applyDeletes(state, fields);
     // TODO 先忽略该对象
     if (sortMap != null) {
