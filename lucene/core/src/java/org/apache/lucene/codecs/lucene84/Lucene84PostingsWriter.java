@@ -17,21 +17,13 @@
 package org.apache.lucene.codecs.lucene84;
 
 import static org.apache.lucene.codecs.lucene84.ForUtil.BLOCK_SIZE;
-import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.DOC_CODEC;
-import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.MAX_SKIP_LEVELS;
-import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.PAY_CODEC;
-import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.POS_CODEC;
-import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.TERMS_CODEC;
-import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.VERSION_CURRENT;
-
-import java.io.IOException;
-import java.nio.ByteOrder;
+import static org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.*;
 
 import org.apache.lucene.codecs.BlockTermState;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.CompetitiveImpactAccumulator;
 import org.apache.lucene.codecs.PushPostingsWriterBase;
-import org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.IntBlockTermState;
+import org.apache.lucene.codecs.lucene84.Lucene84PostingsFormat.*;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexFileNames;
@@ -44,6 +36,9 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BitUtil;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
+
+import java.io.IOException;
+import java.nio.ByteOrder;
 
 /**
  * Concrete class that writes docId(maybe frq,pos,offset,payloads) list
@@ -166,6 +161,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
 
     /**
      * Creates a postings writer
+     *
      * @param state 描述本次写入段数据的 上下文信息
      */
     public Lucene84PostingsWriter(SegmentWriteState state) throws IOException {
@@ -325,7 +321,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     /**
      * 代表term出现在某个doc下   这里只要记录freq 和 norm docID 信息
      *
-     * @param docID   记录该term在 docId 对应的doc时的数据
+     * @param docID       记录该term在 docId 对应的doc时的数据
      * @param termDocFreq 该term在doc中出现的次数
      * @throws IOException
      */
@@ -407,10 +403,10 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     /**
      * 将描述 term位置信息的数据写入
      *
-     * @param position   该term 在 field.value(doc) 中的逻辑位置
+     * @param position    该term 在 field.value(doc) 中的逻辑位置
      * @param payload     携带的payload
-     * @param startOffset    该term在 doc的起始偏移量
-     * @param endOffset      该term在 doc的终止偏移量
+     * @param startOffset 该term在 doc的起始偏移量
+     * @param endOffset   该term在 doc的终止偏移量
      * @throws IOException
      */
     @Override
@@ -549,12 +545,12 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
             // 每个term每次出现都对应一个位置   所以计算位置信息的 block数量 就是将 totalTermFreq 与 blockSize 做比较
             if (state.totalTermFreq > BLOCK_SIZE) {
                 // record file offset for last pos in last block
-                // 记录 总计往 posOut 中写入了多少数据    因为只有当超过一个block的数据时 才会强制将数据写入到索引文件中
+                // 只有当position信息 提前写入到 索引文件中 才会有该值
                 lastPosBlockOffset = posOut.getFilePointer() - posStartFP;
             } else {
                 lastPosBlockOffset = -1;
             }
-            // 代表还有部分数据没有写入到磁盘  将这些数据单独写入
+            // 代表还有部分数据没有写入到磁盘  将这些数据单独写入  注意这里不会生成 lastPosBlockOffset
             if (posBufferUpto > 0) {
                 // TODO: should we send offsets/payloads to
                 // .pay...?  seems wasteful (have to store extra
@@ -626,7 +622,7 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
         long skipOffset;
         // 代表有数据已经写入到跳跃表中了  需要将数据持久化到索引文件中    跳跃表应该只是检索用的 就像 disi中的rank[] 实际数据 docId 和 freq已经通过util写入到docOut了
         if (docCount > BLOCK_SIZE) {
-            // 差值就是 跳跃表写入的长度
+            // 差值就是  在跳跃表的数据还未写入前的索引文件偏移量
             skipOffset = skipWriter.writeSkip(docOut) - docStartFP;
         } else {
             // 没有跨block的情况 就不需要写入这些信息
@@ -648,54 +644,61 @@ public final class Lucene84PostingsWriter extends PushPostingsWriterBase {
     }
 
     /**
-     * 写入 term信息
+     * 将描述 term的一些相关信息 比如出现在哪些doc下 position等信息 写入到传入的 out中
      *
-     * @param out
-     * @param fieldInfo  该term 关联的 field
-     * @param _state  某个term将相关的倒排索引写入到文件后返回的状态对象
-     * @param absolute  默认是true
+     * @param out       存储生成的位置信息
+     * @param fieldInfo 该term 关联的 field
+     * @param _state    某个term之前通过positionWriter写入位置信息后返回的 各种 filePoint 等信息
+     * @param absolute  本次写入的是绝对数值 还是相对数值  在BlockTreeTermsWriter中 当某些term需要合并成block时 首个term需要写入绝对数据 之后的数据就可以以之前的数据为参照 写入相对数据
      * @throws IOException
      */
     @Override
     public void encodeTerm(DataOutput out, FieldInfo fieldInfo, BlockTermState _state, boolean absolute) throws IOException {
         IntBlockTermState state = (IntBlockTermState) _state;
-        // 如果基于绝对值进行处理 那么就无关上一次写入的信息了 所以这里将上次信息置空了
+        // 如果基于绝对值进行处理 那么无法借助上次的 state信息
         if (absolute) {
             lastState = emptyState;
             assert lastState.docStartFP == 0;
         }
 
-        // 代表基于增量数据处理
+        // lastState.singletonDocID != -1  代表上一个term只出现在一个doc中  (无关出现了多少次)
+        // 如果本次的term 刚好也只出现在一个doc中 就可以直接存储他们的差值
+        // 当term只出现在 一个doc时  docId 信息是不会写入到 .doc文件中的  所以 .doc.filePoint 是一致的
         if (lastState.singletonDocID != -1 && state.singletonDocID != -1 && state.docStartFP == lastState.docStartFP) {
             // With runs of rare values such as ID fields, the increment of pointers in the docs file is often 0.
             // Furthermore some ID schemes like auto-increment IDs or Flake IDs are monotonic, so we encode the delta
             // between consecutive doc IDs to save space.
             // 记录doc的增值
             final long delta = (long) state.singletonDocID - lastState.singletonDocID;
-            // zigZagEncode 就是将最高位变成了最低位    先不管它在干嘛吧
+            // zigzag 解决了负数占用位数过多的问题 提供了压缩的可能
             out.writeVLong((BitUtil.zigZagEncode(delta) << 1) | 0x01);
         } else {
-            // 反正也是写入一些数据 具体怎么用要看怎么读取  可以看到 无论是基于增量数据 还是绝对数据 表达式都是 state.docStartFP - lastState.docStartFP
+            // 写入前后2个term在处理前 .doc文件的偏移量
             out.writeVLong((state.docStartFP - lastState.docStartFP) << 1);
+            // 如果本次term只出现在一个doc中 直接写入docId的值
             if (state.singletonDocID != -1) {
                 out.writeVInt(state.singletonDocID);
             }
         }
 
-        // 代表该field下 标明了需要记录 position信息
+        // 记录位置信息
         if (writePositions) {
-            // 写入 pos的偏移量值
+            // 写入pos文件的偏移量差值
             out.writeVLong(state.posStartFP - lastState.posStartFP);
-            // ..
+            // 如果还携带了 payload 或者 offset信息 也将文件的偏移量差值写入
             if (writePayloads || writeOffsets) {
                 out.writeVLong(state.payStartFP - lastState.payStartFP);
             }
         }
         if (writePositions) {
+            // 每当position信息 超过一个block时 会将信息写入到索引文件中 最终lastPosBlockOffset 就等于以整数块写入索引文件后的偏移量 - 起始偏移量的差值
+            // 当term写完时 最后不足一个block的位置信息会单独写入
             if (state.lastPosBlockOffset != -1) {
                 out.writeVLong(state.lastPosBlockOffset);
             }
         }
+
+        // skipOffset是 在跳跃表的数据还未写入前的索引文件偏移量 (此时doc索引文件中仅记录了docID信息)
         if (state.skipOffset != -1) {
             out.writeVLong(state.skipOffset);
         }
