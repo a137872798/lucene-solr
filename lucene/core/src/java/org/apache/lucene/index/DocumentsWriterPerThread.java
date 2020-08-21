@@ -715,13 +715,14 @@ final class DocumentsWriterPerThread {
     /**
      * Seals the {@link SegmentInfo} for the new flushed segment and persists
      * the deleted documents {@link FixedBitSet}.
-     * 将刷盘完成后的segment 进行冻结
+     * 将描述segment的信息持久化到索引文件中
      */
     void sealFlushedSegment(FlushedSegment flushedSegment, Sorter.DocMap sortMap, DocumentsWriter.FlushNotifications flushNotifications) throws IOException {
         assert flushedSegment != null;
         // 本次提交动作相关的段信息
         SegmentCommitInfo newSegment = flushedSegment.segmentInfo;
 
+        // 将一些便于诊断的信息插入到 segmentInfo 中
         IndexWriter.setDiagnostics(newSegment.info, IndexWriter.SOURCE_FLUSH);
 
         // 创建一个刷盘上下文
@@ -730,7 +731,7 @@ final class DocumentsWriterPerThread {
         boolean success = false;
         try {
 
-            // 是否使用复合文件   不使用的话 会创建很多的索引文件
+            // TODO 忽略合成文件
             if (indexWriterConfig.getUseCompoundFile()) {
                 // 这些文件是本次操作过程中生成的
                 Set<String> originalFiles = newSegment.info.files();
@@ -744,7 +745,7 @@ final class DocumentsWriterPerThread {
             // creating CFS so that 1) .si isn't slurped into CFS,
             // and 2) .si reflects useCompoundFile=true change
             // above:
-            // 这次写入的是 有关段的索引文件
+            // 将描述段的相关信息写入 到索引文件
             codec.segmentInfoFormat().write(directory, newSegment.info, context);
 
             // TODO: ideally we would freeze newSegment here!!
@@ -753,8 +754,9 @@ final class DocumentsWriterPerThread {
 
             // Must write deleted docs after the CFS so we don't
             // slurp the del file into CFS:
-            // 只有当记录了 需要删除的doc时 该位图才会被创建
+            // 代表有某些doc被删除了  如果所有doc都存在 那么该值为null  在flush中 会将通过 TermNode删除的doc标记在位图中
             if (flushedSegment.liveDocs != null) {
+                // 这里同时包含了写入失败的doc  以及 被termNode命中的doc
                 final int delCount = flushedSegment.delCount;
                 assert delCount > 0;
                 if (infoStream.isEnabled("DWPT")) {
@@ -774,16 +776,16 @@ final class DocumentsWriterPerThread {
                 SegmentCommitInfo info = flushedSegment.segmentInfo;
                 Codec codec = info.info.getCodec();
                 final FixedBitSet bits;
-                // 这个对象是在  consumer.flush  后生成的  当对象没有生成时 只用之前的 liveDoc 作为位图对象
                 if (sortMap == null) {
                     bits = flushedSegment.liveDocs;
                 } else {
-                    // 如果返回了 sortMap 代表数据被重新排序过 那么就要按照新顺序 重新生成 liveDoc 位图
+                    // TODO 先忽略存在 sort的情况
                     bits = sortLiveDocs(flushedSegment.liveDocs, sortMap);
                 }
                 // 这里将 当前还留存的 doc 信息写入到索引文件中
                 codec.liveDocsFormat().writeLiveDocs(bits, directory, info, delCount, context);
                 newSegment.setDelCount(delCount);
+                // 这里还会重置segment的id
                 newSegment.advanceDelGen();
             }
 

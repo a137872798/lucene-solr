@@ -139,8 +139,8 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 应该是这个意思 如果开启了自动刷盘 那么当此时内存占用达到2倍的 ramMB时 强制刷盘
-     * 如果关闭自动刷盘功能的话  那么触发 stall(暂用) 的值就是 MAX_VALUE 也就是永远不会主动暂停写入doc
+     * 解析doc 意味着会有大量暂存在内存中
+     * 在没有开启自动刷盘的情况下  最多只允许占用一部分内存  直到手动触发刷盘 才允许继续解析doc
      *
      * @return
      */
@@ -304,7 +304,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 代表某个刷盘操作完成  (实际上也可能是刷盘操作终止)
+     * 代表某个perThread刷盘操作完成  (无论成功失败)
      *
      * @param dwpt
      */
@@ -320,6 +320,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
                 // 检测当前是否可以解除写doc到内存的线程阻塞
                 updateStallState();
             } finally {
+                // 有一个对外暴露的api   调用线程会阻塞直到flushingWriters 内所有对象都完成刷盘 ，这里就是尝试唤醒阻塞的线程
                 notifyAll();
             }
         }
@@ -346,9 +347,8 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
          * reach the limit without any ongoing flushes. we need to ensure
          * that we don't stall/block if an ongoing or pending flush can
          * not free up enough memory to release the stall lock.
-         * flushBytes 代表刷盘中的内存  activeBytes + flushBytes 代表当前占用的总内存
          */
-        final boolean stall = (activeBytes + flushBytes) > limit &&  // 代表此时占用的总内存过多
+        final boolean stall = (activeBytes + flushBytes) > limit &&  // 此时内存中还有太多数据， 无法继续解析doc
                 activeBytes < limit &&    // 如果 activeBytes > limit  代表此时有过多数据囤积在内存中 反而允许直接提交刷盘任务
                 !closed;
 

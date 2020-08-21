@@ -52,7 +52,7 @@ public class SegmentCommitInfo {
   private int softDelCount;
 
   // Generation number of the live docs file (-1 if there
-  // are no deletes yet):  每当触发一次删除动作时 该值都会增加
+  // are no deletes yet):  每当触发一次删除动作时 该值都会增加   一般在初始化时都会设置成-1 代表还未进行过一次删除
   private long delGen;
 
   // Normally 1+delGen, unless an exception was hit on last
@@ -165,7 +165,7 @@ public class SegmentCommitInfo {
   }
 
   /** Called when we succeed in writing deletes */
-  // 增加年代   每个删除动作结束后 年代都会加1 有点类似版本号的概念
+  // 每当成功将删除后的doc位图持久化 ， 会增加该值
   void advanceDelGen() {
     delGen = nextWriteDelGen;
     nextWriteDelGen = delGen+1;
@@ -364,7 +364,7 @@ public class SegmentCommitInfo {
   }
 
   /**
-   * 只有当删除处理后 liveDoc信息写入到位图对象后 才会更新info.delCount
+   * 只有将删除后的doc位图写入到索引文件后 才会设置该属性 同时还会设置删除的 gen
    * @param delCount
    */
   void setDelCount(int delCount) {

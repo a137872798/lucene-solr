@@ -32,7 +32,7 @@ import org.apache.lucene.util.IOUtils;
 final class DocumentsWriterFlushQueue {
 
   /**
-   * 每个 flushTicket 代表一个待刷盘动作
+   * 每当要执行某个 perThread的flush方法前都会申请一个该对象 并在尽可能批量处理完所有允许执行的perThread后 才消费这些ticket
    */
   private final Queue<FlushTicket> queue = new LinkedList<>();
   // we track tickets separately since count must be present even before the ticket is
@@ -103,7 +103,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 为某个 待刷盘任务设置 段信息
+   * 当某个刷盘任务完成时触发
    * @param ticket
    * @param segment
    */
@@ -115,7 +115,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 标记某个刷盘动作失败了
+   * 这个场景是这样的  首先某个ticket刷盘成功 ， 第二次尝试为下一个perThread插入ticket时失败了,这时会将第一个ticket传入， 并标记为失败
    * @param ticket
    */
   synchronized void markTicketFailed(FlushTicket ticket) {
@@ -131,7 +131,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 使用该消费者处理内部所有 已经完成flush任务的对象
+   * 当doFlush完成时触发  尝试清理之前存储到ticketQueue的ticket
    * @param consumer
    * @throws IOException
    */
@@ -158,9 +158,10 @@ final class DocumentsWriterFlushQueue {
 
         } finally {
           synchronized (this) {
+            // 此时才移除ticket
+
             // finally remove the published ticket from the queue
             final FlushTicket poll = queue.poll();
-            // 光是执行完 刷盘任务 还不能释放该ticket 只有等到 publish完成时 才触发减少ticket的逻辑
             decTickets();
             // we hold the purgeLock so no other thread should have polled:
             assert poll == head;
@@ -212,11 +213,11 @@ final class DocumentsWriterFlushQueue {
     private final FrozenBufferedUpdates frozenUpdates;
     private final boolean hasSegment;
     /**
-     * 描述一个刷盘完成的段的信息
+     * 当对应的刷盘任务完成时 生成的segment会回填到该字段
      */
     private FlushedSegment segment;
     /**
-     * 标记本次刷盘的结果
+     * 本次申请ticket后尝试加入到 queue时失败
      */
     private boolean failed = false;
     /**

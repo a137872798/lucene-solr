@@ -297,7 +297,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
   }
 
   /**
-   * 将段的信息 写入到索引文件中
+   * 将段的信息 写入到索引文件中   当某次 DocumentsWriterPerThread 将解析完doc并暂存在内存的数据flush后触发
    * @param dir
    * @param si
    * @param ioContext
@@ -309,6 +309,7 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
 
     try (IndexOutput output = dir.createOutput(fileName, ioContext)) {
       // Only add the file once we've successfully created it, else IFD assert can trip:
+      // 将描述段信息的索引文件也加入到 segmentInfo中   这之内还包含了之前刷盘时生成的各种文件
       si.addFile(fileName);
       CodecUtil.writeIndexHeader(output,
                                    Lucene70SegmentInfoFormat.CODEC_NAME,
@@ -320,11 +321,13 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
         throw new IllegalArgumentException("invalid major version: should be >= 7 but got: " + version.major + " segment=" + si);
       }
       // Write the Lucene version that created this segment, since 3.1
+      // 写入版本号信息
       output.writeInt(version.major);
       output.writeInt(version.minor);
       output.writeInt(version.bugfix);
 
       // Write the min Lucene version that contributed docs to the segment, since 7.0
+      // 写入兼容的版本号
       if (si.getMinVersion() != null) {
         output.writeByte((byte) 1);
         Version minVersion = si.getMinVersion();
@@ -336,9 +339,12 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
       }
 
       assert version.prerelease == 0;
+      // 写入最大的docId   对应 本次解析的所有doc数量-1
       output.writeInt(si.maxDoc());
 
+      // 是否使用复合文件
       output.writeByte((byte) (si.getUseCompoundFile() ? SegmentInfo.YES : SegmentInfo.NO));
+      // 写入诊断信息
       output.writeMapOfStrings(si.getDiagnostics());
       Set<String> files = si.files();
       for (String file : files) {
@@ -346,15 +352,19 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
           throw new IllegalArgumentException("invalid files: expected segment=" + si.name + ", got=" + files);
         }
       }
+      // 将写入的索引文件名 以及各种attr写入到索引文件
       output.writeSetOfStrings(files);
       output.writeMapOfStrings(si.getAttributes());
 
+      // TODO 是否有携带 sort对象
       Sort indexSort = si.getIndexSort();
+      // 获取排序字段数量 并写入
       int numSortFields = indexSort == null ? 0 : indexSort.getSort().length;
       output.writeVInt(numSortFields);
       for (int i = 0; i < numSortFields; ++i) {
         SortField sortField = indexSort.getSort()[i];
         SortField.Type sortType = sortField.getType();
+        // 写入被排序的field 以及类型信息
         output.writeString(sortField.getField());
         int sortTypeID;
         switch (sortField.getType()) {
@@ -422,9 +432,11 @@ public class Lucene70SegmentInfoFormat extends SegmentInfoFormat {
             throw new IllegalStateException("Unexpected sorted numeric selector type: " + snsf.getSelector());
           }
         }
+        // 写入排序顺序
         output.writeByte((byte) (sortField.getReverse() ? 0 : 1));
 
         // write missing value 
+        // 写入默认值
         Object missingValue = sortField.getMissingValue();
         if (missingValue == null) {
           output.writeByte((byte) 0);

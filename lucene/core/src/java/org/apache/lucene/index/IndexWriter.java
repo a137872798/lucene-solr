@@ -365,7 +365,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private final ReentrantLock writeDocValuesLock = new ReentrantLock();
 
     /**
-     * 存储事件的队列   该对象会收集 docWriter 的 perThread生成的各种事件  为什么在这种场景要使用 MPSC 的模型  是因为大多数事件类型都是 IO 吗 所以即使使用多线程也无法提升性能
+     * 暂存任务的队列  只有在合适的时机手动触发执行内部任务
      */
     static final class EventQueue implements Closeable {
 
@@ -573,7 +573,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         /**
-         * 当某个segment 刷盘完成时  发布该segment  注意此时是非强制的
+         * 当某个segment 刷盘完成时  发布该segment  此时通过用户线程触发该方法
          * @throws IOException
          */
         @Override
@@ -592,7 +592,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         /**
-         * 每当成功执行 delete/flush 时 会累加计数器的值 达到阈值后强制触发 publish方法
+         * 每当成功执行 delete/flush 时 会累加计数器的值
          */
         @Override
         public void onDeletesApplied() {
@@ -607,7 +607,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         /**
-         * 也是某个值超过阈值时 强制触发 publish 方法
+         * 代表此时待刷盘的perThread对象很多   并且调用flush的业务线程暂停继续从pool中拉取可刷盘的 perThread
          */
         @Override
         public void onTicketBacklog() {
@@ -5400,12 +5400,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * delete generation is always GlobalPacket_deleteGeneration + 1
      *
      * @param forced if <code>true</code> this call will block on the ticket queue if the lock is held by another thread.
-     *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.
-     *               是否要强制刷盘
+     *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.  当此时flushTicket 过多时 也就是囤积的刷盘任务过多时 会强制触发该方法
+     *               此时某个segment的刷盘已经完成了 ， 处理之前存储到ticketQueue中的所有ticket
      */
     private void publishFlushedSegments(boolean forced) throws IOException {
 
-        // 处理还存在于queue的所有flushTicket
         docWriter.purgeFlushTickets(forced, ticket -> {
 
             // 找到描述刷盘结果的对象  此时刷盘可能会生成一个新的段

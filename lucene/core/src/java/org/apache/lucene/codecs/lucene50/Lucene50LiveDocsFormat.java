@@ -103,6 +103,7 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
   }
 
   /**
+   * 该方法一般是在 flush() 结束后 将此时还存活的doc标记出来   因为在解析doc时 虽然有些doc被标记成删除 但是它们还是写入到索引文件中了
    * @param bits
    * @param dir    索引文件写入的目标目录
    * @param info
@@ -135,7 +136,6 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
       }
       CodecUtil.writeFooter(output);
     }
-    // 从这里可以看出 调用该方法时 要求删除动作已经作用在传入的位图上
     if (delCount != info.getDelCount() + newDelCount) {
       throw new CorruptIndexException("bits.deleted=" + delCount + 
           " info.delcount=" + info.getDelCount() + " newdelcount=" + newDelCount, name);

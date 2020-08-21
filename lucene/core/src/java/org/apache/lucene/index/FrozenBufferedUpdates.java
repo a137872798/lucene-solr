@@ -106,7 +106,7 @@ final class FrozenBufferedUpdates {
    * 该对象 主要就是通过一个 BufferedUpdates 对象进行初始化
    * @param infoStream
    * @param updates  该对象内部 包含多个 删除/更新信息
-   * @param privateSegment   该对象可以为null
+   * @param privateSegment   该对象是针对哪个segment的
    */
   public FrozenBufferedUpdates(InfoStream infoStream, BufferedUpdates updates, SegmentCommitInfo privateSegment) {
     this.infoStream = infoStream;
@@ -114,7 +114,7 @@ final class FrozenBufferedUpdates {
     assert privateSegment == null || updates.deleteTerms.isEmpty() : "segment private packet should only have del queries";
     // 代表包含这些 term的doc都需要被删除
     Term termsArray[] = updates.deleteTerms.keySet().toArray(new Term[updates.deleteTerms.size()]);
-    // 排序  同一field情况下 按照bytes内容进行排序 如果不同field 则按照fieldName排序
+    // 按照 term -> fieldName 的顺序排序
     ArrayUtil.timSort(termsArray);
     // 构建公共前缀对象
     PrefixCodedTerms.Builder builder = new PrefixCodedTerms.Builder();
@@ -126,7 +126,7 @@ final class FrozenBufferedUpdates {
 
     // 这里代表命中哪些 query 的doc会被删除
     deleteQueries = new Query[updates.deleteQueries.size()];
-    // 对应每个query在命中时 允许删除多少doc  默认情况下都是不做限制的
+    // 对应每个query在命中时 允许删除的docId上限是多少  默认情况下都是不做限制的
     deleteQueryLimits = new int[updates.deleteQueries.size()];
     int upto = 0;
     for(Map.Entry<Query,Integer> ent : updates.deleteQueries.entrySet()) {
@@ -139,7 +139,7 @@ final class FrozenBufferedUpdates {
     // that Term only once, applying the update to all fields that still need to be
     // updated.
 
-    // 冻结内部的 fieldUpdateBuffer   该容器内记录的是有关更新的信息   在BufferedUpdates中 已经按照field进行分组了
+    // 将内部标记为  finished
     updates.fieldUpdates.values().forEach(FieldUpdatesBuffer::finish);
     this.fieldUpdates = Map.copyOf(updates.fieldUpdates);
     // 内部总共产生了多少 更新数据
