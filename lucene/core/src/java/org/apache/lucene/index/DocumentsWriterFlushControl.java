@@ -53,7 +53,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     private final long hardMaxBytesPerDWPT;
 
     /**
-     * 代表当前待刷盘的数据有多少byte
+     * 代表此时内存中有多少bytes  解析doc后 数据先累加到 activeBytes 当perThread进入待刷盘状态时 就会将对应的activeBytes数据转移到flushBytes 上
      */
     private long activeBytes = 0;
     /**
@@ -61,7 +61,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      */
     private volatile long flushBytes = 0;
     /**
-     * 当前有多少待刷盘 perThread
+     * 当前有多少待刷盘 perThread  一旦perThread 移动到flushingWriters 后就不认为是待刷盘了
      */
     private volatile int numPending = 0;
     private int numDocsSinceStalled = 0; // only with assert
@@ -76,7 +76,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
      * The flushQueue is used to concurrently distribute DWPTs that are ready to be flushed ie. when a full flush is in
      * progress. This might be triggered by a commit or NRT refresh. The trigger will only walk all eligible DWPTs and
      * mark them as flushable putting them in the flushQueue ready for other threads (ie. indexing threads) to help flushing
-     * 这里存放的是需要被刷盘的perThread
+     * 该容器的定位是 每次调用 doFlush前从该对象中获取需要执行刷盘的 perThread对象
      */
     private final Queue<DocumentsWriterPerThread> flushQueue = new LinkedList<>();
     // only for safety reasons if a DWPT is close to the RAM limit
@@ -85,7 +85,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     // are also in the flushQueue which means that writers in the flushingWriters list are not necessarily
     // already actively flushing. They are only in the state of flushing and might be picked up in the future by
     // polling the flushQueue
-    // 记录此时正在刷盘的 perThread 不同于 flushQueue
+    // 该容器的定位是  当某个 perThread 完成了刷盘后 才从该容器中移除  通过检测该容器是否为空可以确定此时是否还有未完成的刷盘任务  主要是配合waitForFlush() 实现外部线程阻塞等待所有perThread 完成的功能
     private final List<DocumentsWriterPerThread> flushingWriters = new ArrayList<>();
 
     private double maxConfiguredRamBuffer = 0;
@@ -347,9 +347,11 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
          * reach the limit without any ongoing flushes. we need to ensure
          * that we don't stall/block if an ongoing or pending flush can
          * not free up enough memory to release the stall lock.
+         * 首先 (activeBytes + flushBytes) <= limit  是没有达到内存上限 必然可以继续解析doc 并往内存中写入数据
+         * 当 activeBytes < limit 时 代表有部分内存已经处于即将要写入磁盘的状态了 那么此时一种增加解析doc的速度方式 就是激进的认为这些数据会很快的刷盘成功 这样就不会阻止新的doc 解析 (stall为true 会导致尝试解析doc的线程被阻塞1秒)
          */
-        final boolean stall = (activeBytes + flushBytes) > limit &&  // 此时内存中还有太多数据， 无法继续解析doc
-                activeBytes < limit &&    // 如果 activeBytes > limit  代表此时有过多数据囤积在内存中 反而允许直接提交刷盘任务
+        final boolean stall = (activeBytes + flushBytes) > limit &&
+                activeBytes < limit &&
                 !closed;
 
         if (infoStream.isEnabled("DWFC")) {
@@ -468,7 +470,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 增加一个刷盘中的 perThread
+     * 将待刷盘的 perThread 变成刷盘中
      *
      * @param perThread
      */
@@ -569,7 +571,6 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 当 flushPolicy 发现有很多待删除的数据时 会将该标识设置为true
      * @return
      */
     public boolean getAndResetApplyAllDeletes() {
@@ -615,7 +616,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 代表此时由于 prepareCommit 进入了 fullFlush状态
+     * 此时进入了 fullFlush 状态
      * @return
      */
     long markForFullFlush() {
@@ -650,7 +651,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         // 获取同一时期的线程 做到本次刷盘与之后的写入 解耦
         // 返回此时还未刷盘的所有 PerThread
         // 在 filterAndLock 方法中 会通过 lock 阻塞获取某个线程 如果此时该线程正在被其他人使用 那么会等待索引生成完毕  那些线程在发现此时已经进入了 fullFlush状态 就会将自己设置到 blockFlush队列中
-        // 在下面会从blockFlush中将线程取出来 并执行任务  如果刚好未检测到 fullFlush标识 那么就会直到刷盘完成  TODO 待确定
+        // 在下面会从blockFlush中将线程取出来 并执行任务  如果刚好未检测到 fullFlush标识 那么就会直到刷盘完成
         for (final DocumentsWriterPerThread next : perThreadPool.filterAndLock(dwpt -> dwpt.deleteQueue == flushingQueue)) {
             try {
                 assert next.deleteQueue == flushingQueue
@@ -694,12 +695,13 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
              * pending and moved to blocked are moved over to the flushQueue. There is
              * a chance that this happens since we marking DWPT for full flush without
              * blocking indexing.*/
-            // 将 blockFlush队列中的元素移动到刷盘队列中
+            // TODO 找到一些因为特殊原因在刷盘过程中被阻塞的perThread对象 并重新加入到 刷盘队列中
             pruneBlockedQueue(flushingQueue);
             assert assertBlockedFlushes(documentsWriter.deleteQueue);
-            // 将之前设置为刷盘中的 perThread 都加入到 flushQueue 中
+            // 将之前设置为刷盘中的 perThread 都加入到 flushQueue 中  这样这些 PerThread 就同时在 flushQueue 和 flushWriting 队列中了   在调用 doFlush时 就是循环从  flushQueue中获取perThread 并执行刷盘操作
             flushQueue.addAll(fullFlushBuffer);
             updateStallState();
+            // 断言相关的先忽略
             fullFlushMarkDone = true; // at this point we must have collected all DWPTs that belong to the old delete queue
         }
         assert assertActiveDeleteQueue(documentsWriter.deleteQueue);

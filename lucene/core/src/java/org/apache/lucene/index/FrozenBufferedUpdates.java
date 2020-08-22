@@ -85,12 +85,12 @@ final class FrozenBufferedUpdates {
   
   final int bytesUsed;
   /**
-   * 统计总计有多少次按照term删除
+   * 统计当前总计处理多少 termNode
    */
   final int numTermDeletes;
 
   /**
-   * 记录当前删除的年代 (版本号)  这里的 deleteTerm deleteQuery 等只能影响到 delGen在这之前的 state
+   * 仅设置一次 且通过BufferedUpdatesStream 设置
    */
   private long delGen = -1; // assigned by BufferedUpdatesStream once pushed
 
@@ -524,7 +524,12 @@ final class FrozenBufferedUpdates {
 
     return delCount;
   }
-  
+
+  /**
+   * 设置该对象被处理时对应的 delGen
+   * BufferedUpdatesStream 负责管理所有 FrozenBufferedUpdates  每当添加一个新的FrozenBufferedUpdates 到队列中就会为它设置一个新的 delGen
+   * @param delGen
+   */
   public void setDelGen(long delGen) {
     assert this.delGen == -1: "delGen was already previously set to " + this.delGen;
     this.delGen = delGen;

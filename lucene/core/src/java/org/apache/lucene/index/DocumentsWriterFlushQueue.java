@@ -42,7 +42,7 @@ final class DocumentsWriterFlushQueue {
   private final ReentrantLock purgeLock = new ReentrantLock();
 
   /**
-   * 读取删除队列中的 node
+   * 将 deleteQueue中的删除信息抽取出来生成 Ticket 并插入到队列中
    * @param deleteQueue
    * @return
    * @throws IOException
@@ -115,7 +115,6 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 这个场景是这样的  首先某个ticket刷盘成功 ， 第二次尝试为下一个perThread插入ticket时失败了,这时会将第一个ticket传入， 并标记为失败
    * @param ticket
    */
   synchronized void markTicketFailed(FlushTicket ticket) {
@@ -142,7 +141,7 @@ final class DocumentsWriterFlushQueue {
       final boolean canPublish;
       synchronized (this) {
         head = queue.peek();
-        // 代表该完成的刷盘任务 是否允许通知到外面
+        // 代表该完成的刷盘任务 先判断该ticket是否需要被处理  目前还没有发现无法被处理的情况
         canPublish = head != null && head.canPublish(); // do this synced 
       }
       // 代表满足发布条件
@@ -204,7 +203,7 @@ final class DocumentsWriterFlushQueue {
   }
 
   /**
-   * 每个 flushTicket 代表一个刷盘动作   是一个简单的bean对象
+   * 每个 flushTicket 代表一个刷盘动作   一共有2种类型 一种是针对 perThread.flush 创建的  此时hasSegment 标记为true   一种是针对 deleteQueue中待处理的 update/delete 信息 此时hasSegment标记为false 并且必须传入frozenUpdates
    */
   static final class FlushTicket {
     /**
@@ -221,7 +220,7 @@ final class DocumentsWriterFlushQueue {
      */
     private boolean failed = false;
     /**
-     * 代表本次刷盘结果已经发布  (当刷盘任务结束时 就要进行发布任务)
+     * 代表本次刷盘结果已经发布  也就是将segment.SegmentInfo 回填到 IndexWriter.segmentInfos 中
      */
     private boolean published = false;
 

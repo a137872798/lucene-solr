@@ -230,22 +230,22 @@ final class DocumentsWriter implements Closeable, Accountable {
     return seqNo;
   }
 
-  /** If buffered deletes are using too much heap, resolve them and write disk and return true. */
-  // 处理deleteQueue中所有对象
+  /** If buffered deletes are using too much heap, resolve them and write disk and return true.
+   * 此时globalBufferUpdate中已经缓存了很多需要删除的数据了 将这些变化写入到磁盘中
+   */
   private boolean applyAllDeletes() throws IOException {
     final DocumentsWriterDeleteQueue deleteQueue = this.deleteQueue;
-    if (flushControl.isFullFlush() == false // never apply deletes during full flush this breaks happens before relationship    当fullFlush时 无法删除doc
+    if (flushControl.isFullFlush() == false // never apply deletes during full flush this breaks happens before relationship    当fullFlush时 无法处理deletes对象
         && deleteQueue.isOpen() // if it's closed then it's already fully applied and we have a new delete queue                 确保此时queue还是可用的
-        && flushControl.getAndResetApplyAllDeletes()  // 当此时queue中已经存储了很多数据时 会触发删除   也就是删除动作实际上也是尽可能的批处理 所以将删除操作和 写入操作拆解开吗
-                                                      // 删除doc有自己的触发条件 与是否刷盘无关
+        && flushControl.getAndResetApplyAllDeletes()  // 必须确保之前该标识被设置成true了
     ) {
-      // 将所有待删除/更新的信息 包装成一个FlushTicket 并添加到队列中
+      // delete信息也会被包装成一个 ticket    也就是涉及到刷盘的动作 都会通过 ticketQueue排队
       if (ticketQueue.addDeletes(deleteQueue)) {
         flushNotifications.onDeletesApplied(); // apply deletes event forces a purge
         return true;
       }
     }
-    // 如果此时正在执行全刷盘 无法进行删除
+    // 代表此时不是执行 删除任务的恰当时机
     return false;
   }
 
@@ -575,6 +575,8 @@ final class DocumentsWriter implements Closeable, Accountable {
    * @throws IOException
    */
   private boolean doFlush(DocumentsWriterPerThread flushingDWPT) throws IOException {
+
+    // 是否至少处理过一个 perThread  无论是否成功
     boolean hasEvents = false;
     while (flushingDWPT != null) {
       assert flushingDWPT.hasFlushed() == false;
@@ -616,8 +618,9 @@ final class DocumentsWriter implements Closeable, Accountable {
             ticketQueue.addSegment(ticket, newSegment);
             dwptSuccess = true;
           } finally {
-            // 也就是每个尝试flush的 perThread对象执行失败后都会添加一个删除索引文件的任务到 IndexWriter的任务队列中
+            // 当刷盘失败被捕获到时 会在外层将该ticket标记成failed
 
+            // 也就是每个尝试flush的 perThread对象执行失败后都会添加一个删除索引文件的任务到 IndexWriter的任务队列中
             // 减少当前内存中的文档数
             subtractFlushedNumDocs(flushingDocsInRam);
             // 代表存在某些要删除的文件  TODO 这里对应复合文件的场景 可以先忽略
@@ -637,7 +640,14 @@ final class DocumentsWriter implements Closeable, Accountable {
           // flush was successful once we reached this point - new seg. has been assigned to the ticket!
           success = true;
         } finally {
-          // 当一次尝试申请新的门票失败时  且上次成功执行过一个flush ， 将上一次ticket设置成失败
+          /**
+           * 每次进入新的一轮时  ticket会被置空 这种情况就是刷盘出现异常 但是ticket却成功创建 并插入到队列中了 需要标记成失败 这样就认为也可以触发 canPublish
+           * canPublish 为true的ticket才能被正常处理
+           * 所以总计有3种情况可以确保ticket被正常处理
+           * 1.hasSegment == false 代表本次ticket是针对 update/delete 创建的
+           * 2.segment != null 代表刷盘完成并且已经回填了flushedSegment
+           * 3.failed == true 代表虽然ticket成功创建和入队 但是刷盘失败了
+           */
           if (!success && ticket != null) {
             // In the case of a failure make sure we are making progress and
             // apply all the deletes since the segment flush failed since the flush
@@ -648,7 +658,7 @@ final class DocumentsWriter implements Closeable, Accountable {
         /*
          * Now we are done and try to flush the ticket queue if the head of the
          * queue has already finished the flush.
-         * 当此时待刷盘的数量超过 pool 时 不再继续刷盘了  会先强制处理之前残留在 ticketQueue中的ticket 对象
+         * TODO  这个情况代表着什么 ???
          */
         if (ticketQueue.getTicketCount() >= perThreadPool.size()) {
           // This means there is a backlog: the one
@@ -670,7 +680,8 @@ final class DocumentsWriter implements Closeable, Accountable {
     }
 
     // 代表上面所有的flush任务都完成  而不是因为积压提早退出   上面的flushNotifications.xxx 只是将任务提交到队列中， 并没有后台线程， 或者本线程去执行
-    // 而afterSegmentsFlushed() 会通过本线程去执行一个 publishFlush任务  该任务的目的就是处理之前设置的ticket
+    // 而afterSegmentsFlushed() 会通过本线程去执行一个 publishFlush任务  该任务的目的就是处理之前设置的ticket， 将ticket包含的段对象 设置到IndexWriter中 这样就可以被外部访问
+    // 这里是非强制性发布
     if (hasEvents) {
       flushNotifications.afterSegmentsFlushed();
     }
@@ -680,10 +691,12 @@ final class DocumentsWriter implements Closeable, Accountable {
     // prevent too-frequent flushing of a long tail of
     // tiny segments:
     final double ramBufferSizeMB = config.getRAMBufferSizeMB();
-    // 此时检测到 pool关联的删除队列消耗的内存很多  也就代表有很多需要删除的数据
+    // 此时检测到 globalBufferedUpdate占用内存很大 也就代表有很多需要删除的数据  如果设置了自动刷盘 那么应该会自动清理
     if (ramBufferSizeMB != IndexWriterConfig.DISABLE_AUTO_FLUSH &&
         flushControl.getDeleteBytesUsed() > (1024*1024*ramBufferSizeMB/2)) {
       hasEvents = true;
+
+      // 代表此时不适合执行删除动作 ，比如正在进行 fullFlush
       if (applyAllDeletes() == false) {
         if (infoStream.isEnabled("DW")) {
           infoStream.message("DW", String.format(Locale.ROOT, "force apply deletes after flush bytesUsed=%.1f MB vs ramBuffer=%.1f MB",
@@ -795,7 +808,7 @@ final class DocumentsWriter implements Closeable, Accountable {
    * FlushAllThreads is synced by IW fullFlushLock. Flushing all threads is a
    * two stage operation; the caller must ensure (in try/finally) that finishFlush
    * is called after this method, to release the flush lock in DWFlushControl
-   * 该方法必须在持有 fullFlushLock时执行 并且在final中释放锁  同时 fullFlush是由二阶段提交触发的
+   * 将此时所有 perThread的数据写入到磁盘中
    */
   long flushAllThreads()
     throws IOException {
@@ -812,32 +825,33 @@ final class DocumentsWriter implements Closeable, Accountable {
       /* Cutover to a new delete queue.  This must be synced on the flush control
        * otherwise a new DWPT could sneak into the loop with an already flushing
        * delete queue */
-      // 生成一个新的 deleteQueue 替代原来的删除队列 并将同一时期创建的 perThread都转移到刷盘队列中 设置 fullFlush标识
+      // 生成一个新的 deleteQueue 替代原来的删除队列 并将同一时期创建的 perThread都转移到刷盘队列中 设置 fullFlush标识     并且此时如果 activeBytes 已经变小了 可以尝试将stall变成false 这样就不会阻塞 尝试解析doc的线程
       seqNo = flushControl.markForFullFlush(); // swaps this.deleteQueue synced on FlushControl
       assert setFlushingDeleteQueue(flushingDeleteQueue);
     }
     assert currentFullFlushDelQueue != null;
     assert currentFullFlushDelQueue != deleteQueue;
 
-    // 代表是否有数据被成功刷盘
+    // 只要 doFlush(perThread) 对象不为空 必然返回true
     boolean anythingFlushed = false;
     try {
       DocumentsWriterPerThread flushingDWPT;
       // Help out with flushing:
-      // 挨个取出所有刷盘队列中的 PerThread 并执行刷盘操作
+      // 挨个取出所有刷盘队列中的 PerThread 并执行刷盘操作  在刷盘完成时 会往 IndexWriter的任务队列中添加一堆任务  并会将已经完成刷盘的索引文件的添加到 segmentInfos中  以及通过deleter对象 维护索引文件的引用计数 避免被误删除
+      // 在这种情况下 即使发生积压 也会确保执行完所有的任务   积压只是使得 doFlush不会一次性处理完所有的perThread 而在外层的while中还是会处理完所有perThread
       while ((flushingDWPT = flushControl.nextPendingFlush()) != null) {
         anythingFlushed |= doFlush(flushingDWPT);
       }
       // If a concurrent flush is still in flight wait for it
-      // 阻塞直到所有的 perThread任务完成
+      // 如果是并发调用的场景  有可能 perThread 被其他线程抢走了 那么就等待所有perThread 刷盘完毕
       flushControl.waitForFlush();
-      // 如果刷盘任何数据 而 存在一些 update/delete信息
+
+      // 如果本次没有处理任何东西 (比如没有需要刷盘的 perThread对象) 并且发现有未处理的 update 就包装成 ticket 并设置到 ticketQueue中
       if (anythingFlushed == false && flushingDeleteQueue.anyChanges()) { // apply deletes if we did not flush any document
         if (infoStream.isEnabled("DW")) {
           infoStream.message("DW", Thread.currentThread().getName() + ": flush naked frozen global deletes");
         }
         assert assertTicketQueueModification(flushingDeleteQueue);
-        // 这里根据 deleteQueue的信息 生成frozen对象 并保存到队列中
         ticketQueue.addDeletes(flushingDeleteQueue);
       }
       // we can't assert that we don't have any tickets in teh queue since we might add a DocumentsWriterDeleteQueue

@@ -510,8 +510,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private long mergeGen;
     private boolean stopMerges; // TODO make sure this is only changed once and never set back to false
     private boolean didMessageState;
+
+    /**
+     * 记录该对象总计刷盘了多少次
+     */
     private final AtomicInteger flushCount = new AtomicInteger();
 
+    /**
+     * 记录总计处理了多少个 FrozenBufferedUpdates
+     */
     private final AtomicInteger flushDeletesCount = new AtomicInteger();
     private final ReaderPool readerPool;
 
@@ -543,8 +550,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * the right to add N docs, before they actually change the index,
      * much like how hotels place an "authorization hold" on your credit
      * card to make sure they can later charge you when you check out.
+     * TODO
      */
-    // 记录当前所有中总计有多少doc 还未处理  当触发删除doc的逻辑时 也会减少该值
     private final AtomicLong pendingNumDocs = new AtomicLong();
     private final boolean softDeletesEnabled;
 
@@ -592,7 +599,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         /**
-         * 每当成功执行 delete/flush 时 会累加计数器的值
+         * 当将 BufferedUpdate 对象包装成 ticket 并插入到 ticketQueue中后 会触发该方法 为任务队列添加一个任务， 注意 此时还没有线程去执行任务， 业务线程会继续走流程
+         * 此时也是触发publishFlushedSegments 不过主要是处理 包装 BufferedUpdate的ticket
          */
         @Override
         public void onDeletesApplied() {
@@ -1120,7 +1128,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             // 通过配置项来初始化 刷盘策略   默认的刷盘策略类为 FlushByRamOrCountsPolicy
             config.getFlushPolicy().init(config);
-            // 这个对象是用于记录 哪些数据发生了变化
             bufferedUpdatesStream = new BufferedUpdatesStream(infoStream);
             // 该对象负责解析 doc 并将结果写入到各个索引文件中
             docWriter = new DocumentsWriter(flushNotifications, segmentInfos.getIndexCreatedVersionMajor(), pendingNumDocs,
@@ -2770,7 +2777,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * index directory.
      */
     private synchronized void checkpoint() throws IOException {
+        // 标记 SegmentInfos 发生了变化
         changed();
+        // 主要意图是为所有索引文件维护一个正确的引用计数
         deleter.checkpoint(segmentInfos, false);
     }
 
@@ -2794,16 +2803,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 处理本次删除 以及更新的doc
+     * 先将 FrozenBufferedUpdates 设置到任务队列中  之后在合适的时机执行
      *
      * @param packet
      * @return
      */
     private synchronized long publishFrozenUpdates(FrozenBufferedUpdates packet) {
         assert packet != null && packet.any();
-        // 为更新流对象 追加一个 更新对象
+        // 为更新流对象 追加一个 更新对象  返回此时由 BufferedUpdatesStream 分配的 delGen
         long nextGen = bufferedUpdatesStream.push(packet);
         // Do this as an event so it applies higher in the stack when we are not holding DocumentsWriterFlushQueue.purgeLock:
+        // 这里也是先往队列中添加任务 而没有执行
         eventQueue.add(w -> {
             try {
                 // we call tryApply here since we don't want to block if a refresh or a flush is already applying the
@@ -2825,6 +2835,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Atomically adds the segment private delete packet and publishes the flushed
      * segments SegmentInfo to the index writer.
+     * @param newSegment 本次生成的新段
+     * @param fieldInfos 本次解析的所有doc中携带的field
+     * @param packet  对应perThread 自创建开始到某个预备刷盘时 从 deleteQueue同步过来的删除信息   deleteQueue的节点信息是所有perThread共享的  所以叫做slice
+     * @param globalPacket 从globalSlice 中截获的更新/删除信息
+     * @param sortMap  排序相关的先忽略
+     * 发布某个已经完成刷盘的段
+     * perThread 首先解析doc 将数据结构化后存储在内存 之后通过刷盘将数据持久化 同时会生成一个 flushedSegment 代表一个完成刷盘的段， 之后在处理因为刷盘创建的ticket时
+     * 就会触发该方法
      */
     private synchronized void publishFlushedSegment(SegmentCommitInfo newSegment, FieldInfos fieldInfos,
                                                     FrozenBufferedUpdates packet, FrozenBufferedUpdates globalPacket,
@@ -2838,7 +2856,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 infoStream.message("IW", "publishFlushedSegment " + newSegment);
             }
 
-            // 如果有 需要删除的数据还没有刷盘   添加到任务队列中
+            // 处理全局 update/delete信息   实际上只是添加到任务队列中  本线程并没有处理数据
             if (globalPacket != null && globalPacket.any()) {
                 publishFrozenUpdates(globalPacket);
             }
@@ -2846,14 +2864,16 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // Publishing the segment must be sync'd on IW -> BDS to make the sure
             // that no merge prunes away the seg. private delete packet
             final long nextGen;
+            // 在perThread 处理刷盘时 会将 termNode 处理掉  如果此时 perThread私有的packet 还有别的node未处理时   才将其设置到任务队列中
             if (packet != null && packet.any()) {
                 nextGen = publishFrozenUpdates(packet);
             } else {
                 // Since we don't have a delete packet to apply we can get a new
                 // generation right away
+                // 如果 perThread对应的 packet 此时已经处理完所有数据 / 或者没有采集到数据  也会为它 分配一个delGen  并直接标记成成功
                 nextGen = bufferedUpdatesStream.getNextGen();
                 // No deletes/updates here, so marked finished immediately:
-                // 代表 delete/update数据已经处理完毕 标记成 finished
+                // 先将当前任务标记成已完成
                 bufferedUpdatesStream.finishedSegment(nextGen);
             }
             if (infoStream.isEnabled("IW")) {
@@ -2861,11 +2881,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
             // 将这个新的段追加到 infos中
             newSegment.setBufferedDeletesGen(nextGen);
+            // 刷盘完成的段 将会插入到 IndexWriter的 segmentInfos中
             segmentInfos.add(newSegment);
             published = true;
-            // 因为 infos发生了变化 重新设置一次检查点
+
+            // 为新插入的 segment下 关联的新生成的所有索引文件通过 IndexFileDeleter 维护引用计数
             checkpoint();
-            // 为对应的segment 创建reader 对象 同时设置 排序对象
+            // TODO 先忽略 sortMap
             if (packet != null && packet.any() && sortMap != null) {
                 // TODO: not great we do this heavyish op while holding IW's monitor lock,
                 // but it only applies if you are using sorted indices and updating doc values:
@@ -2886,6 +2908,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // we either have a fully hard-deleted segment or one or more docs are soft-deleted. In both cases we need
             // to go and check if they are fully deleted. This has the nice side-effect that we now have accurate numbers
             // for the soft delete right after we flushed to disk.
+            // TODO 先忽略 存在软删除field  或者该segment 下所有的doc 都被标记成删除
             if (hasInitialSoftDeleted || isFullyHardDeleted) {
                 // this operation is only really executed if needed an if soft-deletes are not configured it only be executed
                 // if we deleted all docs in this newly flushed segment.
@@ -2901,10 +2924,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
 
         } finally {
+            // 可以看到 通过perThread刷盘完成后的段对象会插入到 IndexWriter中的 segmentInfos中  推测只有插入到 segmentInfos 后才被认为是可以被外部访问的  这里代表插入到SegmentInfos 失败
             if (published == false) {
+                // 减少待处理的doc数量
                 adjustPendingNumDocs(-newSegment.info.maxDoc());
             }
             flushCount.incrementAndGet();
+            // 对用户开放的钩子
             doAfterFlush();
         }
 
@@ -3799,6 +3825,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Moves all in-memory segments to the {@link Directory}, but does not commit
      * (fsync) them (call {@link #commit} for that).
+     * 将解析doc后生成的数据 写到磁盘中
      */
     public final void flush() throws IOException {
         flush(true, true);
@@ -3809,8 +3836,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * to the Directory.
      *
      * @param triggerMerge    if true, we may merge segments (if
-     *                        deletes or docs were flushed) if necessary
-     * @param applyAllDeletes whether pending deletes should also
+     *                        deletes or docs were flushed) if necessary      当刷盘完成时 根据情况尝试将segment 合并
+     * @param applyAllDeletes whether pending deletes should also             使用要处理所有待执行的 delete   看来之前解析完的数据会直接写入到磁盘，而删除动作是尽可能等到合并时才做
      */
     final void flush(boolean triggerMerge, boolean applyAllDeletes) throws IOException {
 
@@ -3830,6 +3857,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * Returns true a segment was flushed or deletes were applied.
+     * 将此时存储在内存中的 已经解析完成的数据写入到磁盘
      */
     private boolean doFlush(boolean applyAllDeletes) throws IOException {
         if (tragedy.get() != null) {
@@ -3851,16 +3879,20 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 boolean flushSuccess = false;
                 try {
                     long seqNo = docWriter.flushAllThreads();
+                    // 此时代表有新的数据刷盘
                     if (seqNo < 0) {
                         seqNo = -seqNo;
                         anyChanges = true;
                     } else {
+                        // 代表没有需要处理的 perThread 对象  比如没有解析doc （没有生成任何 perThread）
                         anyChanges = false;
                     }
                     if (!anyChanges) {
                         // flushCount is incremented in flushAllThreads
+                        // 只是增加刷盘次数
                         flushCount.incrementAndGet();
                     }
+                    // 之前因为多线程抢占 可能导致某些 ticket 还没有发布 这里就要将所有ticket发布   也就是将刷盘生成的 segment回填到 segmentInfos 中  以及往任务队列插入一个处理update的任务
                     publishFlushedSegments(true);
                     flushSuccess = true;
                 } finally {
@@ -5400,30 +5432,40 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * delete generation is always GlobalPacket_deleteGeneration + 1
      *
      * @param forced if <code>true</code> this call will block on the ticket queue if the lock is held by another thread.
-     *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.  当此时flushTicket 过多时 也就是囤积的刷盘任务过多时 会强制触发该方法
-     *               此时某个segment的刷盘已经完成了 ， 处理之前存储到ticketQueue中的所有ticket
+     *               if <code>false</code> the call will try to acquire the queue lock and exits if it's held by another thread.
+     *               当此时flushTicket 过多时 也就是囤积的刷盘任务过多时 会强制触发该方法
+     *
+     *
+     *
      */
     private void publishFlushedSegments(boolean forced) throws IOException {
 
+        // 通过该函数处理 之前因为刷盘而创建的 ticket 对象
         docWriter.purgeFlushTickets(forced, ticket -> {
 
-            // 找到描述刷盘结果的对象  此时刷盘可能会生成一个新的段
+            // 成功刷盘的 perThread 对象会将最后生成的 flushedSegment对象回填到 ticket中
             DocumentsWriterPerThread.FlushedSegment newSegment = ticket.getFlushedSegment();
-            // 获取本次要删除/更新的doc
+            // perThread在执行刷盘前 在创建ticket时 会先冻结globalSlice update/delete对象 并生成FrozenBufferedUpdates
             FrozenBufferedUpdates bufferedUpdates = ticket.getFrozenUpdates();
             // 标记成已经发布
             ticket.markPublished();
-            // 代表没有生成新的段
+            /**
+             * 此时存在2种情况
+             * 1. 本次ticket 是针对 update创建的
+             * 2. 本次ticket 是失败的
+             */
             if (newSegment == null) { // this is a flushed global deletes package - not a segments
-                // 代表该容器内部存在数据
+                // 代表该容器内部存在数据   此时该数据就是 globalSlice 采集到的更新信息
                 if (bufferedUpdates != null && bufferedUpdates.any()) { // TODO why can this be null?
+                    // 这里并没有直接处理 update 对象 而是先插入到 BufferedUpdatesStream对象中  并分配一个delGen
                     publishFrozenUpdates(bufferedUpdates);
                     if (infoStream.isEnabled("IW")) {
                         infoStream.message("IW", "flush: push buffered updates: " + bufferedUpdates);
                     }
                 }
+                // 失败的情况下静默处理
             } else {
-                // 这里就代表本次数据写入了一个新的段
+                // 正常逻辑对应这种情况
                 assert newSegment.segmentInfo != null;
                 if (infoStream.isEnabled("IW")) {
                     infoStream.message("IW", "publishFlushedSegment seg-private updates=" + newSegment.segmentUpdates);
@@ -5432,6 +5474,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     infoStream.message("IW", "flush: push buffered seg private updates: " + newSegment.segmentUpdates);
                 }
                 // now publish!
+                // 将某个刷盘完成的段  插入到 segmentInfos 中 并为相关索引文件增加引用计数
                 publishFlushedSegment(newSegment.segmentInfo, newSegment.fieldInfos, newSegment.segmentUpdates,
                         bufferedUpdates, newSegment.sortMap);
             }

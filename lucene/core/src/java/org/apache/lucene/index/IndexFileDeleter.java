@@ -565,12 +565,15 @@ final class IndexFileDeleter implements Closeable {
    * a chance to remove other commits.  If any commits are
    * removed, we decref their files as well.
    *
-   * @param isCommit 是否是一次提交动作
-   * 大体上感觉该方法每次调用都会尝试删除某些文件
+   * @param segmentInfos  存储了所有的段信息
+   * @param isCommit  代表是否要为  segment_N 文件增加引用计数
+   * 这个检查点方法的意图就是为所有有效的索引文件维护一个正确的引用计数 确保文件不会在预料外的场景被删除
+   * 每当有一种持久化的改变发生时 就会触发该方法 比如某次flush 生成了新的索引文件 就会调用该方法  为其增加引用计数
    */
   public void checkpoint(SegmentInfos segmentInfos, boolean isCommit) throws IOException {
     assert locked();
 
+    // 必须在内置锁的场景下才能调用该方法
     assert Thread.holdsLock(writer);
     long t0 = System.nanoTime();
     if (infoStream.isEnabled("IFD")) {
@@ -578,10 +581,10 @@ final class IndexFileDeleter implements Closeable {
     }
 
     // Incref the files:
-    // 为当前段相关的其他文件增加引用计数
+    // 为目标文件增加引用计数
     incRef(segmentInfos, isCommit);
 
-    // 代表此时包含 segment_N 文件
+    // TODO 代表此时包含 segment_N 文件  先忽略
     if (isCommit) {
       // Append to our commits list:
       // 在 commit的场景下调用 检查点方法 会创建新的检查点对象
@@ -596,8 +599,8 @@ final class IndexFileDeleter implements Closeable {
       // 尝试删除 队列中的提交点
       deleteCommits();
     } else {
-      // 非提交场景 触发检查点 尝试删除上次保留在lastFile中的文件 同时将当前文件存储到 lastFile中
       // DecRef old files from the last checkpoint, if any:
+      // 为了维持引用计数不变  这里采用的策略其实是 每次为全量数据增加引用计数 ， 并记录本次所有文件 下次有新的文件进来时 还是全量增加引用计数， 但是会将上次文件的引用计数减少 这样就保证结果是相当于为所有文件只增加了一次引用计数
       try {
         decRef(lastFiles);
       } finally {
@@ -605,7 +608,7 @@ final class IndexFileDeleter implements Closeable {
       }
 
       // Save files so we can decr on next checkpoint/commit:
-      // 将除了 segment_N 之外的其他文件都设置到 lastFile中
+      // 确保下一次减少正确的文件的引用计数
       lastFiles.addAll(segmentInfos.files(false));
     }
 
@@ -615,6 +618,12 @@ final class IndexFileDeleter implements Closeable {
     }
   }
 
+  /**
+   * 为相关文件增加引用计数
+   * @param segmentInfos
+   * @param isCommit
+   * @throws IOException
+   */
   void incRef(SegmentInfos segmentInfos, boolean isCommit) throws IOException {
     assert locked();
     // If this is a commit point, also incRef the

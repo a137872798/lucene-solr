@@ -66,14 +66,14 @@ final class DocumentsWriterStallControl {
       if (stalled) {
         wasStalled = true;
       }
-      // 每当状态发生变更时 唤醒所有线程
+      // 每当状态发生变更时 唤醒所有线程  是这样子 既然之前有被阻塞的线程就一定是  stall == true 那么这里发生变化就一定是 stall == false 所以需要唤醒
       notifyAll();
     }
   }
   
   /**
    * Blocks if documents writing is currently in a stalled state.
-   * 尝试将doc写入的线程 发现此时处于暂用状态时  选择阻塞
+   * 当此时内存中 已经有大量数据未刷盘时  会尽可能避免新的doc 被解析， 避免OOM   但是这里并没有完全阻塞线程 而是等待1秒
    */
   void waitIfStalled() {
     if (stalled) {

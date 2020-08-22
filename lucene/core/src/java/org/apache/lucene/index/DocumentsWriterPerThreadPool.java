@@ -170,13 +170,13 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
    * Filters all DWPTs the given predicate applies to and that can be checked out of the pool via
    * {@link #checkout(DocumentsWriterPerThread)}. All DWPTs returned from this method are already locked
    * and {@link #isRegistered(DocumentsWriterPerThread)} will return <code>true</code> for all returned DWPTs
-   * 获取满足条件的 PerThread 对象
+   * 获取满足条件的 PerThread 对象  一般情况就是根据 deleteQueue的generate 确保获取同一时期的对象
    */
   List<DocumentsWriterPerThread> filterAndLock(Predicate<DocumentsWriterPerThread> predicate) {
     List<DocumentsWriterPerThread> list = new ArrayList<>();
     for (DocumentsWriterPerThread perThread : this) {
       if (predicate.test(perThread)) {
-        // 如果此时有某个线程还在使用的话 这里是会阻塞住的  因为调用该方法的时机一般就是 prepareCommit 会阻塞直到所有线程写内存的动作结束后 再将所有数据刷盘
+        // 如果此时有某个线程还在使用的话 这里是会阻塞住的  因为调用该方法的时机一般就是 fullFlush 会阻塞直到所有线程写内存的动作结束后 再将所有数据刷盘
         perThread.lock();
         if (isRegistered(perThread)) {
           list.add(perThread);

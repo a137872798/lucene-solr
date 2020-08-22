@@ -513,7 +513,7 @@ final class DocumentsWriterPerThread {
      * Prepares this DWPT for flushing. This method will freeze and return the
      * {@link DocumentsWriterDeleteQueue}s global buffer and apply all pending
      * deletes to this DWPT.
-     * 读取这段时间内 该segment 下所有的删除/更新信息
+     * 将全局容器中采集到的所有 更新/删除操作冻结并返回  结果会设置到 perThread申请刷盘时生成的  ticket中
      */
     FrozenBufferedUpdates prepareFlush() {
         assert numDocsInRAM > 0;
@@ -521,7 +521,7 @@ final class DocumentsWriterPerThread {
         final FrozenBufferedUpdates globalUpdates = deleteQueue.freezeGlobalBuffer(deleteSlice);
         /* deleteSlice can possibly be null if we have hit non-aborting exceptions during indexing and never succeeded
         adding a document. */
-        // 将变化同步到 pendingUpdates 中
+        // 将变化同步到 pendingUpdates 中  刷盘时按照termNode删除 doc 都是依赖于该 perThread对象对应的分片
         if (deleteSlice != null) {
             // apply all deletes before we flush and release the delete slice
             deleteSlice.apply(pendingUpdates, numDocsInRAM);

@@ -46,8 +46,9 @@ import org.apache.lucene.util.InfoStream;
  * Each packet is assigned a generation, and each flushed or
  * merged segment is also assigned a generation, so we can
  * track which BufferedDeletes packets to apply to any given
- * segment. */
-// 该对象内部填充了多个删除/更新doc的信息
+ * segment.
+ * 该对象会从 IndexWriter 中接收所有 FrozenBufferedUpdates 对象 并进行处理
+ */
 final class BufferedUpdatesStream implements Accountable {
 
   /**
@@ -68,10 +69,14 @@ final class BufferedUpdatesStream implements Accountable {
    * 输出日志信息
    */
   private final InfoStream infoStream;
+
   /**
-   * 记录有关的 term数量 以及占用的内存
+   * 统计所有待处理 update 对象消耗的总内存
    */
   private final AtomicLong bytesUsed = new AtomicLong();
+  /**
+   * 记录此时所有未处理的 FrozenBufferedUpdates 对应的 deleteTerm
+   */
   private final AtomicInteger numTerms = new AtomicInteger();
 
   BufferedUpdatesStream(InfoStream infoStream) {
@@ -80,7 +85,8 @@ final class BufferedUpdatesStream implements Accountable {
   }
 
   // Appends a new packet of buffered deletes to the stream,
-  // setting its generation:   追加一个删除/更新 doc的对象
+  // setting its generation:
+  // 追加一个删除/更新 doc的对象
   synchronized long push(FrozenBufferedUpdates packet) {
     /*
      * The insert operation must be atomic. If we let threads increment the gen
@@ -348,7 +354,9 @@ final class BufferedUpdatesStream implements Accountable {
 
   /** Tracks the contiguous range of packets that have finished resolving.  We need this because the packets
    *  are concurrently resolved, and we can only write to disk the contiguous completed
-   *  packets. */
+   *  packets.
+   *  该对象记录 已经处理完成的 FrozenBufferedUpdates 对应的 delGen
+   */
   private static class FinishedSegments {
 
     /** Largest del gen, inclusive, for which all prior packets have finished applying. */
@@ -394,6 +402,10 @@ final class BufferedUpdatesStream implements Accountable {
      */
     synchronized void finishedSegment(long delGen) {
       finishedDelGens.add(delGen);
+      // completedDelGen 从0开始 finishedDelGens 从1开始
+      // 这里有一个场景  先设置 globalSlice 对应的更新对象  比如 delGen为1
+      // 之后设置 perThread 对应的 deleteSlice delGen为2
+      // 这时 completedDelGen 为0  而 2先完成了  不会增加 completedDelGen 的值  只是会先将  2 设置到finishedDelGens 中 当1完成时  completedDelGen 会直接更新到2
       while (true) {
         if (finishedDelGens.contains(completedDelGen + 1)) {
           finishedDelGens.remove(completedDelGen + 1);

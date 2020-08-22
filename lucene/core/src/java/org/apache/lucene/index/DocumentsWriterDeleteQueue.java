@@ -282,6 +282,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      * @return
      */
     FrozenBufferedUpdates freezeGlobalBuffer(DeleteSlice callerSlice) {
+        // 在并发场景确保全局容器内的node 只会被一个perThread处理
         globalBufferLock.lock();
         try {
             ensureOpen();
@@ -293,6 +294,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
             final Node<?> currentTail = tail; // take the current tail make this local any
             // Changes after this call are applied later
             // and not relevant here
+            // 同步目标分片与全局分片的尾节点
             if (callerSlice != null) {
                 // Update the callers slices so we are on the same page
                 callerSlice.sliceTail = currentTail;
@@ -335,7 +337,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      */
     private FrozenBufferedUpdates freezeGlobalBufferInternal(final Node<?> currentTail) {
         assert globalBufferLock.isHeldByCurrentThread();
-        // 因为之前都是 尝试性同步 所以要在这里强制同步一次
+        // 更新同步分片的tail节点 确保globalSlice在冻结时能够捕获这段时间生成的所有节点
         if (globalSlice.sliceTail != currentTail) {
             globalSlice.sliceTail = currentTail;
             globalSlice.apply(globalBufferedUpdates, BufferedUpdates.MAX_INT);
@@ -721,6 +723,8 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
      *                         moment when this queue is advanced since each these DWPTs can increment the seqId after we
      *                         advanced it.
      * @return a new queue as a successor of this queue.
+     * 一般是当触发 fullFlush时  会创建一个新的删除队列 替换documentsWriter  并且 通过generation 可以过滤对应年代的所有 perThread 方便之后只针对这些对象做刷盘处理
+     * 这个对象会记录当代所有的 update/delete信息 以便在合适的时机作用到数据上
      */
     synchronized DocumentsWriterDeleteQueue advanceQueue(int maxNumPendingOps) {
         // 可以看出该方法只能调用一次
@@ -731,6 +735,7 @@ final class DocumentsWriterDeleteQueue implements Accountable, Closeable {
         // 预分配一个编号
         long seqNo = getLastSequenceNumber() + maxNumPendingOps + 1;
         maxSeqNo = seqNo;
+        // 构建一个新的删除队列
         return new DocumentsWriterDeleteQueue(infoStream, generation + 1, seqNo + 1,
                 // don't pass ::getMaxCompletedSeqNo here b/c otherwise we keep an reference to this queue
                 // and this will be a memory leak since the queues can't be GCed

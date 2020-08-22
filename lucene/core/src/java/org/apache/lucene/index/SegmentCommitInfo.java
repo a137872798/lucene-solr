@@ -96,7 +96,7 @@ public class SegmentCommitInfo {
 
   // NOTE: only used in-RAM by IW to track buffered deletes;
   // this is never written to/read from the Directory
-  // 代表该段此时被第几代的 update对象处理过   每次生成的 update对象有一个 delGen的概念 在处理完后 对应的segmentInfo 会将自己最近的delGen 更新成该值
+  // 代表该对象会被 delGen为多少的 BufferedUpdatesStream 处理
   private long bufferedDeletesGen = -1;
 
   /**

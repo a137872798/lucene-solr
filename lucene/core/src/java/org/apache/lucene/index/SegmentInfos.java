@@ -167,8 +167,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     public Map<String, String> userData = Collections.emptyMap();
 
     /**
-     * 内部存储一组 SegmentCommitInfo
-     * 每个该对象维护一个 segmentInfo 作为片段的基础信息  还有每个年代删除的doc 当前年代 等等信息
+     * 插入情况有2种  第一种启动时读取之前存在的索引文件  第二种 每当perThread 刷盘生成新的段时 也会插入到该容器
      */
     private List<SegmentCommitInfo> segments = new ArrayList<>();
 
@@ -955,7 +954,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * The returned collection is recomputed on each
      * invocation.
      *
-     * @param includeSegmentsFile  返回所有关联文件   是否包含段文件
+     * @param includeSegmentsFile  返回所有关联文件  segment_N 文件
      */
     public Collection<String> files(boolean includeSegmentsFile) throws IOException {
         HashSet<String> files = new HashSet<>();
@@ -1091,6 +1090,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * Call this before committing if changes have been made to the
      * segments.
+     * 每当该对象发生变化时 要触发一次该方法  比如插入了一个新的 segmentInfo时
      */
     public void changed() {
         version++;

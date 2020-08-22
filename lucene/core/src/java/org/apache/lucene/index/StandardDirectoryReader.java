@@ -44,7 +44,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
    */
   final IndexWriter writer;
   /**
-   * 描述片段信息 doc应该是由多个片段构成的吧
+   * 维护初始化时读取到的段信息 以及 之后刷盘后生成的新segment信息
    */
   final SegmentInfos segmentInfos;
   private final boolean applyAllDeletes;
