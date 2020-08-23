@@ -45,7 +45,6 @@ import org.apache.lucene.util.IOUtils;
 
 /** Holds core readers that are shared (unchanged) when
  * SegmentReader is cloned or reopened
- * 该对象内部组合了各种输入流  可以以field为单位读取全部相关信息  相当于一个总入口
  */
 final class SegmentCoreReaders {
 
@@ -125,13 +124,13 @@ final class SegmentCoreReaders {
       // 先还原该段下所有的 fieldInfo
       coreFieldInfos = codec.fieldInfosFormat().read(cfsDir, si.info, "", context);
 
-      // 生成一个读取时的上下文对象
+      // 也是一个简单的bean对象 记录了该段下有哪些 fieldInfo
       final SegmentReadState segmentReadState = new SegmentReadState(cfsDir, si.info, coreFieldInfos, context);
 
 
       final PostingsFormat format = codec.postingsFormat();
       // Ask codec for its Fields
-      // 该对象可以读取 每个field 下的position/payload 等信息
+      // 返回的对象 维护的 就是读取 基于跳跃表和 FST 作为快速索引 索引文件后缀名为 doc pay pos tim tip 的对象
       fields = format.fieldsProducer(segmentReadState);
       assert fields != null;
       // ask codec for its Norms: 

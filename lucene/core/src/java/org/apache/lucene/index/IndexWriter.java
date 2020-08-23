@@ -365,7 +365,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private final ReentrantLock writeDocValuesLock = new ReentrantLock();
 
     /**
-     * 暂存任务的队列  只有在合适的时机手动触发执行内部任务
+     * 暂存任务的队列  多生产者多消费者队列 每个执行flush的线程都可以往内部添加任务 并且每个执行完 刷盘后的线程最终都会消费队列中的任务
      */
     static final class EventQueue implements Closeable {
 
@@ -2879,7 +2879,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (infoStream.isEnabled("IW")) {
                 infoStream.message("IW", "publish sets newSegment delGen=" + nextGen + " seg=" + segString(newSegment));
             }
-            // 将这个新的段追加到 infos中
+            // 当为segment设置了 bufferedDeleteGen 后 只有 segment.bufferedDeleteGen <= update.delGen  的段对象才会被该update影响到
             newSegment.setBufferedDeletesGen(nextGen);
             // 刷盘完成的段 将会插入到 IndexWriter的 segmentInfos中
             segmentInfos.add(newSegment);
@@ -3825,7 +3825,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Moves all in-memory segments to the {@link Directory}, but does not commit
      * (fsync) them (call {@link #commit} for that).
-     * 将解析doc后生成的数据 写到磁盘中
+     * 将解析doc后生成的数据 写到磁盘中  实际上本方法是可以并发调用的 意味着什么呢 也就是刷盘过程中添加的各种任务 会被多线程消费
      */
     public final void flush() throws IOException {
         flush(true, true);
@@ -3892,13 +3892,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         // 只是增加刷盘次数
                         flushCount.incrementAndGet();
                     }
-                    // 之前因为多线程抢占 可能导致某些 ticket 还没有发布 这里就要将所有ticket发布   也就是将刷盘生成的 segment回填到 segmentInfos 中  以及往任务队列插入一个处理update的任务
+                    // 之前因为多线程抢占 可能导致某些 ticket 还没有发布 这里就要将所有ticket发布
+                    // 也就是将刷盘生成的 segment回填到 segmentInfos 中  以及往任务队列插入一个处理update的任务
                     publishFlushedSegments(true);
                     flushSuccess = true;
                 } finally {
                     assert Thread.holdsLock(fullFlushLock);
-                    ;
                     docWriter.finishFullFlush(flushSuccess);
+                    // 以非merge形式 执行之前存储在任务队列中的所有任务
                     processEvents(false);
                 }
             }
@@ -5645,7 +5646,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     private void release(ReadersAndUpdates readersAndUpdates, boolean assertLiveInfo) throws IOException {
         assert Thread.holdsLock(this);
-        // 这里如果引用计数刚好归0 将update对象和 liveDoc 对象刷盘
         if (readerPool.release(readersAndUpdates, assertLiveInfo)) {
             // if we write anything here we have to hold the lock otherwise IDF will delete files underneath us
             assert Thread.holdsLock(this);
@@ -5654,7 +5654,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 某个读取某个段的 reader 对象
+     * readerPool 对象负责维护所有段的各种索引文件对应的reader
      *
      * @param info
      * @param create 如果不存在则创建
@@ -5674,11 +5674,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * applying the package. In order to ensure the packet has been applied,
      * {@link IndexWriter#forceApply(FrozenBufferedUpdates)} must be called.
      * <p>
-     * 当某个flush 动作完成时  开始执行之前生成的有关删除/更新 doc的 update对象
+     * 开始处理 deleteQueue中采集到的删除信息  这里针对每个perThread会产生2个 updates对象 一个是全局对象 一个是该perThread 对应的deleteSlice 采集到的删除对象  （为什么要处理2次呢）
+     * 并且 如果针对 perThread产生的分片对象如果只有 termNode信息 那么会在flush时 直接处理掉这部分 也就是在 liveDoc中直接清除掉这部分 这样 该对象就不会被作为任务插入到任务队列了
      */
     @SuppressWarnings("try")
     final boolean tryApply(FrozenBufferedUpdates updates) throws IOException {
-        // 注意这里不是强制执行的  那么应该在某个时间点会强制执行
+        // 因为任务队列中的 Event 会被多线程并发调用 所以只有抢占到updates锁对象的线程 才能够获得该对象的处理权
         if (updates.tryLock()) {
             try {
                 forceApply(updates);
@@ -5694,7 +5695,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * Translates a frozen packet of delete term/query, or doc values
      * updates, into their actual docIDs in the index, and applies the change.  This is a heavy
      * operation and is done concurrently by incoming indexing threads.
-     * 处理某个 flush任务关联的 update 对象
+     * 由某个线程处理内部所有 待更新/删除的数据
      */
     final void forceApply(FrozenBufferedUpdates updates) throws IOException {
         updates.lock();
@@ -5708,6 +5709,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             assert updates.any();
 
+            // 代表此时 已经获得了这些段索引文件的输入流
             Set<SegmentCommitInfo> seenSegments = new HashSet<>();
 
             int iter = 0;
@@ -5720,7 +5722,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // Optimistic concurrency: assume we are free to resolve the deletes against all current segments in the index, despite that
             // concurrent merges are running.  Once we are done, we check to see if a merge completed while we were running.  If so, we must retry
             // resolving against the newly merged segment(s).  Eventually no merge finishes while we were running and we are done.
-            // 这个while 应该是CAS 的套路  只有处理前后 mergeGen 一致才代表没有发生竞争
             while (true) {
                 String messagePrefix;
                 if (iter == 0) {
@@ -5734,6 +5735,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // 获取上一次merge完成的年代
                 long mergeGenStart = mergeFinishedGen.get();
 
+                // 代表之后会被处理的所有文件
                 Set<String> delFiles = new HashSet<>();
                 BufferedUpdatesStream.SegmentState[] segStates;
 
@@ -5744,14 +5746,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         break;
                     }
 
-                    // 因为这些段关联的文件都会收到影响 所以存到队列中 之后增加引用计数  避免句柄被释放
+                    // 将本次涉及到的所有索引文件加入到容器中
                     for (SegmentCommitInfo info : infos) {
                         delFiles.addAll(info.files());
                     }
 
                     // Must open while holding IW lock so that e.g. segments are not merged
                     // away, dropped from 100% deletions, etc., before we can open the readers
-                    // 通过readPool 生成 segment相关的reader对象 并包装成 SegmentState (该对象类似于一个上下文对象)
+                    // 因为本次段对象中 可能包含新创建的 所以要生成对应的reader 对象 确保能读取之前索引文件的数据
                     segStates = openSegmentStates(infos, seenSegments, updates.delGen());
 
                     if (segStates.length == 0) {
@@ -5862,12 +5864,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Returns the {@link SegmentCommitInfo} that this packet is supposed to apply its deletes to, or null
      * if the private segment was already merged away.
+     * 需要确定 本次 update 会影响到的范围  一般情况下 每次所有perThread刷盘完成后会先发布  这样就能确保globalSlice能作用到所有perThread对象上了
      */
-    // 找到本次更新会影响到的所有段
     private synchronized List<SegmentCommitInfo> getInfosToApply(FrozenBufferedUpdates updates) {
         final List<SegmentCommitInfo> infos;
-        // 如果设置了私有段 代表本次更新的范围只针对这个 segment
+        // 如果设置了私有段 代表本次更新的范围只针对这个 segment      通过perThread 的 deleteSlice生成的 updates对象仅处理 perThread对象的段
         if (updates.privateSegment != null) {
+            // 必须确保此时段信息已经发布了  (即 已经添加到 segmentInfos中)
             if (segmentInfos.contains(updates.privateSegment)) {
                 infos = Collections.singletonList(updates.privateSegment);
             } else {
@@ -5968,9 +5971,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * Opens SegmentReader and inits SegmentState for each segment.
      * 因为之后要处理存储在这些 segment 下的数据    所以现在要先获取它们的输入流
      *
-     * @param infos
-     * @param alreadySeenSegments 这里存放能正常读取的段 如果某个段无法读取 那么忽略
-     * @param delGen              只处理这个gen之前的数据
+     * @param infos    本次所有需要获取输入流的段对象
+     * @param alreadySeenSegments 某些段的输入流可能之前已经获取了 那么此时就不需要再读取了 并且本次新读取的段也会插入到这个容器中
+     * @param delGen   每个updates对象在插入到任务队列前会由  updateStream 对象分配一个delGen 顺序递增
      * @return
      * @throws IOException
      */
@@ -5979,9 +5982,16 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         List<BufferedUpdatesStream.SegmentState> segStates = new ArrayList<>();
         try {
             for (SegmentCommitInfo info : infos) {
+                // 只有当段被标记的delGen <= 当前update对象对应的delGen 时 才会被处理
+                // 记得每个 perThread被创建时 就同步了deleteQueue中的tail节点  随着deleteQueue收集全局update信息 会维护一个链表结构
+                // 每当刷盘的时候 会将globalSlice 与链表同步 并生成update  同时还会为 perThread 单独同步一次链表 并生成专属于这个 segment的 update
+                // 梳理下来结果就是这样  因为每个perThread 自创建起 开始与 deleteQueue 同步 所以之后采集的删除信息必然能作用到该 perThread上   但是在刷盘完成后 deleteQueue可能又采集到了新的删除信息
+                // 为了能影响到之前的segment 新的 update信息delGen 一定会大于之前 segment的 delGen
+                // 并且 为了删除动作不会被重复的作用  info.getBufferedDeletesGen()对应的update对象必然就是当前perThread对应的deleteSlice  而大于它的delGen的update  只采集了之后新的node信息
                 if (info.getBufferedDeletesGen() <= delGen && alreadySeenSegments.contains(info) == false) {
                     // 从 readPool 对象中初始化有关该 segment的reader对象 内部包含 直接读取索引文件内容的各种对象
                     segStates.add(new BufferedUpdatesStream.SegmentState(getPooledInstance(info, true), this::release, info));
+                    // 因为该segment对应的inputStream已经生成 为了避免之后反复创建输入流  就添加到容器中
                     alreadySeenSegments.add(info);
                 }
             }

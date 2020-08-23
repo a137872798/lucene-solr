@@ -68,6 +68,10 @@ final class FrozenBufferedUpdates {
   
   /** Counts down once all deletes/updates have been applied */
   public final CountDownLatch applied = new CountDownLatch(1);
+
+  /**
+   * 该对象本身最终会存储到任务队列中 并被多线程争用  所以只有获取到锁的对象才具备处理它的独占权
+   */
   private final ReentrantLock applyLock = new ReentrantLock();
   /**
    * 以 field 为单位存储了每个 field内部数据的更新情况
@@ -106,7 +110,8 @@ final class FrozenBufferedUpdates {
    * 该对象 主要就是通过一个 BufferedUpdates 对象进行初始化
    * @param infoStream
    * @param updates  该对象内部 包含多个 删除/更新信息
-   * @param privateSegment   该对象是针对哪个segment的
+   * @param privateSegment   如果是某个 perThread 的deleteSlice根据当前globalSlice 信息生成的 update副本 那么在生成冻结对象时会携带 perThread对应的段信息 代表本次处理范围仅针对这个段
+   *                         如果是基于 globalSlice 生成的段对象则传入null
    */
   public FrozenBufferedUpdates(InfoStream infoStream, BufferedUpdates updates, SegmentCommitInfo privateSegment) {
     this.infoStream = infoStream;

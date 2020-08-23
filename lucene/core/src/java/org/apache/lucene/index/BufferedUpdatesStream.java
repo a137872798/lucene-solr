@@ -298,7 +298,10 @@ final class BufferedUpdatesStream implements Accountable {
     return nextGen++;
   }
 
-  /** Holds all per-segment internal state used while resolving deletions. */
+  /**
+   * Holds all per-segment internal state used while resolving deletions.
+   * 为每个段维护在处理  updates对象时需要的各种参数
+   */
   static final class SegmentState implements Closeable {
     final long delGen;
     final ReadersAndUpdates rld;
@@ -315,8 +318,8 @@ final class BufferedUpdatesStream implements Accountable {
 
     /**
      *
-     * @param rld  该对象内部包含了 读取某个段相关所有索引文件的reader   以及以field为单位 多个 docValueUpdate 对象
-     * @param onClose  close 的钩子
+     * @param rld  该对象内部包含了 读取某个段相关所有索引文件的reader
+     * @param onClose  对应 IndexWriter.release()
      * @param info
      * @throws IOException
      */

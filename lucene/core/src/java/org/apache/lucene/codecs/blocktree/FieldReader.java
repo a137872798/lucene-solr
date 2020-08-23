@@ -38,6 +38,7 @@ import org.apache.lucene.util.fst.OffHeapFSTStore;
 /**
  * BlockTree's implementation of {@link Terms}.
  * @lucene.internal
+ * 该对象 负责读取 BlockTreeTermsWriter中 FieldWriter写入的 term数据
  */
 public final class FieldReader extends Terms implements Accountable {
 
@@ -62,6 +63,21 @@ public final class FieldReader extends Terms implements Accountable {
   final FST<BytesRef> index;
   //private boolean DEBUG;
 
+  /**
+   *
+   * @param parent   代表该对象归属于哪个 BlockTreeTermsReader
+   * @param fieldInfo    代表读取的是哪个field的信息
+   * @param numTerms     总计有多少term  下面也是一些用于描述term的相关属性
+   * @param rootCode
+   * @param sumTotalTermFreq
+   * @param sumDocFreq
+   * @param docCount
+   * @param indexStartFP  对应的fieldWriter开始将数据写入索引文件的位置
+   * @param indexIn  对应tip索引文件
+   * @param minTerm
+   * @param maxTerm
+   * @throws IOException
+   */
   FieldReader(BlockTreeTermsReader parent, FieldInfo fieldInfo, long numTerms, BytesRef rootCode, long sumTotalTermFreq, long sumDocFreq, int docCount,
               long indexStartFP, IndexInput indexIn, BytesRef minTerm, BytesRef maxTerm) throws IOException {
     assert numTerms > 0;

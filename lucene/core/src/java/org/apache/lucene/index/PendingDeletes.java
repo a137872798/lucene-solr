@@ -53,7 +53,7 @@ class PendingDeletes {
   protected int pendingDeleteCount;
 
   /**
-   * liveDocs 是否被初始化
+   * 代表在初始化该对象时  段对象中是否已经有部分doc被删除了
    */
   boolean liveDocsInitialized;
 
@@ -63,6 +63,11 @@ class PendingDeletes {
     pendingDeleteCount = reader.numDeletedDocs() - info.getDelCount();
   }
 
+  /**
+   * 某个SegmentCommitInfo 首次被创建时 delGen 就是 -1  每当处理过一次删除操作 就会增加该值   在 perThread.flush() 中  会直接处理掉 update中的 termNode信息
+   * 这时如果已经有部分doc被标记成删除 那么就会增加 delGen
+   * @param info
+   */
   PendingDeletes(SegmentCommitInfo info) {
     this(info, null, info.hasDeletions() == false);
     // if we don't have deletions we can mark it as initialized since we might receive deletes on a segment
@@ -70,6 +75,12 @@ class PendingDeletes {
     // For segments that were published we enforce a reader in the BufferedUpdatesStream.SegmentState ctor
   }
 
+  /**
+   *
+   * @param info
+   * @param liveDocs
+   * @param liveDocsInitialized   代表此时 段中已经有某些doc被删除了
+   */
   PendingDeletes(SegmentCommitInfo info, Bits liveDocs, boolean liveDocsInitialized) {
     this.info = info;
     this.liveDocs = liveDocs;

@@ -90,7 +90,7 @@ public final class SegmentReader extends CodecReader {
   SegmentReader(SegmentCommitInfo si, int createdVersionMajor, IOContext context) throws IOException {
     this.si = si.clone();
     this.originalSi = si;
-    // 生成段数据页的元数据
+    // 生成段的元数据
     this.metaData = new LeafMetaData(createdVersionMajor, si.info.getMinVersion(), si.info.getIndexSort());
 
     // We pull liveDocs/DV updates from disk:

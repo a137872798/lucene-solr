@@ -263,7 +263,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         assert Thread.holdsLock(this);
         // 从下面的逻辑可以推断 当一个perThread 将要刷盘前 会将自身从 pool中移除 避免被使用者再次获取 并写入doc
 
-        // 如果本次打算将所有 perThread 都进行刷盘
+        // 此时是否处于一个全刷盘的状态 此时会创建一个新的deleteQueue 并将同一时期的所有perThread的数据刷盘
         if (fullFlush) {
             if (perThread.isFlushPending()) {
                 // 将 perThread转移到一个 block容器中 同时从pool中移除该线程
@@ -735,20 +735,22 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 将阻塞的刷盘任务转移到 flushQueue中
-     * 应该是之后想插入的任务发现 此时已经进入刷盘状态了 直接先添加到  blockedFlushed 中
+     * 代表 fullFlush 已经完成 无论成功/失败
      */
     synchronized void finishFullFlush() {
         assert fullFlush;
         assert flushQueue.isEmpty();
         assert flushingWriters.isEmpty();
         try {
+            // 将之前因为某些原因被阻塞的 perThread 对象   重新加入到 待刷盘队列中
+            // TODO 推测由于此时处于 fullFlush 状态  所以之后准备flush的perThread 对象都会被阻塞
             if (!blockedFlushes.isEmpty()) {
                 assert assertBlockedFlushes(documentsWriter.deleteQueue);
                 pruneBlockedQueue(documentsWriter.deleteQueue);
                 assert blockedFlushes.isEmpty();
             }
         } finally {
+            // 代表本次全刷盘任务已经完成 同时根据当前内存占用情况 尝试解除对解析doc请求线程的阻塞
             fullFlushMarkDone = fullFlush = false;
 
             updateStallState();
@@ -762,6 +764,9 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         return true;
     }
 
+    /**
+     * 代表以异常形式结束了本次 fullFlush  那么就将此时存储在 待刷盘队列中的对象
+     */
     synchronized void abortFullFlushes() {
         try {
             abortPendingFlushes();
@@ -771,24 +776,26 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 终止所有待刷盘的对象
+     * 终止所有待刷盘的对象    一般是因为刷盘失败
      */
     synchronized void abortPendingFlushes() {
         try {
-            // 找到刷盘队列中的perThread
+            // 注意 flushQueue 中维护的是待取出 并执行的  perThread对象  而   flushingWriters 中维护的是正在刷盘的对象  当刷盘完成后会从该队列中移除
+            // 这里只是放弃 还未从队列中取出的 perThread对象
             for (DocumentsWriterPerThread dwpt : flushQueue) {
                 try {
-                    // 将文档数同步到 docWriter
+                    // 因为该对象即将被废弃 所以该对象维护在内存中的文档数需要下降
                     documentsWriter.subtractFlushedNumDocs(dwpt.getNumDocsInRAM());
+                    // 将内部数据清空 以及删除已经产生的索引文件
                     dwpt.abort();
                 } catch (Exception ex) {
                     // that's fine we just abort everything here this is best effort
                 } finally {
-                    // 触发钩子
+                    // 触发钩子  这里会同时将 perThread 从 flushingWriters 中移除
                     doAfterFlush(dwpt);
                 }
             }
-            // 此次刷盘失败 连同被阻塞的刷盘任务一起关闭
+            // 这些被阻塞的对象 推测是检测到当前处在 fullFlush中 所以延迟刷盘  这里会将这些待处理任务一起清除
             for (DocumentsWriterPerThread blockedFlush : blockedFlushes) {
                 try {
                     addFlushingDWPT(blockedFlush); // add the blockedFlushes for correct accounting in doAfterFlush

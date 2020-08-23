@@ -1448,6 +1448,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
         boolean success = false;
         try {
 
+            // 在写入 field相关信息前先获取 此时偏移量
             final long dirStart = termsOut.getFilePointer();
             final long indexDirStart = indexOut.getFilePointer();
 
@@ -1471,6 +1472,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 writeBytesRef(termsOut, field.minTerm);
                 writeBytesRef(termsOut, field.maxTerm);
             }
+            // 在 footer前写入读取field信息的起始偏移量
             writeTrailer(termsOut, dirStart);
             CodecUtil.writeFooter(termsOut);
             writeIndexTrailer(indexOut, indexDirStart);

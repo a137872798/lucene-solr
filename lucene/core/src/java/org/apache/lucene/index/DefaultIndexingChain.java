@@ -428,7 +428,7 @@ final class DefaultIndexingChain extends DocConsumer {
     }
 
     /**
-     * 将当前对象标记成不可用
+     * 当该对象关联的 perThread 被废弃时 触发该方法 关闭and删除所有之前写入的索引文件
      *
      * @throws IOException
      */

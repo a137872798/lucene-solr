@@ -208,6 +208,7 @@ final class ReaderPool implements Closeable {
     // Matches incRef in get:
     rld.decRef();
 
+    // 此时引用计数刚好为0
     if (rld.refCount() == 0) {
       // This happens if the segment was just merged away,
       // while a buffered deletes packet was still applying deletes/updates to it.
@@ -405,7 +406,7 @@ final class ReaderPool implements Closeable {
    * Obtain a ReadersAndLiveDocs instance from the
    * readerPool.  If create is true, you must later call
    * {@link #release(ReadersAndUpdates, boolean)}.
-   * 根据段信息 获取一个 读取段信息的对象
+   * 获取用于读取某个段下各种索引文件的 输入流
    */
   synchronized ReadersAndUpdates get(SegmentCommitInfo info, boolean create) {
     assert info.info.dir ==  originalDirectory: "info.dir=" + info.info.dir + " vs " + originalDirectory;
@@ -421,7 +422,7 @@ final class ReaderPool implements Closeable {
         return null;
       }
 
-      // 选择新建对象
+      // 选择新建对象   这里会为 segment创建一个 维护此时liveDoc信息的 pendingDeletes
       rld = new ReadersAndUpdates(segmentInfos.getIndexCreatedVersionMajor(), info, newPendingDeletes(info));
       // Steal initial reference:
       readerMap.put(info, rld);
@@ -442,11 +443,12 @@ final class ReaderPool implements Closeable {
   }
 
   /**
-   * 创建一个描述某个段 删除doc信息的对象
+   * 创建一个描述某个段 此时 aliveDoc位图的对象
    * @param info
    * @return
    */
   private PendingDeletes newPendingDeletes(SegmentCommitInfo info) {
+    // TODO 先忽略软删除
     return softDeletesField == null ? new PendingDeletes(info) : new PendingSoftDeletes(softDeletesField, info);
   }
 

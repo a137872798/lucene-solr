@@ -98,7 +98,7 @@ final class ReadersAndUpdates {
     /**
      * @param indexCreatedVersionMajor 本次 segmentInfo 对应的主版本号
      * @param info                     对应某个段的信息
-     * @param pendingDeletes           该对象描述了哪些doc 被删除
+     * @param pendingDeletes           维护段的 liveDoc信息
      */
     ReadersAndUpdates(int indexCreatedVersionMajor, SegmentCommitInfo info, PendingDeletes pendingDeletes) {
         this.info = info;
@@ -198,12 +198,12 @@ final class ReadersAndUpdates {
 
     /**
      * Returns a {@link SegmentReader}.
+     * 真正维护各种 reader对象的实际是 SegmentReader
      */
-    // 获取内部真正用于读取索引文件的对象  以段为单位
     public synchronized SegmentReader getReader(IOContext context) throws IOException {
         if (reader == null) {
             // We steal returned ref:
-            // 这个reader 整合了读取各种field 数据的逻辑
+            // 这个reader 整合了读取各种索引文件的逻辑
             reader = new SegmentReader(info, indexCreatedVersionMajor, context);
             // 数据读取完后 立即将liveDoc位图回填到 pendingDelete 对象中
             pendingDeletes.onNewReader(reader, info);

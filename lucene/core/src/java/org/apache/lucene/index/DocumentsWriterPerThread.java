@@ -180,11 +180,12 @@ final class DocumentsWriterPerThread {
      * updating the index files) and must discard all
      * currently buffered docs.  This resets our state,
      * discarding any docs added since last flush.
+     * 代表由该对象解析的数据 将被放弃
+     * TODO 被标记成 aborted的对象将在什么时候被完全废弃???
      */
-    // 标记当前对象不可用    该方法是在处理过程中遇到了异常时调用的   这时会选择丢弃之前记录的所有更新信息
     void abort() throws IOException {
         aborted = true;
-        // pendingNumDocs 本身由多个线程进行填充 这里是将本线程的份 从pendingNumDocs 中去除
+        //
         pendingNumDocs.addAndGet(-numDocsInRAM);
         try {
             if (infoStream.isEnabled("DWPT")) {
@@ -194,7 +195,7 @@ final class DocumentsWriterPerThread {
                 // 终止处理器  实际上会关闭内部所有的索引文件
                 consumer.abort();
             } finally {
-                // 清理由本线程收集的 更新动作
+                // 将本线程之前从 globalSlice上采集的所有 delete信息删除
                 pendingUpdates.clear();
             }
         } finally {
@@ -320,7 +321,7 @@ final class DocumentsWriterPerThread {
         // 同一个DocWriter下的所有thread共用一个删除队列  queue负责采集更新/删除信息
         this.deleteQueue = Objects.requireNonNull(deleteQueue);
         assert numDocsInRAM == 0 : "num docs " + numDocsInRAM;
-        // 每个线程会持有自己的分片对象  每个线程就是通过这个分片对象 将bufferedUpdate 同步到 deleteQueue的 globalBufferedUpdates中的
+        // 每个线程对应的doc解析/刷盘对象会持有自己的分片对象
         deleteSlice = deleteQueue.newSlice();
         // 根据段的版本号  创建段的描述信息   当该对象开始刷盘时 会将信息写入到segmentInfo中   一旦PerThread对象完成刷盘后 就可以被丢弃了
         segmentInfo = new SegmentInfo(directoryOrig, Version.LATEST, Version.LATEST, segmentName, -1, false, codec, Collections.emptyMap(), StringHelper.randomId(), Collections.emptyMap(), indexWriterConfig.getIndexSort());

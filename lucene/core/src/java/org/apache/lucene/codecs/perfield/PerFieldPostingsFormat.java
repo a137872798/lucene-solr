@@ -275,8 +275,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           // First time we are seeing this format; create a new instance
 
           // bump the suffix
-          // 一般情况下 format 与 formatName 是一一对应的  那么 suffix 肯定是0
-          // 当某些format具备不同的 formatName时 这个suffix才会出现不同的情况   正常情况应该不会出现  忽略吧
+          // 比如所有 field 都使用 Lucene84PostingsFormat 结构写入时 在 suffixes中会冲突 这时就会更新后缀值
           Integer suffix = suffixes.get(formatName);
           if (suffix == null) {
             suffix = 0;
@@ -288,7 +287,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
 
           // 这里根据格式名  生成了不同的段后缀名
           String segmentSuffix = getFullSegmentSuffix(field,
-                                                      writeState.segmentSuffix,
+                                                      writeState.segmentSuffix,  // 如果指定了段后缀名的情况 使用该后缀名 否则使用  getSuffix() 的返回结果
                                                       // 生成后缀名
                                                       getSuffix(formatName, Integer.toString(suffix)));
           // 这里创建一个 builder对象  该对象内部存储了 suffix state  以及一个fieldName列表
@@ -361,7 +360,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
 
     /**
-     *
+     * 该对象会以segment下面的field 为基本单位 分别创建读取这些field 信息的输入流
      * @param readState  该对象内部包含了本次读取的 目标segment及关联的fieldInfo  还有所在的目录等信息
      * @throws IOException
      */
@@ -372,10 +371,10 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
       try {
         // Read field name -> format name
         for (FieldInfo fi : readState.fieldInfos) {
-          // 代表该field的某些信息会存储到索引文件中
+          // 确保field下某些信息 确实被设定为需要存储
           if (fi.getIndexOptions() != IndexOptions.NONE) {
             final String fieldName = fi.name;
-            // 检测该fieldInfo 有没有指定 使用的存储格式
+            // 检测该fieldInfo 有没有指定 使用的存储格式  默认情况会设置  Lucene84PostingsFormat
             final String formatName = fi.getAttribute(PER_FIELD_FORMAT_KEY);
             if (formatName != null) {
               // null formatName means the field is in fieldInfos, but has no postings!
@@ -386,9 +385,10 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
               }
               // 创建指定的索引格式对象
               PostingsFormat format = PostingsFormat.forName(formatName);
+              // 生成段后缀名
               String segmentSuffix = getSuffix(formatName, suffix);
               if (!formats.containsKey(segmentSuffix)) {
-                // 提前生成 producer 对象并存储在 formats容器中
+                // 生成用于读取 field position信息的 reader对象
                 formats.put(segmentSuffix, format.fieldsProducer(new SegmentReadState(readState, segmentSuffix)));
               }
               // 以fieldName 为key 存储producer

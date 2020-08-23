@@ -143,6 +143,7 @@ final class DocumentsWriter implements Closeable, Accountable {
    * isCurrent while there are actually changes currently committed. See also
    * #anyChanges() & #flushAllThreads
    * 代表在fullFlush 之前是否有未刷盤的数据
+   * 当 fullFlush 结束后 就会将该标识设置为false
    */
   private volatile boolean pendingChangesInCurrentFullFlush;
 
@@ -658,7 +659,7 @@ final class DocumentsWriter implements Closeable, Accountable {
         /*
          * Now we are done and try to flush the ticket queue if the head of the
          * queue has already finished the flush.
-         * TODO  这个情况代表着什么 ???
+         * TODO  这个情况代表着什么 ???    最后也只是将一个publishSegment任务 添加到任务队列中
          */
         if (ticketQueue.getTicketCount() >= perThreadPool.size()) {
           // This means there is a backlog: the one
@@ -869,8 +870,8 @@ final class DocumentsWriter implements Closeable, Accountable {
   }
 
   /**
-   * 代表完成了一次全刷盘操作
-   * @param success
+   * 代表某次全刷盘操作完成
+   * @param success   本次操作是否成功
    * @throws IOException
    */
   void finishFullFlush(boolean success) throws IOException {
@@ -884,7 +885,7 @@ final class DocumentsWriter implements Closeable, Accountable {
         // 释放 flush锁 同时将flush过程中添加的任务(在block队列中) 转移到 flush队列中
         flushControl.finishFullFlush();
       } else {
-        // 当刷盘过程中出现异常  终止刷盘任务
+        // 代表以异常形式结束 fullFlush  会将此时 flushQueue 和 blockedFlushes 内所有 perThread之前解析的数据清空 同时将之前已经创建的索引文件删除
         flushControl.abortFullFlushes();
       }
     } finally {

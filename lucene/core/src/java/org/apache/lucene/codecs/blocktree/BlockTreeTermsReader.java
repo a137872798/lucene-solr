@@ -71,6 +71,7 @@ import org.apache.lucene.util.fst.Outputs;
  *  See {@link BlockTreeTermsWriter}.
  *
  * @lucene.experimental
+ * 该对象基于 term词典读取数据
  */
 
 public final class BlockTreeTermsReader extends FieldsProducer {
@@ -115,6 +116,9 @@ public final class BlockTreeTermsReader extends FieldsProducer {
   // produce DocsEnum on demand
   final PostingsReaderBase postingsReader;
 
+  /**
+   * 之前通过 BlockTreeTermsWriter 写入的所有field 信息 会被本对象读取出来 并设置到map中
+   */
   private final Map<String,FieldReader> fieldMap;
   private final List<String> fieldList;
 
@@ -148,25 +152,50 @@ public final class BlockTreeTermsReader extends FieldsProducer {
       CodecUtil.retrieveChecksum(termsIn);
 
       // Read per-field details
+      // 这里先将位置定位到了开始写入field信息的位置
       seekDir(termsIn);
       seekDir(indexIn);
 
+      // 此时读取的是  field总数    该值的写入是在 BlockTreeTermsWriter.close() 触发的
       final int numFields = termsIn.readVInt();
       if (numFields < 0) {
         throw new CorruptIndexException("invalid numFields: " + numFields, termsIn);
       }
       fieldMap = new HashMap<>((int) (numFields / 0.75f) + 1);
       for (int i = 0; i < numFields; ++i) {
+        /**
+         * 对应 BlockTreeTermsWriter的这段代码
+         *     for (FieldMetaData field : fields) {
+         *                 //System.out.println("  field " + field.fieldInfo.name + " " + field.numTerms + " terms");
+         *                 termsOut.writeVInt(field.fieldInfo.number);
+         *                 assert field.numTerms > 0;
+         *                 termsOut.writeVLong(field.numTerms);
+         *                 termsOut.writeVInt(field.rootCode.length);
+         *                 termsOut.writeBytes(field.rootCode.bytes, field.rootCode.offset, field.rootCode.length);
+         *                 assert field.fieldInfo.getIndexOptions() != IndexOptions.NONE;
+         *                 if (field.fieldInfo.getIndexOptions() != IndexOptions.DOCS) {
+         *                     termsOut.writeVLong(field.sumTotalTermFreq);
+         *                 }
+         *                 termsOut.writeVLong(field.sumDocFreq);
+         *                 termsOut.writeVInt(field.docCount);
+         *                 indexOut.writeVLong(field.indexStartFP);
+         *                 writeBytesRef(termsOut, field.minTerm);
+         *                 writeBytesRef(termsOut, field.maxTerm);
+         *             }
+         */
         final int field = termsIn.readVInt();
         final long numTerms = termsIn.readVLong();
         if (numTerms <= 0) {
           throw new CorruptIndexException("Illegal numTerms for field number: " + field, termsIn);
         }
+        // 先读取rootCode长度 在根据长度信息读取byte  （rootCode是 在将所有term信息抽取整合成一个fst对象后 (作为term词典) 该fst下 emptyString 对应的权重）
         final BytesRef rootCode = readBytesRef(termsIn);
+        // 因为在SegmentCoreReaders(维护所有段索引文件的对象)中最先读取的就是 fieldInfo的信息 所以现在可以知道某个fieldInfo 下 会将哪些信息写入到索引文件
         final FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
         if (fieldInfo == null) {
           throw new CorruptIndexException("invalid field number: " + field, termsIn);
         }
+        // 因为 sumTotalTermFreq sumDocFreq 类型都是long 所以直接读取 如果 indexOptions 是 DOC 那么之前读取的值就作为 sumDocFreq 而不是 sumTotalTermFreq
         final long sumTotalTermFreq = termsIn.readVLong();
         // when frequencies are omitted, sumDocFreq=sumTotalTermFreq and only one value is written.
         final long sumDocFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS ? sumTotalTermFreq : termsIn.readVLong();
@@ -179,6 +208,8 @@ public final class BlockTreeTermsReader extends FieldsProducer {
         }
         BytesRef minTerm = readBytesRef(termsIn);
         BytesRef maxTerm = readBytesRef(termsIn);
+        // 以上已经读取完所有写入termsIn中 有关 fieldInfo的数据了
+
         if (docCount < 0 || docCount > state.segmentInfo.maxDoc()) { // #docs with field must be <= #docs
           throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + state.segmentInfo.maxDoc(), termsIn);
         }
@@ -188,7 +219,10 @@ public final class BlockTreeTermsReader extends FieldsProducer {
         if (sumTotalTermFreq < sumDocFreq) { // #positions must be >= #postings
           throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq, termsIn);
         }
+
+        // 每当某个 FieldWriter 处理完某个 field所有的term时 就会将此时 tip文件此时的偏移量写入   term词典 或者说 fst 就是写入到 tip文件中的
         final long indexStartFP = indexIn.readVLong();
+        // 反向生成reader对象
         FieldReader previous = fieldMap.put(fieldInfo.name,
                                           new FieldReader(this, fieldInfo, numTerms, rootCode, sumTotalTermFreq, sumDocFreq, docCount,
                                                           indexStartFP, indexIn, minTerm, maxTerm));
@@ -222,7 +256,10 @@ public final class BlockTreeTermsReader extends FieldsProducer {
     return bytes;
   }
 
-  /** Seek {@code input} to the directory offset. */
+  /**
+   * Seek {@code input} to the directory offset.
+   * 这里先跳跃到了input的末尾 实际上是为了跳转到 开始写入 field信息的位置
+   * */
   private static void seekDir(IndexInput input) throws IOException {
     input.seek(input.length() - CodecUtil.footerLength() - 8);
     long offset = input.readLong();
