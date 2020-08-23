@@ -19,7 +19,10 @@ package org.apache.lucene.util.fst;
 import java.io.IOException;
 import org.apache.lucene.store.RandomAccessInput;
 
-/** Implements reverse read from a RandomAccessInput. */
+/**
+ * Implements reverse read from a RandomAccessInput.
+ * FST构建完成的数组需要反向读取
+ */
 final class ReverseRandomAccessReader extends FST.BytesReader {
     private final RandomAccessInput in;
     private long pos;

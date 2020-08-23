@@ -303,6 +303,10 @@ final class BufferedUpdatesStream implements Accountable {
    * 为每个段维护在处理  updates对象时需要的各种参数
    */
   static final class SegmentState implements Closeable {
+
+    /**
+     * 生成本次提交信息的SegmentCommitInfo 在那个时刻通过 perThread生成的 update对象通过updateStream分配的delGen
+     */
     final long delGen;
     final ReadersAndUpdates rld;
     final SegmentReader reader;

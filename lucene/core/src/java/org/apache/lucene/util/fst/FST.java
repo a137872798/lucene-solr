@@ -493,10 +493,10 @@ public final class FST<T> implements Accountable {
     /**
      * Load a previously saved FST; maxBlockBits allows you to
      * control the size of the byte[] pages used to hold the FST bytes.
+     * 基于一个已有的输入流还原 FST
      */
     public FST(DataInput in, Outputs<T> outputs, FSTStore fstStore) throws IOException {
         bytes = null;
-        // 默认情况下创建基于heap的 fst仓库
         this.fstStore = fstStore;
         this.outputs = outputs;
 
@@ -504,7 +504,7 @@ public final class FST<T> implements Accountable {
         // back-compat promise for FSTs (they are experimental), but we are sometimes able to offer it
         // 这里在检验输入流是否合法
         CodecUtil.checkHeader(in, FILE_FORMAT_NAME, VERSION_START, VERSION_CURRENT);
-        // 如果读取的值为1
+        // 对应save()存入的数据  先忽略 emptyBytes的逻辑
         if (in.readByte() == 1) {
             // accepts empty string
             // 1 KB blocks:
@@ -529,7 +529,7 @@ public final class FST<T> implements Accountable {
         } else {
             emptyOutput = null;
         }
-        // 每次读取一个 byte
+        // 这里是数据类型
         final byte t = in.readByte();
         switch (t) {
             case 0:
@@ -544,8 +544,10 @@ public final class FST<T> implements Accountable {
             default:
                 throw new IllegalStateException("invalid input type " + t);
         }
+        // fst的起点偏移量  因为要反向读取
         startNode = in.readVLong();
 
+        // 对应 BytesStore的大小
         long numBytes = in.readVLong();
         this.fstStore.init(in, numBytes);
     }

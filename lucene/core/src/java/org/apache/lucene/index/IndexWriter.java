@@ -5778,9 +5778,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     deleter.incRef(delFiles);
                 }
 
+                // 用于记录结果的变量
                 AtomicBoolean success = new AtomicBoolean();
                 long delCount;
-                // finishApply 的逻辑就是找到 所有 doc都应当被删除的segment 并丢弃
                 try (Closeable finalizer = () -> finishApply(segStates, success.get(), delFiles)) {
                     assert finalizer != null; // access the finalizer to prevent a warning
                     // don't hold IW monitor lock here so threads are free concurrently resolve deletes/updates:
@@ -5890,8 +5890,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * 当apply 逻辑执行完后的清理工作
      *
      * @param segStates
-     * @param success
-     * @param delFiles
+     * @param success  用于设置结果的标识
+     * @param delFiles  本次要处理的所有段下相关的索引文件
      * @throws IOException
      */
     private void finishApply(BufferedUpdatesStream.SegmentState[] segStates,
@@ -5904,7 +5904,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             } finally {
                 // Matches the incRef we did above, but we must do the decRef after closing segment states else
                 // IFD can't delete still-open files
-                // 此时允许删除之前被保护的索引文件
+                // 减少之前为了 进行delete而增加的引用计数
                 deleter.decRef(delFiles);
             }
 
@@ -5930,7 +5930,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * Close segment states previously opened with openSegmentStates
-     * 检测当前是否有 需要删除所有doc的segment
+     * 先检测是否有某些 segment 已经没有处理的必要了
      *
      * @param segStates
      * @param success
@@ -5943,9 +5943,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         try {
             for (BufferedUpdatesStream.SegmentState segState : segStates) {
                 if (success) {
-                    // 获取一个 删除doc的 增量值
+                    // 获取一个 删除doc的 增量值         startDelCount 代表该对象被创建时对应的段记录的删除doc数量
                     totDelCount += segState.rld.getDelCount() - segState.startDelCount;
-                    // 代表总计要删除的doc
+                    // 代表此时一共删除了多少doc 包含即将删除的
                     int fullDelCount = segState.rld.getDelCount();
                     assert fullDelCount <= segState.rld.info.info.maxDoc() : fullDelCount + " > " + segState.rld.info.info.maxDoc();
                     // 当要删除的量 达到 maxDoc  代表所有文档都要删除    并且在 merge策略中 没有保留需要全删除的

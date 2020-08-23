@@ -99,6 +99,7 @@ public final class FieldReader extends Terms implements Accountable {
     // Initialize FST always off-heap.
     if (indexIn != null) {
       final IndexInput clone = indexIn.clone();
+      // 从目标位置开始读取数据 还原 FST结构
       clone.seek(indexStartFP);
       index = new FST<>(clone, ByteSequenceOutputs.getSingleton(), new OffHeapFSTStore());
       /*

@@ -222,7 +222,7 @@ public final class BlockTreeTermsReader extends FieldsProducer {
 
         // 每当某个 FieldWriter 处理完某个 field所有的term时 就会将此时 tip文件此时的偏移量写入   term词典 或者说 fst 就是写入到 tip文件中的
         final long indexStartFP = indexIn.readVLong();
-        // 反向生成reader对象
+        // 在 FieldReader中 会还原FST
         FieldReader previous = fieldMap.put(fieldInfo.name,
                                           new FieldReader(this, fieldInfo, numTerms, rootCode, sumTotalTermFreq, sumDocFreq, docCount,
                                                           indexStartFP, indexIn, minTerm, maxTerm));
