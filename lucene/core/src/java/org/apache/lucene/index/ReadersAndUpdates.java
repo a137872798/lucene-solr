@@ -55,7 +55,7 @@ final class ReadersAndUpdates {
     final SegmentCommitInfo info;
 
     // Tracks how many consumers are using this instance:
-    // 记录该对象的引用计数
+    // 记录该对象的引用计数  默认 是1  当首次被 创建还会通过 incRef增加1
     private final AtomicInteger refCount = new AtomicInteger(1);
 
     // Set once (null, and then maybe set, and never set again):

@@ -211,7 +211,7 @@ final class FrozenBufferedUpdates {
       assert privateSegment == segStates[0].reader.getOriginalSegmentInfo();
     }
 
-    // 找到本次要删除的doc数量总和
+    // 这里将删除信息作用到所有相关的segment上 并返回删除的数量
     totalDelCount += applyTermDeletes(segStates);
     totalDelCount += applyQueryDeletes(segStates);
     totalDelCount += applyDocValuesUpdates(segStates);
@@ -462,7 +462,7 @@ final class FrozenBufferedUpdates {
   }
 
   /**
-   * 处理 deleteTerms 的数据 找到所有匹配的doc
+   * 找到命中  termNode 的所有doc 并标记成删除
    * @param segStates
    * @return
    * @throws IOException
@@ -474,6 +474,7 @@ final class FrozenBufferedUpdates {
     }
 
     // We apply segment-private deletes on flush:
+    // 仅针对单个段的 删除term操作应当在flush时就顺便完成
     assert privateSegment == null;
 
     long startNS = System.nanoTime();
@@ -486,6 +487,7 @@ final class FrozenBufferedUpdates {
         // our deletes don't apply to this segment
         continue;
       }
+      // rld 对象初始状态 引用计数就是1 如果首次创建 引用计数还会加 1  TODO 先不考虑如何出现这种情况
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running
@@ -493,10 +495,10 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
-      // 包含所有需要删除的 term 并且可以读取到 term关联的field
+      // 包含所有需要删除的 term(以及该term所属的field)
       FieldTermIterator iter = deleteTerms.iterator();
       BytesRef delTerm;
-      // reader 可以读取索引文档找到多个 field      而该迭代器对象通过传入 field 可以读取到该field下所有的term
+      // reader 内部包含读取各种所有文件的输入流 这里遍历term 与deleteTerm做匹配 并将命中的term所在的doc标记成待删除
       TermDocsIterator termDocsIterator = new TermDocsIterator(segState.reader, true);
       while ((delTerm = iter.next()) != null) {
         // 通过倒排索引 确定该 term 存在于哪些 doc 中
@@ -580,7 +582,7 @@ final class FrozenBufferedUpdates {
    * It accepts a field, value tuple and returns a {@link DocIdSetIterator} if the field has an entry
    * for the given value. It has an optimized way of iterating the term dictionary if the terms are
    * passed in sorted order and makes sure terms and postings are reused as much as possible.
-   * 该对象负责遍历 内部的term信息
+   * 该对象通过 segmentState内部的reader对象初始化 按照docId 读取文档下关联的term 便于 配合deleteTerm 进行删除工作
    */
   static final class TermDocsIterator {
     /**
@@ -611,7 +613,7 @@ final class FrozenBufferedUpdates {
     /**
      *
      * @param fields  负责遍历相关的所有 field   一般情况下就是 FreqProxFields
-     * @param sortedTerms  该field下的term 是否已经排序过了
+     * @param sortedTerms  该field下的term 是否已经排序过了  在写入到索引文件前 term会先被排序所以该标识一般是true
      */
     TermDocsIterator(Fields fields, boolean sortedTerms) {
       this(fields::terms, sortedTerms);
