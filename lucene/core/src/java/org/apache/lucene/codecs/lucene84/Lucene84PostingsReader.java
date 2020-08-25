@@ -132,11 +132,13 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
 
   /**
    * Read values that have been written using variable-length encoding instead of bit-packing.
+   * 当该term出现的doc总数不超过一个block时 采用另一种结构存储
    */
   static void readVIntBlock(IndexInput docIn, long[] docBuffer,
       long[] freqBuffer, int num, boolean indexHasFreq) throws IOException {
     if (indexHasFreq) {
       for(int i=0;i<num;i++) {
+        // 这种格式就对应解析doc时写入的  (详见FreqProxTermsWriterPerField)
         final int code = docIn.readVInt();
         docBuffer[i] = code >>> 1;
         if ((code & 1) != 0) {
@@ -152,6 +154,12 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     }
   }
 
+  /**
+   * 对应差值存储  还原数据
+   * @param buffer
+   * @param count
+   * @param base
+   */
   static void prefixSum(long[] buffer, int count, long base) {
     buffer[0] += base;
     for (int i = 1; i < count; ++i) {
@@ -358,6 +366,9 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     private long totalTermFreq;                       // sum of freqBuffer in this posting list (or docFreq when omitted)
     private int blockUpto;                            // number of docs in or before the current block
     private int doc;                                  // doc we last read
+    /**
+     * 每当读取一个block的数据时 记录此时最大的docId  以便于下个block docId的还原   因为docId的存储利用差值存储
+     */
     private long accum;                               // accumulator for doc deltas
 
     // Where this term's postings start in the .doc file:
@@ -371,10 +382,14 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     // docID for next skip point, we won't use skipper if 
     // target docID is not larger than this
     private int nextSkipDoc;
-    
+
+    /**
+     * 本次生成的迭代器是否需要获取频率信息
+     */
     private boolean needsFreq; // true if the caller actually needs frequencies
     // as we read freqBuffer lazily, isFreqsRead shows if freqBuffer are read for the current block
     // always true when we don't have freqBuffer (indexHasFreq=false) or don't need freqBuffer (needsFreq=false)
+    // 代表当前 freqBuffer中存储的是否是当前block对应的值   当不需要获取频率信息时总是true
     private boolean isFreqsRead;
     private int singletonDocID; // docid when there is a single pulsed posting, otherwise -1
 
@@ -402,12 +417,23 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
         indexHasPos == (fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) &&
         indexHasPayloads == fieldInfo.hasPayloads();
     }
-    
+
+    /**
+     * 使用 termState 以及 flag 重置内部相关数据
+     * @param termState
+     * @param flags
+     * @return
+     * @throws IOException
+     */
     public PostingsEnum reset(IntBlockTermState termState, int flags) throws IOException {
+      // 代表该term 总计出现在多少doc中
       docFreq = termState.docFreq;
       totalTermFreq = indexHasFreq ? termState.totalTermFreq : docFreq;
+      // doc文件的起始偏移量
       docTermStartFP = termState.docStartFP;
+      // 如果doc数量够多会将数据存储在一个 跳跃表中 以便快速查找doc  跟disi的rank 类似
       skipOffset = termState.skipOffset;
+      // 如果该term 仅出现在一个doc中 该字段就是对应的doc
       singletonDocID = termState.singletonDocID;
       if (docFreq > 1) {
         if (docIn == null) {
@@ -418,8 +444,10 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
       }
 
       doc = -1;
+      // 检测是否包含频率信息
       this.needsFreq = PostingsEnum.featureRequested(flags, PostingsEnum.FREQS);
       this.isFreqsRead = true;
+      // 如果没有存储频率信息 或者不需要查询频率信息 将所有频率标记成1
       if (indexHasFreq == false || needsFreq == false) {
         for (int i = 0; i < ForUtil.BLOCK_SIZE; ++i) {
           freqBuffer[i] = 1;
@@ -466,28 +494,40 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     public int docID() {
       return doc;
     }
-    
+
+    /**
+     * 重新将doc 读取到数组中
+     * @throws IOException
+     */
     private void refillDocs() throws IOException {
       // Check if we skipped reading the previous block of freqBuffer, and if yes, position docIn after it
+      // 如果第二次调用该方法时 发现 还没有读取过freq的部分 那么跳过该部分 否则无法正常读取下一个docBlock
       if (isFreqsRead == false) {
         pforUtil.skip(docIn);
         isFreqsRead = true;
       }
-      
+
+      // docFreq 代表该term 出现在多少doc中
+      // blockUpto 默认为0
       final int left = docFreq - blockUpto;
       assert left >= 0;
 
+      // 代表要读取的doc数量超过一个block
       if (left >= BLOCK_SIZE) {
+        // 从doc文件中还原doc 并填充到 docBuffer中  还原出来的应该是 doc的增量信息
         forDeltaUtil.decodeAndPrefixSum(docIn, accum, docBuffer);
 
+        // 如果需要频率信息 那么标记isFreqsRead 这样在其他api中就知道要先获取 频率信息
         if (indexHasFreq) {
           if (needsFreq) {
             isFreqsRead = false;
           } else {
+            // 如果不需要频率信息 跳过描述频率的部分
             pforUtil.skip(docIn); // skip over freqBuffer if we don't need them at all
           }
         }
         blockUpto += BLOCK_SIZE;
+        // 这种情况根本不会存储 freq信息 所以不需要处理 直接使用一开始初始化的 freq
       } else if (docFreq == 1) {
         docBuffer[0] = singletonDocID;
         freqBuffer[0] = totalTermFreq;
@@ -495,7 +535,9 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
         blockUpto++;
       } else {
         // Read vInts:
+        // 数据不足一个block 直接读取就好
         readVIntBlock(docIn, docBuffer, freqBuffer, left, indexHasFreq);
+        // 之前doc采用差值存储 这里是通过累加进行还原
         prefixSum(docBuffer, left, accum);
         docBuffer[left] = NO_MORE_DOCS;
         blockUpto += left;
@@ -505,9 +547,15 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
       assert docBuffer[BLOCK_SIZE] == NO_MORE_DOCS;
     }
 
+    /**
+     * 读取下一个doc
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
       if (docBufferUpto == BLOCK_SIZE) {
+        // 代表需要重新填充doc
         refillDocs(); // we don't need to load freqBuffer for now (will be loaded later if necessary)
       }
 

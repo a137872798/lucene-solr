@@ -486,6 +486,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private volatile boolean closed;
     private volatile boolean closing;
 
+    /**
+     * 代表认为当前 segmentInfos 需要触发一次merge
+     */
     private final AtomicBoolean maybeMerge = new AtomicBoolean();
 
     private Iterable<Map.Entry<String, String>> commitUserData;
@@ -550,7 +553,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * the right to add N docs, before they actually change the index,
      * much like how hotels place an "authorization hold" on your credit
      * card to make sure they can later charge you when you check out.
-     * TODO
      */
     private final AtomicLong pendingNumDocs = new AtomicLong();
     private final boolean softDeletesEnabled;
@@ -1746,8 +1748,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * Drops a segment that has 100% deleted documents.
+     * @param info  该段下所有doc都已经被 删除 可以抛弃这个段
      */
-    // 当某些段下所有的doc 都要删除时 直接丢弃掉 整个segment
     private synchronized void dropDeletedSegment(SegmentCommitInfo info) throws IOException {
         // If a merge has already registered for this
         // segment, we leave it in the readerPool; the
@@ -1762,6 +1764,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // this is sneaky - we might hit an exception while dropping a reader but then we have already
                 // removed the segment for the segmentInfo and we lost the pendingDocs update due to that.
                 // therefore we execute the adjustPendingNumDocs in a finally block to account for that.
+                // 释放该段相关的索引文件输入流
                 dropPendingDocs |= readerPool.drop(info);
             } finally {
                 // 当成功移除掉segment 时  调整当前待处理的doc数量
@@ -5889,8 +5892,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * 当apply 逻辑执行完后的清理工作
      *
-     * @param segStates
-     * @param success  用于设置结果的标识
+     * @param segStates  本次处理delete时涉及到的所有段
+     * @param success  代表本次处理是否成功
      * @param delFiles  本次要处理的所有段下相关的索引文件
      * @throws IOException
      */
@@ -5904,13 +5907,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             } finally {
                 // Matches the incRef we did above, but we must do the decRef after closing segment states else
                 // IFD can't delete still-open files
-                // 减少之前为了 进行delete而增加的引用计数
+                // 之前为了避免索引文件被意外删除 所以增加了引用计数 现在处理完毕了  减少对应的值  如果此时引用计数为0了 索引文件就会被删除
+                // 原本每个索引文件首次被使用时都为1 在delete前又会+1 推测在merge时 之前的所有文件计数会-1 这里delete完后 又-1 发现正好归0 就直接删除了
                 deleter.decRef(delFiles);
             }
 
             if (result.anyDeletes) {
                 // 只要有任意数据被删除了 就标记成需要merge
                 maybeMerge.set(true);
+                // TODO 这里调用该方法的意图不是很明白
                 checkpoint();
             }
 
@@ -5930,7 +5935,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * Close segment states previously opened with openSegmentStates
-     * 先检测是否有某些 segment 已经没有处理的必要了
+     * 在 delete.apply 之后触发   检测是否某些段下所有的doc都已经被标记成删除了  是的话就没必要保留segment了
      *
      * @param segStates
      * @param success
@@ -5943,12 +5948,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         try {
             for (BufferedUpdatesStream.SegmentState segState : segStates) {
                 if (success) {
-                    // 获取一个 删除doc的 增量值         startDelCount 代表该对象被创建时对应的段记录的删除doc数量
+                    // 获取被 delete处理后新增的 删除数量 并进行累加
                     totDelCount += segState.rld.getDelCount() - segState.startDelCount;
-                    // 代表此时一共删除了多少doc 包含即将删除的
+                    // 代表此时一共删除了多少doc 包含待删除的
                     int fullDelCount = segState.rld.getDelCount();
                     assert fullDelCount <= segState.rld.info.info.maxDoc() : fullDelCount + " > " + segState.rld.info.info.maxDoc();
-                    // 当要删除的量 达到 maxDoc  代表所有文档都要删除    并且在 merge策略中 没有保留需要全删除的
+                    // 代表此时删除的doc量已经 == maxDoc了 (也即所有的doc都需要被删除 那么该段也没有保留的必要了)
                     if (segState.rld.isFullyDeleted() && getConfig().getMergePolicy().keepFullyDeletedSegment(() -> segState.reader) == false) {
                         if (allDeleted == null) {
                             allDeleted = new ArrayList<>();

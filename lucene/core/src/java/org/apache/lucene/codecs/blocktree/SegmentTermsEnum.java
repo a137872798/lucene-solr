@@ -262,6 +262,11 @@ final class SegmentTermsEnum extends BaseTermsEnum {
         return stack[ord];
     }
 
+    /**
+     * 获取数组对应位置的arc  空间不足则扩容
+     * @param ord
+     * @return
+     */
     private FST.Arc<BytesRef> getArc(int ord) {
         if (ord >= arcs.length) {
             @SuppressWarnings({"rawtypes", "unchecked"}) final FST.Arc<BytesRef>[] next =
@@ -334,6 +339,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
         } else {
             // 这里应该是初始化相关属性
             f.nextEnt = -1;
+            // 从外部设置前缀长度
             f.prefix = length;
             f.state.termBlockOrd = 0;
             f.fpOrig = f.fp = fp;
@@ -395,6 +401,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
             throw new IllegalStateException("terms index was not loaded");
         }
 
+        // 因为在fr中存储了 某个field下最大和最小的 term 所以不在范围内的话 直接返回false
         if (fr.size() > 0 && (target.compareTo(fr.getMin()) < 0 || target.compareTo(fr.getMax()) > 0)) {
             return false;
         }
@@ -414,6 +421,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
 
         targetBeforeCurrentLength = currentFrame.ord;
 
+        // 代表此时已经读取了某个block的数据
         if (currentFrame != staticFrame) {
 
             // We are already seek'd; find the common
@@ -432,9 +440,11 @@ final class SegmentTermsEnum extends BaseTermsEnum {
             output = arc.output();
             targetUpto = 0;
 
+            // 获取第一个frame 应该就是 "" 对应的block
             SegmentTermsEnumFrame lastFrame = stack[0];
             assert validIndexPrefix <= term.length();
 
+            // validIndexPrefix 即当前读取的frame下共享前缀长度 这里先尝试与当前已经加载的frame进行匹配
             final int targetLimit = Math.min(target.length, validIndexPrefix);
 
             int cmp = 0;
@@ -443,6 +453,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
             // prefix output sharing
 
             // First compare up to valid seek frames:
+            // 这里在匹配前缀长度
             while (targetUpto < targetLimit) {
                 cmp = (term.byteAt(targetUpto) & 0xFF) - (target.bytes[target.offset + targetUpto] & 0xFF);
                 // if (DEBUG) {
@@ -451,17 +462,20 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                 if (cmp != 0) {
                     break;
                 }
+                // 获取arc的值
                 arc = arcs[1 + targetUpto];
                 assert arc.label() == (target.bytes[target.offset + targetUpto] & 0xFF) : "arc.label=" + (char) arc.label() + " targetLabel=" + (char) (target.bytes[target.offset + targetUpto] & 0xFF);
                 if (arc.output() != BlockTreeTermsReader.NO_OUTPUT) {
                     output = BlockTreeTermsReader.FST_OUTPUTS.add(output, arc.output());
                 }
+                // 如果该arc是 final的 就要读取下一个frame 与下面的逻辑对应
                 if (arc.isFinal()) {
                     lastFrame = stack[1 + lastFrame.ord];
                 }
                 targetUpto++;
             }
 
+            // 代表当前前缀完全匹配
             if (cmp == 0) {
                 final int targetUptoMid = targetUpto;
 
@@ -469,6 +483,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                 // don't save arc/output/frame; we only do this
                 // to find out if the target term is before,
                 // equal or after the current term
+                // 尝试与此时的 term做匹配
                 final int targetLimit2 = Math.min(target.length, term.length());
                 while (targetUpto < targetLimit2) {
                     cmp = (term.byteAt(targetUpto) & 0xFF) - (target.bytes[target.offset + targetUpto] & 0xFF);
@@ -509,6 +524,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                 currentFrame.rewind();
             } else {
                 // Target is exactly the same as current term
+                // 按照此时的 frame 已经与target 精确匹配成功了
                 assert term.length() == target.length;
                 if (termExists) {
                     // if (DEBUG) {
@@ -525,6 +541,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                 //return termExists;
             }
 
+        // 先看下面的情况 代表还没有读取任何一个 frame
         } else {
 
             targetBeforeCurrentLength = -1;
@@ -544,6 +561,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
 
             //term.length = 0;
             targetUpto = 0;
+            // 通过 "" 对应的出度初始化第一个 frame  就跟正常调用next() 的流程一致 主要就是根据首个出度的信息加载还原block需要的各种数据
             currentFrame = pushFrame(arc, BlockTreeTermsReader.FST_OUTPUTS.add(output, arc.nextFinalOutput()), 0);
         }
 
@@ -552,12 +570,15 @@ final class SegmentTermsEnum extends BaseTermsEnum {
         // }
 
         // We are done sharing the common prefix with the incoming target and where we are currently seek'd; now continue walking the index:
+        // 借助fst查找目标 term    在blockTreeTermsWriter中 每当写入多少term 会以block为单位存储这些term的后缀信息 然后公共前缀的部分最终合成了一个fst
         while (targetUpto < target.length) {
 
+            // 每次获取下一个label 并尝试从fst中查找
             final int targetLabel = target.bytes[target.offset + targetUpto] & 0xFF;
 
             final FST.Arc<BytesRef> nextArc = fr.index.findTargetArc(targetLabel, arc, getArc(1 + targetUpto), fstReader);
 
+            // 代表已经尽可能的减小范围了  匹配了尽可能多的边
             if (nextArc == null) {
 
                 // Index is exhausted
@@ -565,13 +586,17 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                 //   System.out.println("    index: index exhausted label=" + ((char) targetLabel) + " " + toHex(targetLabel));
                 // }
 
+                // 获取此时的前缀长度
                 validIndexPrefix = currentFrame.prefix;
                 //validIndexPrefix = targetUpto;
 
+                // 当没有直接命中block时 读取一个略大于label的 block对应的数据
                 currentFrame.scanToFloorFrame(target);
 
+                // 因为 block都会转换成 arc 而nextArc == null 已经标明了没有block能够匹配该label了  只可能是term直接命中了target
                 if (!currentFrame.hasTerms) {
                     termExists = false;
+                    // 这里设置成不匹配的term
                     term.setByteAt(targetUpto, (byte) targetLabel);
                     term.setLength(1 + targetUpto);
                     // if (DEBUG) {
@@ -580,8 +605,10 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                     return false;
                 }
 
+                // 读取当前确定的范围内的数据
                 currentFrame.loadBlock();
 
+                // 从当前block下尝试寻找目标term
                 final SeekStatus result = currentFrame.scanToTerm(target, true);
                 if (result == SeekStatus.FOUND) {
                     // if (DEBUG) {
@@ -596,6 +623,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
                 }
             } else {
                 // Follow this arc
+                // 此时匹配成功一条边 也就是找到了某个匹配的blockNode 这样就要匹配下一个label进一步缩小范围
                 arc = nextArc;
                 term.setByteAt(targetUpto, (byte) targetLabel);
                 // Aggregate output as we go:
@@ -649,6 +677,12 @@ final class SegmentTermsEnum extends BaseTermsEnum {
         }
     }
 
+    /**
+     * 尝试查找term
+     * @param target
+     * @return
+     * @throws IOException
+     */
     @Override
     public SeekStatus seekCeil(BytesRef target) throws IOException {
 
@@ -656,6 +690,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
             throw new IllegalStateException("terms index was not loaded");
         }
 
+        // 直接将当前term 填充成目标值 并利用 fst 查找数据
         term.grow(1 + target.length);
 
         assert clearEOF();
@@ -671,6 +706,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
 
         targetBeforeCurrentLength = currentFrame.ord;
 
+        // 代表此时已经读取了某个block的数据 所以frame 与初始状态不一致
         if (currentFrame != staticFrame) {
 
             // We are already seek'd; find the common
@@ -689,6 +725,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
             output = arc.output();
             targetUpto = 0;
 
+            // 获取第一个frame
             SegmentTermsEnumFrame lastFrame = stack[0];
             assert validIndexPrefix <= term.length();
 
@@ -1040,7 +1077,7 @@ final class SegmentTermsEnum extends BaseTermsEnum {
             if (currentFrame.next()) {
                 // Push to new block:
                 //if (DEBUG) System.out.println("  push frame");
-                // 以构成该blockNode 对应的一组node 的文件偏移量为起点 生成新的frame对象
+                // 以构成该blockNode 对应的一组node 的文件偏移量为起点 生成新的frame对象     当前的term长度会作为下个block的前缀长度
                 currentFrame = pushFrame(null, currentFrame.lastSubFP, term.length());
                 // This is a "next" frame -- even if it's
                 // floor'd we must pretend it isn't so we don't

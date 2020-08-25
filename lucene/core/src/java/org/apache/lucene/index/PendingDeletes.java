@@ -59,7 +59,6 @@ class PendingDeletes {
 
   PendingDeletes(SegmentReader reader, SegmentCommitInfo info) {
     this(info, reader.getLiveDocs(), true);
-    // 也就是删除的文档最先反映在 reader对象上  当真正删除后 修改info的delCount
     pendingDeleteCount = reader.numDeletedDocs() - info.getDelCount();
   }
 
@@ -117,10 +116,11 @@ class PendingDeletes {
   /**
    * Marks a document as deleted in this segment and return true if a document got actually deleted or
    * if the document was already deleted.
-   * 追加某个要删除的 doc
+   * 虽然某些doc命中了条件 但是并不是直接操作liveDoc 而是先操作一个 liveDoc的副本 将该doc标记成待删除
    */
   boolean delete(int docID) throws IOException {
     assert info.info.maxDoc() > 0;
+    // 获取那个可以修改的位图
     FixedBitSet mutableBits = getMutableBits();
     assert mutableBits != null;
     assert docID >= 0 && docID < mutableBits.length() : "out of bounds: docid=" + docID + " liveDocsLength=" + mutableBits.length() + " seg=" + info.info.name + " maxDoc=" + info.info.maxDoc();

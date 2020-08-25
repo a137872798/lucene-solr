@@ -211,9 +211,11 @@ final class FrozenBufferedUpdates {
       assert privateSegment == segStates[0].reader.getOriginalSegmentInfo();
     }
 
-    // 这里将删除信息作用到所有相关的segment上 并返回删除的数量
+    // 这里将删除信息作用到所有相关的segment上 并返回删除的数量   同时在 pendingDeletes对象中会增加一组待删除的数据
     totalDelCount += applyTermDeletes(segStates);
+    // 找到所有被 query命中的doc
     totalDelCount += applyQueryDeletes(segStates);
+    // TODO
     totalDelCount += applyDocValuesUpdates(segStates);
 
     return totalDelCount;
@@ -382,7 +384,8 @@ final class FrozenBufferedUpdates {
   }
 
   // Delete by query
-  // 代表被 query 命中的doc 都需要被删除   TODO 基于 Query的先不看吧
+  // 代表被 query 命中的doc 都需要被删除
+  // TODO
   private long applyQueryDeletes(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
 
     if (deleteQueries.length == 0) {
@@ -394,13 +397,13 @@ final class FrozenBufferedUpdates {
     long delCount = 0;
     for (BufferedUpdatesStream.SegmentState segState : segStates) {
 
-      // state的数据太新  跳过
+      // 这应该只是一道保险 从目前的逻辑来看 在 外面挑选segStates时 就已经挡掉这些不合法的数据了
       if (delGen < segState.delGen) {
         // segment is newer than this deletes packet
         continue;
       }
 
-      // TODO 这个引用计数为1 是啥意思
+      // 从注释上理解 当引用计数为1 时 代表该对象已经被其他地方放弃了 会出现这种情况的原因是之前的数据 已经被merge掉了 所以该segment应当被废弃 就忽略对它的处理
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running
@@ -505,13 +508,14 @@ final class FrozenBufferedUpdates {
         final DocIdSetIterator iterator = termDocsIterator.nextTerm(iter.field(), delTerm);
         if (iterator != null) {
           int docID;
+          // 迭代该term所在的doc
           while ((docID = iterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
             // NOTE: there is no limit check on the docID
             // when deleting by Term (unlike by Query)
             // because on flush we apply all Term deletes to
             // each segment.  So all Term deleting here is
             // against prior segments:
-            // 追加要删除的doc
+            // 将该doc 标记成待删除
             if (segState.rld.delete(docID)) {
               delCount++;
             }

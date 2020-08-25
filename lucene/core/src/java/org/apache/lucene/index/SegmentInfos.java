@@ -1090,7 +1090,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     /**
      * Call this before committing if changes have been made to the
      * segments.
-     * 每当该对象发生变化时 要触发一次该方法  比如插入了一个新的 segmentInfo时
+     * 每当该对象发生变化时 要触发一次该方法  比如插入了一个新的 segmentInfo时 又或者通过delete删除了某些doc时
      */
     public void changed() {
         version++;

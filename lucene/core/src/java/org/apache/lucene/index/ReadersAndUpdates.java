@@ -221,7 +221,6 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * 以该对象作为访问入口 实际上是通过 pendingDelete删除doc
      *
      * @param docID
      * @return

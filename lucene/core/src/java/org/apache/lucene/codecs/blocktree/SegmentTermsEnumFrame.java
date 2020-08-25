@@ -87,6 +87,7 @@ final class SegmentTermsEnumFrame {
     final ByteArrayDataInput floorDataReader = new ByteArrayDataInput();
 
     // Length of prefix shared by all terms in this block
+    // 是由 SegmentTermsEnum 从外部设置的
     int prefix;
 
     // Number of entries (term or sub-block) in this block
@@ -475,8 +476,11 @@ final class SegmentTermsEnumFrame {
     // TODO: make this array'd so we can do bin search?
     // likely not worth it?  need to measure how many
     // floor blocks we "typically" get
+    // 这里应该只是定位到最接近的frame
     public void scanToFloorFrame(BytesRef target) {
 
+        // !isFloor 代表当前block 对应某次 writerBlocks下所有的node  所以应该是不用再缩小范围了
+        // 第二种情况就是没有匹配的必要了
         if (!isFloor || target.length <= prefix) {
             // if (DEBUG) {
             //   System.out.println("    scanToFloorFrame skip: isFloor=" + isFloor + " target.length=" + target.length + " vs prefix=" + prefix);
@@ -484,12 +488,14 @@ final class SegmentTermsEnumFrame {
             return;
         }
 
+        // 下个待匹配的 label
         final int targetLabel = target.bytes[target.offset + prefix] & 0xFF;
 
         // if (DEBUG) {
         //   System.out.println("    scanToFloorFrame fpOrig=" + fpOrig + " targetLabel=" + toHex(targetLabel) + " vs nextFloorLabel=" + toHex(nextFloorLabel) + " numFollowFloorBlocks=" + numFollowFloorBlocks);
         // }
 
+        // 第一个floor的label就比目标值大 就不需要再缩小范围了
         if (targetLabel < nextFloorLabel) {
             // if (DEBUG) {
             //   System.out.println("      already on correct block");
@@ -499,15 +505,21 @@ final class SegmentTermsEnumFrame {
 
         assert numFollowFloorBlocks != 0;
 
+        // 以下就是开始进一步缩小范围   能进入到这里的前提就是 targetLabel >= nextFloorLabel
+        // 每次就是比较 nextFloorLabel 与 目标值
         long newFP = fpOrig;
         while (true) {
+            // 对应的是 scratchBytes.writeVLong((sub.fp - fp) << 1 | (sub.hasTerms ? 1 : 0));
             final long code = floorDataReader.readVLong();
+            // 获取本次 writeBlocks 包含小前缀的 blockNode 对应的term索引文件的起始偏移量
             newFP = fpOrig + (code >>> 1);
+            // 包含小前缀的 blockNode 中是否包含 termNode
             hasTerms = (code & 1) != 0;
             // if (DEBUG) {
             //   System.out.println("      label=" + toHex(nextFloorLabel) + " fp=" + newFP + " hasTerms?=" + hasTerms + " numFollowFloor=" + numFollowFloorBlocks);
             // }
 
+            // 当前轮到的这个小前缀 是否是本block下最后一个   比如 a* ab* ac* ad*  就是说在a*这个block生成的同时还生成了3个附带小前缀的block ad* 就是最后一个block
             isLastInFloor = numFollowFloorBlocks == 1;
             numFollowFloorBlocks--;
 
@@ -518,6 +530,7 @@ final class SegmentTermsEnumFrame {
                 // }
                 break;
             } else {
+                // 获取下一个label 并进行匹配
                 nextFloorLabel = floorDataReader.readByte() & 0xff;
                 if (targetLabel < nextFloorLabel) {
                     // if (DEBUG) {
@@ -528,11 +541,13 @@ final class SegmentTermsEnumFrame {
             }
         }
 
+        // 此时已经确定了term所在block的最小范围 (仅这层frame 如果小前缀对应的block内部还是 isFloor 也就是还存在多个小前缀block就要继续匹配)
         if (newFP != fp) {
             // Force re-load of the block:
             // if (DEBUG) {
             //   System.out.println("      force switch to fp=" + newFP + " oldFP=" + fp);
             // }
+            // 更新索引文件偏移量
             nextEnt = -1;
             fp = newFP;
         } else {
@@ -663,6 +678,14 @@ final class SegmentTermsEnumFrame {
     }
 
     // NOTE: sets startBytePos/suffix as a side effect
+    /**
+     *
+     * 从当前block下查找目标term
+     * @param target
+     * @param exactOnly  是否精确查找
+     * @return
+     * @throws IOException
+     */
     public SeekStatus scanToTerm(BytesRef target, boolean exactOnly) throws IOException {
         return isLeafBlock ? scanToTermLeaf(target, exactOnly) : scanToTermNonLeaf(target, exactOnly);
     }
@@ -696,8 +719,16 @@ final class SegmentTermsEnumFrame {
   }
   */
 
-    // Target's prefix matches this block's prefix; we
-    // scan the entries check if the suffix matches.
+
+    /**
+     * Target's prefix matches this block's prefix; we
+     * scan the entries check if the suffix matches.
+     * 代表当前block下都是 termNode
+     * @param target  需要查找的term
+     * @param exactOnly   是否精确匹配
+     * @return
+     * @throws IOException
+     */
     public SeekStatus scanToTermLeaf(BytesRef target, boolean exactOnly) throws IOException {
 
         // if (DEBUG) System.out.println("    scanToTermLeaf: block fp=" + fp + " prefix=" + prefix + " nextEnt=" + nextEnt + " (of " + entCount + ") target=" + brToString(target) + " term=" + brToString(term));
@@ -707,10 +738,13 @@ final class SegmentTermsEnumFrame {
         ste.termExists = true;
         subCode = 0;
 
+        // 已经读取到末尾了
         if (nextEnt == entCount) {
             if (exactOnly) {
+                // 将此时读取到的最后一个term 回填到 SegmentTermsEnum.term上
                 fillTerm();
             }
+            // 并返回已经读取到末尾
             return SeekStatus.END;
         }
 
@@ -720,6 +754,7 @@ final class SegmentTermsEnumFrame {
         // which are also the most sensitive to lookup performance?
         // Loop over each entry (term or sub-block) in this block:
         do {
+            // 不断遍历 termNode尝试匹配
             nextEnt++;
 
             suffix = suffixLengthsReader.readVInt();
@@ -746,6 +781,7 @@ final class SegmentTermsEnumFrame {
             } else if (cmp > 0) {
                 // Done!  Current entry is after target --
                 // return NOT_FOUND:
+                // 找到的termNode 比目标值大 也就代表没有找到匹配的 term
                 fillTerm();
 
                 //if (DEBUG) System.out.println("        not found");
@@ -786,6 +822,7 @@ final class SegmentTermsEnumFrame {
 
     // Target's prefix matches this block's prefix; we
     // scan the entries check if the suffix matches.
+    // 在混合了blockNode 和 termNode 中找到目标term
     public SeekStatus scanToTermNonLeaf(BytesRef target, boolean exactOnly) throws IOException {
 
         //if (DEBUG) System.out.println("    scanToTermNonLeaf: block fp=" + fp + " prefix=" + prefix + " nextEnt=" + nextEnt + " (of " + entCount + ") target=" + brToString(target) + " term=" + brToString(target));
@@ -795,6 +832,7 @@ final class SegmentTermsEnumFrame {
         if (nextEnt == entCount) {
             if (exactOnly) {
                 fillTerm();
+                // subCode == 0 代表此时是 termNode
                 ste.termExists = subCode == 0;
             }
             return SeekStatus.END;
@@ -818,14 +856,17 @@ final class SegmentTermsEnumFrame {
             //  System.out.println("      cycle: " + ((code&1)==1 ? "sub-block" : "term") + " " + (nextEnt-1) + " (of " + entCount + ") suffix=" + brToString(suffixBytesRef));
             //}
 
+            // 获取此时term的长度
             final int termLen = prefix + suffix;
             startBytePos = suffixesReader.getPosition();
             suffixesReader.skipBytes(suffix);
             ste.termExists = (code & 1) == 0;
+            // 代表本次读到的是 termNode
             if (ste.termExists) {
                 state.termBlockOrd++;
                 subCode = 0;
             } else {
+                // 代表本次读到的是 blockNode
                 subCode = suffixLengthsReader.readVLong();
                 lastSubFP = fp - subCode;
             }
@@ -844,6 +885,7 @@ final class SegmentTermsEnumFrame {
 
                 //if (DEBUG) System.out.println("        maybe done exactOnly=" + exactOnly + " ste.termExists=" + ste.termExists);
 
+                // 非精确模式下会返回略大于 target的值 在SegmentTermsEnum中 通过fst无法查找到数据时 已经代表不可能会匹配上blockNode了
                 if (!exactOnly && !ste.termExists) {
                     //System.out.println("  now pushFrame");
                     // TODO this
