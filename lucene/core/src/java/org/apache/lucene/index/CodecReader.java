@@ -69,7 +69,7 @@ public abstract class CodecReader extends LeafReader implements Accountable {
   public abstract DocValuesProducer getDocValuesReader();
   
   /**
-   * Expert: retrieve underlying FieldsProducer
+   * Expert: retrieve underlying FieldsProducer    对应的就是包含 FST和跳跃表的索引文件
    * @lucene.internal
    */
   public abstract FieldsProducer getPostingsReader();
@@ -117,7 +117,7 @@ public abstract class CodecReader extends LeafReader implements Accountable {
   }
 
   /**
-   * 通过传入 field的描述信息 返回一组词
+   * 通过指定field 获取对应的一组term
    * @param field
    * @return
    * @throws IOException
@@ -127,7 +127,6 @@ public abstract class CodecReader extends LeafReader implements Accountable {
     //ensureOpen(); no; getPostingsReader calls this
     // We could check the FieldInfo IndexOptions but there's no point since
     //   PostingsReader will simply return null for fields that don't exist or that have no terms index.
-    // 基于指针reader读取
     return getPostingsReader().terms(field);
   }
 

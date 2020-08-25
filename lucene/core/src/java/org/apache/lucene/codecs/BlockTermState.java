@@ -36,6 +36,7 @@ public class BlockTermState extends OrdTermState {
   public long totalTermFreq;
 
   /** the term's ord in the current block */
+  // 当前term在 该block的位置
   public int termBlockOrd;
   /** fp into the terms dict primary file (_X.tim) that holds this term */
   // TODO: update BTR to nuke this

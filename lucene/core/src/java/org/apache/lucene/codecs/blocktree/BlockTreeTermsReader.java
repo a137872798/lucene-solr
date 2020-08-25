@@ -287,6 +287,12 @@ public final class BlockTreeTermsReader extends FieldsProducer {
     return fieldList.iterator();
   }
 
+  /**
+   * 返回的就是 fieldReader 通过fst结构进行初始化
+   * @param field
+   * @return
+   * @throws IOException
+   */
   @Override
   public Terms terms(String field) throws IOException {
     assert field != null;

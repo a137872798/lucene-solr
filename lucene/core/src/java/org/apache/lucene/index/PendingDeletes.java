@@ -53,7 +53,7 @@ class PendingDeletes {
   protected int pendingDeleteCount;
 
   /**
-   * 代表在初始化该对象时  段对象中是否已经有部分doc被删除了
+   * 代表该对象被初始化时  对应的 doc live 位图对象是否被初始化完成  如果初始化时 segmentCommitInfo 没有已经被标记成删除的doc 那么该标识直接设置为true 意味着之后不需要回填 liveDoc位图
    */
   boolean liveDocsInitialized;
 
@@ -161,9 +161,9 @@ class PendingDeletes {
 
   /**
    * Called once a new reader is opened for this segment ie. when deletes or updates are applied.
-   * 某个reader 初始化完成后 读取了 liveDoc文件的数据  这时就可以用来初始化内部的 liveDocs数据了
    */
   void onNewReader(CodecReader reader, SegmentCommitInfo info) throws IOException {
+    // 代表初始化该对象时 检测到需要对 liveDoc位图做回填
     if (liveDocsInitialized == false) {
       assert writeableLiveDocs == null;
       if (reader.hasDeletions()) {
@@ -171,7 +171,7 @@ class PendingDeletes {
         // if we use the live docs from a reader it has to be in a situation where we don't
         // have any existing live docs
         assert pendingDeleteCount == 0 : "pendingDeleteCount: " + pendingDeleteCount;
-        // 设置 live位图
+        // 回填位图
         liveDocs = reader.getLiveDocs();
         assert liveDocs == null || assertCheckLiveDocs(liveDocs, info.info.maxDoc(), info.getDelCount());
       }

@@ -441,7 +441,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
      *
      * @param fp    写入本blockNode 信息前 termout的偏移量
      * @param hasTerms 生成该block的 nodes中是否有termNode
-     * @param isFloor  本次处理的所有term 是否在一个block内  如果不在同一个block内 isFloor = true
+     * @param isFloor  本次处理的所有node 是否在一个block内  如果不在同一个block内 isFloor = true
      * @return
      */
     static long encodeOutput(long fp, boolean hasTerms, boolean isFloor) {
@@ -523,7 +523,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
          *                      同时该数据中除了前缀外 如果 ifFloor为 true 那么最后一位会存储 floorLeadLabel
          * @param fp            写入本次要处理的所有 node 前 term索引文件的偏移量
          * @param hasTerms      本次处理的所有node 中是否包含  TermNode
-         * @param isFloor       当前block是否是子级block  子级block就代表本次处理的所有 term不是全部放到一个block中
+         * @param isFloor       当前block是否是子级block  子级block就代表本次处理的所有node不是全部放到一个block中
          * @param floorLeadByte label 对应的ascii码
          * @param subIndices    该block下挂载的子block   比如 aa* 下就会挂载  aaa* aab* aac*
          */
@@ -1195,7 +1195,6 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
             } else {
                 // 最低位是0 将所有长度信息写入到 输出流中
                 termsOut.writeVInt(numSuffixBytes << 1);
-                // TODO 既然写入的是 VInt类型 那么怎么知道要读取几个长度呢
                 termsOut.writeBytes(spareBytes, numSuffixBytes);
             }
 
@@ -1268,7 +1267,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 pushTerm(text);
 
                 // 每当写入一个 term后 将它包装成节点 并存储到 pending中   pending就是存储待处理节点的链表  每当共享相同前缀长度的节点达到一定数量时 就会将他们整合成一个block 重新加入pending
-                // 加入新的节点 并发现他与之前的term共享前缀不同时 才会触发!之前! 节点的 整合  而本次term还是当作一个 PendingTerm 加入到pending 中
+                // 加入新的节点 并发现他与之前的term共享前缀不同时 才会触发之前 节点的 整合  而本次term还是当作一个 PendingTerm 加入到pending 中
                 PendingTerm term = new PendingTerm(text, state);
                 pending.add(term);
                 //if (DEBUG) System.out.println("    add pending term = " + text + " pending.size()=" + pending.size());
@@ -1354,7 +1353,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
                 // we can save writing a "degenerate" root block, but we have to
                 // fix all the places that assume the root block's prefix is the empty string:
                 pushTerm(new BytesRef());
-                // 这里强制将栈中待处理的所有term 都写入到索引文件中
+                // 这里强制将栈中待处理的所有term 都写入到索引文件中   注意这时的前缀长度为0  也就是所有数据都是全部写入
                 writeBlocks(0, pending.size());
 
                 // We better have one final "root" block:

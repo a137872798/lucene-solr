@@ -60,6 +60,9 @@ public final class FieldReader extends Terms implements Accountable {
   final BytesRef maxTerm;
   final BlockTreeTermsReader parent;
 
+  /**
+   * 该field 下term的词典
+   */
   final FST<BytesRef> index;
   //private boolean DEBUG;
 

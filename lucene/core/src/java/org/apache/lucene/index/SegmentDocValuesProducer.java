@@ -59,12 +59,11 @@ class SegmentDocValuesProducer extends DocValuesProducer {
   
   /**
    * Creates a new producer that handles updated docvalues fields
-   * 创建一个 可以读取 docValue 数据的 生产源
    * @param si commit point    这些docValue 是关于哪个 segment的
    * @param dir directory   索引文件所在的目录
    * @param coreInfos fieldinfos for the segment
    * @param allInfos all fieldinfos including updated ones
-   * @param segDocValues producer map   这就是一个map
+   * @param segDocValues producer map
    */
   SegmentDocValuesProducer(SegmentCommitInfo si, Directory dir, FieldInfos coreInfos, FieldInfos allInfos, SegmentDocValues segDocValues) throws IOException {
     try {

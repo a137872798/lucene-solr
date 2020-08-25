@@ -178,14 +178,24 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     IOUtils.close(docIn, posIn, payIn);
   }
 
+  /**
+   * 解析某个term 相关的元数据
+   * @param in   存储元数据的输入流
+   * @param fieldInfo  该term相关的fieldInfo 信息   索引文件会存储term的哪些信息是通过field来定义的
+   * @param _termState  存储term的元数据信息
+   * @param absolute   是否通过累加的方式还原 （存储时基于差值存储）
+   * @throws IOException
+   */
   @Override
   public void decodeTerm(DataInput in, FieldInfo fieldInfo, BlockTermState _termState, boolean absolute)
     throws IOException {
     final IntBlockTermState termState = (IntBlockTermState) _termState;
+    // 检测是否存储了某些信息
     final boolean fieldHasPositions = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
     final boolean fieldHasOffsets = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;
     final boolean fieldHasPayloads = fieldInfo.hasPayloads();
 
+    // 对应3个索引文件(.doc .pos .pay)的起始偏移量
     if (absolute) {
       termState.docStartFP = 0;
       termState.posStartFP = 0;
@@ -193,29 +203,37 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     }
 
     if (version >= VERSION_COMPRESSED_TERMS_DICT_IDS) {
+      // 对应 .doc 文件的起始偏移量
       final long l = in.readVLong();
+      // 代表 term对应的doc 并非只是一个
       if ((l & 0x01) == 0) {
+        // 这样 l >>> 1  得到的是doc文件的偏移量差值  通过 += 进行还原
         termState.docStartFP += l >>> 1;
+        // 如果term 仅出现在一个doc中 那么下一个int 就是docId
         if (termState.docFreq == 1) {
           termState.singletonDocID = in.readVInt();
         } else {
           termState.singletonDocID = -1;
         }
+        // 代表 term 仅出现在一个doc下 也是基于差值存储的 需要通过 += 进行还原
       } else {
         assert absolute == false;
         assert termState.singletonDocID != -1;
         termState.singletonDocID += BitUtil.zigZagDecode(l >>> 1);
       }
+      // 忽略不支持压缩的版本
     } else {
       termState.docStartFP += in.readVLong();
     }
 
+    // 解析position信息  同样通过 += 还原差值存储的文件偏移量
     if (fieldHasPositions) {
       termState.posStartFP += in.readVLong();
       if (fieldHasOffsets || fieldHasPayloads) {
         termState.payStartFP += in.readVLong();
       }
     }
+    // 忽略 用于兼容旧代码的逻辑
     if (version < VERSION_COMPRESSED_TERMS_DICT_IDS) {
       if (termState.docFreq == 1) {
         termState.singletonDocID = in.readVInt();
@@ -230,6 +248,7 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
         termState.lastPosBlockOffset = -1;
       }
     }
+    // 当doc数据比较多的时候 会存储在跳跃表结构中
     if (termState.docFreq > BLOCK_SIZE) {
       termState.skipOffset = in.readVLong();
     } else {
@@ -237,12 +256,23 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     }
 
   }
-    
+
+  /**
+   * 获取遍历目标term的迭代器
+   * @param fieldInfo  该term所属的field
+   * @param termState  该term相关的元数据
+   * @param reuse     尝试复用对象
+   * @param flags     需要迭代哪些信息 通过减少需要迭代的信息 可以简化逻辑
+   * @return
+   * @throws IOException
+   */
   @Override
   public PostingsEnum postings(FieldInfo fieldInfo, BlockTermState termState, PostingsEnum reuse, int flags) throws IOException {
-    
+
+    // 先检测是否有 position信息
     boolean indexHasPositions = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
 
+    // 如果本次没有要求获取 position信息  （很常见的场景是仅需迭代该term所在的所有doc）
     if (indexHasPositions == false || PostingsEnum.featureRequested(flags, PostingsEnum.POSITIONS) == false) {
       BlockDocsEnum docsEnum;
       if (reuse instanceof BlockDocsEnum) {
@@ -293,12 +323,18 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     return new BlockImpactsEverythingEnum(fieldInfo, (IntBlockTermState) state, flags);
   }
 
+  /**
+   * 主要作用是迭代该term 所在的所有doc
+   */
   final class BlockDocsEnum extends PostingsEnum {
 
     final ForUtil forUtil = new ForUtil();
     final ForDeltaUtil forDeltaUtil = new ForDeltaUtil(forUtil);
     final PForUtil pforUtil = new PForUtil(forUtil);
 
+    /**
+     * 一开始为 存储docId的容器 额外扩展了一位 存储 NO_MORE_DOC 代表后面没有doc了
+     */
     private final long[] docBuffer = new long[BLOCK_SIZE+1];
     private final long[] freqBuffer = new long[BLOCK_SIZE];
 
@@ -307,6 +343,9 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     private Lucene84SkipReader skipper;
     private boolean skipped;
 
+    /**
+     * 对应 .doc 文件
+     */
     final IndexInput startDocIn;
 
     IndexInput docIn;
@@ -339,9 +378,16 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     private boolean isFreqsRead;
     private int singletonDocID; // docid when there is a single pulsed posting, otherwise -1
 
+    /**
+     * 通过一个 field信息进行初始化   之后通过termState 特化为迭代某个term的相关信息
+     * @param fieldInfo
+     * @throws IOException
+     */
     public BlockDocsEnum(FieldInfo fieldInfo) throws IOException {
+      // 获取 doc索引文件对应的输入流
       this.startDocIn = Lucene84PostingsReader.this.docIn;
       this.docIn = null;
+      // 检测可以获取哪些信息
       indexHasFreq = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
       indexHasPos = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
       indexHasOffsets = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;

@@ -495,13 +495,13 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
-      // 包含所有需要删除的 term(以及该term所属的field)
+      // 包含所有需要删除的 term(以及该term所属的field)   在构建 deleteTerms时 会先将term 排序，使用共享前缀能构建最小的结构
       FieldTermIterator iter = deleteTerms.iterator();
       BytesRef delTerm;
       // reader 内部包含读取各种所有文件的输入流 这里遍历term 与deleteTerm做匹配 并将命中的term所在的doc标记成待删除
       TermDocsIterator termDocsIterator = new TermDocsIterator(segState.reader, true);
       while ((delTerm = iter.next()) != null) {
-        // 通过倒排索引 确定该 term 存在于哪些 doc 中
+        // 通过 term， field 去定位存在于哪些doc中
         final DocIdSetIterator iterator = termDocsIterator.nextTerm(iter.field(), delTerm);
         if (iterator != null) {
           int docID;
@@ -602,6 +602,9 @@ final class FrozenBufferedUpdates {
      * provider 提供的term 是否已经按照大小排序
      */
     private final boolean sortedTerms;
+    /**
+     * 对应此时的 term
+     */
     private BytesRef readerTerm;
     private BytesRef lastTerm; // only set with asserts
 
@@ -612,7 +615,7 @@ final class FrozenBufferedUpdates {
 
     /**
      *
-     * @param fields  负责遍历相关的所有 field   一般情况下就是 FreqProxFields
+     * @param fields
      * @param sortedTerms  该field下的term 是否已经排序过了  在写入到索引文件前 term会先被排序所以该标识一般是true
      */
     TermDocsIterator(Fields fields, boolean sortedTerms) {
@@ -638,11 +641,13 @@ final class FrozenBufferedUpdates {
       if (this.field == null || this.field.equals(field) == false) {
         this.field = field;
 
-        // 返回的是  FreqProxTerms
+        // 针对使用 blockTreeTermWriter的场景 返回的是  FreqProxTerms
+        // 针对读取数据 以便作用于update时 使用的是 FieldReader   就是使用fst作为term词典
         Terms terms = provider.terms(field);
         if (terms != null) {
-          // 返回的是  FreqProxTermsEnum
+          // 针对使用 blockTreeTermWriter的场景 返回的是  FreqProxTermsEnum
           termsEnum = terms.iterator();
+          // 代表当前term 已经排序过了
           if (sortedTerms) {
             assert (lastTerm = null) == null; // need to reset otherwise we fail the assertSorted below since we sort per field
             // 如果已经完成排序了 就可以先读取第一个值
@@ -657,7 +662,7 @@ final class FrozenBufferedUpdates {
     /**
      * 找到该field 关联的所有doc 且field在这些doc 中携带了 term 信息
      * @param field
-     * @param term
+     * @param term  返回匹配的 term所携带的  docId迭代器  意味着该field下的该term 总计出现在这么多doc上
      * @return
      * @throws IOException
      */
@@ -711,6 +716,11 @@ final class FrozenBufferedUpdates {
       return true;
     }
 
+    /**
+     * 仅返回 docId 迭代器时 不需要读取其他 termVector信息
+     * @return
+     * @throws IOException
+     */
     private DocIdSetIterator getDocs() throws IOException {
       assert termsEnum != null;
       return postingsEnum = termsEnum.postings(postingsEnum, PostingsEnum.NONE);

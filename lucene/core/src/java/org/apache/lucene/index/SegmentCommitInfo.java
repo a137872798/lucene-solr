@@ -61,7 +61,7 @@ public class SegmentCommitInfo {
   private long nextWriteDelGen;
 
   // Generation number of the FieldInfos (-1 if there are no updates)
-  // 针对字段信息的年代    每次更新 gen 都会变化
+  // 如果field信息发生了变化 则会修改该值
   private long fieldInfosGen;
   
   // Normally 1+fieldInfosGen, unless an exception was hit on last attempt to

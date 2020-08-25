@@ -97,7 +97,7 @@ final class SegmentCoreReaders {
       Collections.synchronizedSet(new LinkedHashSet<IndexReader.ClosedListener>());
 
   /**
-   *
+   * 主要就是初始化之前写入的各种索引文件对应的输入流
    * @param dir  指定段数据所在的目录
    * @param si   描述某个段的提交信息
    * @param context

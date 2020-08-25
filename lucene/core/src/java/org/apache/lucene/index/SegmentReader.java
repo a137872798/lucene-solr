@@ -54,6 +54,10 @@ public final class SegmentReader extends CodecReader {
   // and lookup pooled readers etc.
   private final SegmentCommitInfo originalSi;
   private final LeafMetaData metaData;
+
+  /**
+   * 对应此时还存活的doc位图对象   如果为null 则代表所有doc都存在
+   */
   private final Bits liveDocs;
   private final Bits hardLiveDocs;
 
@@ -85,7 +89,7 @@ public final class SegmentReader extends CodecReader {
    * Constructs a new SegmentReader with a new core.
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
-   * 初始化一个用于读取 段信息的对象
+   * 初始化一个用于读取 segment 对应的各种索引文件的输入流总控对象
    */
   SegmentReader(SegmentCommitInfo si, int createdVersionMajor, IOContext context) throws IOException {
     this.si = si.clone();
@@ -98,25 +102,27 @@ public final class SegmentReader extends CodecReader {
 
     // 该对象内部对应各种索引文件的reader对象
     core = new SegmentCoreReaders(si.info.dir, si, context);
+
+    // 专门负责读取  docValueType 的reader对象   docValueType是针对field设置的 大概意思是field.value必须确保在所有doc下的类型都是一样的
     segDocValues = new SegmentDocValues();
     
     boolean success = false;
     // 获取编解码格式对象
     final Codec codec = si.info.getCodec();
     try {
-      // 代表发生过删除动作
+      // 代表该 segmentCommitInfo 在生成时 已经标记部分doc被删除了  对应 flush过程中剔除被 deleteTerm命中的数据 那样的话在flush结束时 会将此时所有liveDoc写入到一个文件中 这里进行还原
       if (si.hasDeletions()) {
         // NOTE: the bitvector is stored using the regular directory, not cfs
         // 获取记录当前还live的doc位图
         hardLiveDocs = liveDocs = codec.liveDocsFormat().readLiveDocs(directory(), si, IOContext.READONCE);
       } else {
         assert si.getDelCount() == 0;
-        // 代表所有doc 都存活
         hardLiveDocs = liveDocs = null;
       }
       // 代表此时该段下还有多少doc
       numDocs = si.info.maxDoc() - si.getDelCount();
 
+      // 如果检测到 field信息发生了变化 那么要重新读取field信息
       fieldInfos = initFieldInfos();
       // 初始化读取 docValue的 reader 对象
       docValuesProducer = initDocValuesProducer();
@@ -193,14 +199,16 @@ public final class SegmentReader extends CodecReader {
       return null;
     } else {
       Directory dir;
+      // TODO 忽略复合文件
       if (core.cfsReader != null) {
         dir = core.cfsReader;
       } else {
         dir = si.info.dir;
       }
       // 如果 fieldInfo 发生了变化
+      // TODO 先忽略这种情况
       if (si.hasFieldUpdates()) {
-        // 该对象维护了  通过field 查找 对应的docValue reader
+        // 同时传入 旧的fieldInfo信息 和新的fieldInfo 信息
         return new SegmentDocValuesProducer(si, dir, core.coreFieldInfos, fieldInfos, segDocValues);
       } else {
         // simple case, no DocValues updates
@@ -213,7 +221,7 @@ public final class SegmentReader extends CodecReader {
    * init most recent FieldInfos for the current commit
    */
   private FieldInfos initFieldInfos() throws IOException {
-    // 如果 fieldInfo 没有发生变化 直接返回一开始读取的fieldInfo
+    // 如果 fieldInfo 没有发生变化 则使用初始化 coreReader对象时 从存储fieldInfo信息的索引文件中还原出来的field数据
     if (!si.hasFieldUpdates()) {
       return core.coreFieldInfos;
     } else {

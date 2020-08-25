@@ -32,18 +32,17 @@ import org.apache.lucene.util.RefCount;
 /**
  * Manages the {@link DocValuesProducer} held by {@link SegmentReader} and
  * keeps track of their reference counting.
- * 该对象以 segment为单位 划分
  */
 final class SegmentDocValues {
 
   /**
-   * key 是 gen
-   * value 是 该gen对应的索引文件存储的所有 docValue 数据
+   * 以fieldInfo.docValuesGen 作为key
+   * value 对应这个gen下 docValueType的信息
    */
   private final Map<Long,RefCount<DocValuesProducer>> genDVProducers = new HashMap<>();
 
   /**
-   * 通过指定对应的 gen 读取段文件
+   * 通过指定对应的 docValuesGen 读取段文件
    * @param si
    * @param dir
    * @param gen  指定的段文件年代
@@ -54,6 +53,7 @@ final class SegmentDocValues {
   private RefCount<DocValuesProducer> newDocValuesProducer(SegmentCommitInfo si, Directory dir, final Long gen, FieldInfos infos) throws IOException {
     Directory dvDir = dir;
     String segmentSuffix = "";
+    // 根据年代信息 获取对应的索引文件名
     if (gen.longValue() != -1) {
       dvDir = si.info.dir; // gen'd files are written outside CFS, so use SegInfo directory
       segmentSuffix = Long.toString(gen.longValue(), Character.MAX_RADIX);
@@ -65,7 +65,7 @@ final class SegmentDocValues {
 
     DocValuesFormat dvFormat = si.info.getCodec().docValuesFormat();
 
-    // dvFormat.fieldsProducer(srs) 实际上就是 FieldsReader  该对象的特性是可以基于field读取 docValue
+    // 生成field.docValueType 的输入流对象
     return new RefCount<DocValuesProducer>(dvFormat.fieldsProducer(srs)) {
       @SuppressWarnings("synthetic-access")
       @Override
@@ -80,8 +80,8 @@ final class SegmentDocValues {
 
   /**
    * Returns the {@link DocValuesProducer} for the given generation.
-   * 该对象本身维护了 所有gen 对应docValue信息
-   * */
+   * @param gen 应该是  fieldInfo.docValuesGen
+   */
   synchronized DocValuesProducer getDocValuesProducer(long gen, SegmentCommitInfo si, Directory dir, FieldInfos infos) throws IOException {
     RefCount<DocValuesProducer> dvp = genDVProducers.get(gen);
     if (dvp == null) {
