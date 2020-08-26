@@ -30,6 +30,7 @@ import org.apache.lucene.util.packed.PagedMutable;
  * {@link NumericDocValuesField}.
  * 
  * @lucene.experimental
+ * 记录某个field相关的 某些doc的更新信息
  */
 final class NumericDocValuesFieldUpdates extends DocValuesFieldUpdates {
   // TODO: can't this just be NumericDocValues now?  avoid boxing the long value...
@@ -68,6 +69,14 @@ final class NumericDocValuesFieldUpdates extends DocValuesFieldUpdates {
     minValue = 0;
   }
 
+  /**
+   * 针对该field 的更新数据  且是数字类型的
+   * @param delGen
+   * @param field
+   * @param minValue  指定本次所有更新的value中的最小值
+   * @param maxValue   所有更新的value中的最大值
+   * @param maxDoc
+   */
   NumericDocValuesFieldUpdates(long delGen, String field, long minValue, long maxValue, int maxDoc) {
     super(maxDoc, delGen, field, DocValuesType.NUMERIC);
     assert minValue <= maxValue : "minValue must be <= maxValue [" + minValue + " > " + maxValue + "]";
@@ -85,9 +94,16 @@ final class NumericDocValuesFieldUpdates extends DocValuesFieldUpdates {
     add(docId, iterator.longValue());
   }
 
+  /**
+   * 记录某个doc的更新值
+   * @param doc
+   * @param value
+   */
   @Override
   synchronized void add(int doc, long value) {
+    // 存储到 doc对应的容器   返回的是下标
     int add = add(doc);
+    // 差值写入
     values.set(add, value-minValue);
   }
 
@@ -125,6 +141,9 @@ final class NumericDocValuesFieldUpdates extends DocValuesFieldUpdates {
         + RamUsageEstimator.NUM_BYTES_OBJECT_REF;
   }
 
+  /**
+   * 代表 BufferedUpdate 缓存的针对某个field 下所有的更新信息都是 数字类型 且都是同一个值
+   */
   static class SingleValueNumericDocValuesFieldUpdates extends SingleValueDocValuesFieldUpdates {
 
     private final long value;

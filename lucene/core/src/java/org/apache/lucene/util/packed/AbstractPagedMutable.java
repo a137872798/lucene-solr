@@ -188,7 +188,7 @@ public abstract class AbstractPagedMutable<T extends AbstractPagedMutable<T>> ex
      * Create a new copy of size <code>newSize</code> based on the content of
      * this buffer. This method is much more efficient than creating a new
      * instance and copying values one by one.
-     * 进行扩容
+     * 调整大小
      */
     public final T resize(long newSize) {
         final T copy = newUnfilledCopy(newSize);

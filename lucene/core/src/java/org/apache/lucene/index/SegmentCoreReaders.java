@@ -57,9 +57,9 @@ final class SegmentCoreReaders {
   private final AtomicInteger ref = new AtomicInteger(1);
 
   // 下面对应各种索引文件的输入流
+
   final FieldsProducer fields;
   final NormsProducer normsProducer;
-
   final StoredFieldsReader fieldsReaderOrig;
   final TermVectorsReader termVectorsReaderOrig;
   final PointsReader pointsReader;

@@ -292,6 +292,13 @@ abstract class DocValuesFieldUpdates implements Accountable {
     protected PagedMutable docs;
     protected int size;
 
+    /**
+     *
+     * @param maxDoc   该segment下总共有多少doc
+     * @param delGen  该field 所在段对应的 delGen 每当通过flush 生成一个新的 segment时 会通过此时采集到的 update信息为它分配一个delGen
+     * @param field  本次更新针对的是哪个field
+     * @param type  更新的数据类型
+     */
     protected DocValuesFieldUpdates(int maxDoc, long delGen, String field, DocValuesType type) {
         this.maxDoc = maxDoc;
         this.delGen = delGen;
@@ -328,6 +335,7 @@ abstract class DocValuesFieldUpdates implements Accountable {
 
     /**
      * Freezes internal data structures and sorts updates by docID for efficient iteration.
+     * 按照docId 排序
      */
     final synchronized void finish() {
         if (finished) {
@@ -335,6 +343,7 @@ abstract class DocValuesFieldUpdates implements Accountable {
         }
         finished = true;
         // shrink wrap
+        // 代表doc不是连续的 进行压缩
         if (size < docs.size()) {
             resize(size);
         }
@@ -406,6 +415,7 @@ abstract class DocValuesFieldUpdates implements Accountable {
      * Adds an update that resets the documents value.
      *
      * @param doc the doc to update
+     *            记录doc的变动信息
      */
     synchronized void reset(int doc) {
         addInternal(doc, HAS_NO_VALUE_MASK);
@@ -415,6 +425,12 @@ abstract class DocValuesFieldUpdates implements Accountable {
         return addInternal(doc, HAS_VALUE_MASK);
     }
 
+    /**
+     * 记录doc的变动信息
+     * @param doc
+     * @param hasValueMask
+     * @return
+     */
     private synchronized int addInternal(int doc, long hasValueMask) {
         if (finished) {
             throw new IllegalStateException("already finished");
@@ -426,9 +442,11 @@ abstract class DocValuesFieldUpdates implements Accountable {
             throw new IllegalStateException("cannot support more than Integer.MAX_VALUE doc/value entries");
         }
         // grow the structures to have room for more elements
+        // 对存储doc的容器进行扩容
         if (docs.size() == size) {
             grow(size + 1);
         }
+        // 为容器在指定的index 的位置设置值
         docs.set(size, (((long) doc) << SHIFT) | hasValueMask);
         ++size;
         return size - 1;
@@ -524,6 +542,9 @@ abstract class DocValuesFieldUpdates implements Accountable {
         }
     }
 
+    /**
+     * 代表使用同一个值去更新某个field 下各种term
+     */
     static abstract class SingleValueDocValuesFieldUpdates extends DocValuesFieldUpdates {
         private final BitSet bitSet;
         private BitSet hasNoValue;
@@ -534,9 +555,15 @@ abstract class DocValuesFieldUpdates implements Accountable {
             this.bitSet = new SparseFixedBitSet(maxDoc);
         }
 
+        /**
+         * 记录一个 doc的变动信息
+         * @param doc
+         * @param value
+         */
         @Override
         void add(int doc, long value) {
             assert longValue() == value;
+            // 标记在位图中
             bitSet.set(doc);
             this.hasAtLeastOneValue = true;
             if (hasNoValue != null) {

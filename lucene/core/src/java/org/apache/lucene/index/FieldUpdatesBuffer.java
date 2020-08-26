@@ -73,9 +73,7 @@ final class FieldUpdatesBuffer {
      * 记录每次更新的 term对应的 数字型数值
      */
     private long[] numericValues; // this will be null if we are buffering binaries
-    /**
-     * 如果hasValue 为true
-     */
+
     private FixedBitSet hasValues;
     /**
      * 每个元素对应一次更新的term  然后term作为下标对应到 关联的field
@@ -300,13 +298,14 @@ final class FieldUpdatesBuffer {
             throw new IllegalStateException("buffer was finished already");
         }
         finished = true;
-        // 每次更新的都是同一个数字 且每次更新的都是同一个field
+        // 如果每次更新都是针对同一个field  且每次更新的值都是一样的    对term进行排序
         final boolean sortedTerms = hasSingleValue() && hasValues == null && fields.length == 1;
         // 这种情况就需要对每次更新相关的term 做排序
         if (sortedTerms) {
             // sort by ascending by term, then sort descending by docsUpTo so that we can skip updates with lower docUpTo.
+            // 这里就生成了一个 从 旧顺序映射到新顺序的容器
             termSortState = termValues.sort(Comparator.naturalOrder(),  // 按照 term.bytes 进行排序
-                    // 上面的比较结果无效时 使用下面的 cmp 也就是比较   也就是比较 docId上限的大小
+                    // 当 term相同时 则按照 doc生效的长度排序
                     (i1, i2) -> Integer.compare(
                             docsUpTo[getArrayIndex(docsUpTo.length, i2)],
                             docsUpTo[getArrayIndex(docsUpTo.length, i1)]));
@@ -401,18 +400,17 @@ final class FieldUpdatesBuffer {
 
     /**
      * An iterator that iterates over all updates in insertion order
+     * 返回迭代内部所有update 的对象
      */
     class BufferedUpdateIterator {
-        /**
-         * 因为 sortState 存储的是  BytesRefArray 的 偏移量信息 所以还是要借助该对象才能获取想要的数据
-         */
+
         private final BytesRefArray.IndexedBytesRefIterator termValuesIterator;
         /**
          * 这个是只有生成了 termSortState 才会初始化的迭代器
          */
         private final BytesRefArray.IndexedBytesRefIterator lookAheadTermIterator;
         /**
-         * 以插入顺序迭代 term
+         * 迭代以 byte形式更新的数据
          */
         private final BytesRefIterator byteValuesIterator;
 
@@ -421,13 +419,14 @@ final class FieldUpdatesBuffer {
          */
         private final BufferedUpdate bufferedUpdate = new BufferedUpdate();
         /**
-         * 描述 每次更新  hasValue 的位图对象
+         * 标记某次更新是否有值的位图
          */
         private final Bits updatesWithValue;
 
         BufferedUpdateIterator() {
-            // 通过 sortState 生成迭代器对象    如果没有设置termSortState  按照插入顺序排序
+            // 如果存在顺序的映射对象 就会按照新的顺序 遍历term
             this.termValuesIterator = termValues.iterator(termSortState);
+            // 这里是 只有存在映射对象时 才会初始化
             this.lookAheadTermIterator = termSortState != null ? termValues.iterator(termSortState) : null;
             this.byteValuesIterator = isNumeric ? null : byteValues.iterator();
             updatesWithValue = hasValues == null ? new Bits.MatchAllBits(numUpdates) : hasValues;
@@ -445,11 +444,12 @@ final class FieldUpdatesBuffer {
         /**
          * Moves to the next BufferedUpdate or return null if all updates are consumed.
          * The returned instance is a shared instance and must be fully consumed before the next call to this method.
+         * 返回更新信息
          */
         BufferedUpdate next() throws IOException {
             BytesRef next = nextTerm();
             if (next != null) {
-                // 找到 term对应的下标  读取相关值后 填充到 update 对象上
+                // 将相关信息填充到临时对象上
                 final int idx = termValuesIterator.ord();
                 bufferedUpdate.termValue = next;
                 bufferedUpdate.hasValue = updatesWithValue.get(idx);
@@ -473,11 +473,13 @@ final class FieldUpdatesBuffer {
         }
 
         BytesRef nextTerm() throws IOException {
-            // 这里是丢弃 相同的term
+            // 如果存在按照 term 排序的迭代器  TODO 什么意义 ???
             if (lookAheadTermIterator != null) {
                 final BytesRef lastTerm = bufferedUpdate.termValue;
                 BytesRef lookAheadTerm;
+                // 因为针对 term排序过了  这里进行去重    (多个update对象的term可能是一样的)
                 while ((lookAheadTerm = lookAheadTermIterator.next()) != null && lookAheadTerm.equals(lastTerm)) {
+                    // 直到迭代到不同的 term时 才读取一个term
                     BytesRef discardedTerm = termValuesIterator.next(); // discard as the docUpTo of the previous update is higher
                     assert discardedTerm.equals(lookAheadTerm) : "[" + discardedTerm + "] != [" + lookAheadTerm + "]";
                     assert docsUpTo[getArrayIndex(docsUpTo.length, termValuesIterator.ord())] <= bufferedUpdate.docUpTo :

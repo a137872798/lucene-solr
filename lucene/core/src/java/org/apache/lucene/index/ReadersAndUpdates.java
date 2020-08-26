@@ -162,13 +162,14 @@ final class ReadersAndUpdates {
     /**
      * Adds a new resolved (meaning it maps docIDs to new values) doc values packet.  We buffer these in RAM and write to disk when too much
      * RAM is used or when a merge needs to kick off, or a commit/refresh.
+     * @param update  记录了某个field 下哪些doc 的数据将会更新
      */
-    // 存储一个 记录了哪些doc会更新的 update 对象
     public synchronized void addDVUpdate(DocValuesFieldUpdates update) throws IOException {
-        // 代表此对象还没有冻结 可能还会发生变化 所以拒绝插入这样的对象
         if (update.getFinished() == false) {
             throw new IllegalArgumentException("call finish first");
         }
+
+        // 存储到以field 为key 的容器中
         List<DocValuesFieldUpdates> fieldUpdates = pendingDVUpdates.computeIfAbsent(update.field, key -> new ArrayList<>());
         assert assertNoDupGen(fieldUpdates, update);
 
@@ -176,7 +177,7 @@ final class ReadersAndUpdates {
 
         fieldUpdates.add(update);
 
-        // 如果此时正在merging 那么将数据存储到 mergingDVUpdates
+        // 如果此时正在merge 就将数据也存储一份到对应的容器中
         if (isMerging) {
             fieldUpdates = mergingDVUpdates.get(update.field);
             if (fieldUpdates == null) {
@@ -651,9 +652,9 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * 将当前该对象内部维护的docValue写入到索引文件中
+     * 将当前该对象内部维护的  针对某个field的doc更新信息写入到索引文件
      * @param dir          本次写入的目标目录
-     * @param fieldNumbers fieldNum 映射容器
+     * @param fieldNumbers  通过fieldNum 可以找到对应的field信息  该对象是以 indexWriter为单位共享的
      * @param maxDelGen    此时已经完成的update对象 对应的delGen
      * @param infoStream
      * @return

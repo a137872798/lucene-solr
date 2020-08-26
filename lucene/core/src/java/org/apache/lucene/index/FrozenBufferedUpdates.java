@@ -215,7 +215,7 @@ final class FrozenBufferedUpdates {
     totalDelCount += applyTermDeletes(segStates);
     // 找到所有被 query命中的doc
     totalDelCount += applyQueryDeletes(segStates);
-    // TODO
+    // 处理对 DV的更新数据
     totalDelCount += applyDocValuesUpdates(segStates);
 
     return totalDelCount;
@@ -238,14 +238,18 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
+      // 代表目标段已经在merge中了  那么该段马上就会被舍弃 放弃处理
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running
         // because we will run on the newly merged segment next:
         continue;
       }
+
+      // 代表本次是否是针对私有段的处理
       final boolean isSegmentPrivateDeletes = privateSegment != null;
       if (fieldUpdates.isEmpty() == false) {
+        // 将所有 DV 更新对象作用到 segmentState上
         updateCount += applyDocValuesUpdates(segState, fieldUpdates, delGen, isSegmentPrivateDeletes);
       }
 
@@ -263,7 +267,10 @@ final class FrozenBufferedUpdates {
     return updateCount;
   }
 
-  private static long applyDocValuesUpdates(BufferedUpdatesStream.SegmentState segState,
+  /**
+   * 处理针对某个 segment对象的 DV update
+   */
+  private static long  applyDocValuesUpdates(BufferedUpdatesStream.SegmentState segState,
                                             Map<String, FieldUpdatesBuffer> updates,
                                             long delGen,
                                             boolean segmentPrivateDeletes) throws IOException {
@@ -281,15 +288,30 @@ final class FrozenBufferedUpdates {
     long updateCount = 0;
 
     // We first write all our updates private, and only in the end publish to the ReadersAndUpdates */
+    // 存储以field为单位 合并所有update信息后的对象
     final List<DocValuesFieldUpdates> resolvedUpdates = new ArrayList<>();
+
     for (Map.Entry<String, FieldUpdatesBuffer> fieldUpdate : updates.entrySet()) {
+
+      // 找到本次更新对应 fieldName
       String updateField = fieldUpdate.getKey();
+
+      // 这个对象会吸纳所有的 update 信息
       DocValuesFieldUpdates dvUpdates = null;
+
+      // 存储更新信息的容器
       FieldUpdatesBuffer value = fieldUpdate.getValue();
+      // 更新的类型
       boolean isNumeric = value.isNumeric();
+      // 获取更新信息的迭代器
       FieldUpdatesBuffer.BufferedUpdateIterator iterator = value.iterator();
+
+      // 用于存储迭代器返回信息的对象
       FieldUpdatesBuffer.BufferedUpdate bufferedUpdate;
+      // 基于 reader对象 生成能遍历 term所有doc的迭代器
       TermDocsIterator termDocsIterator = new TermDocsIterator(segState.reader, iterator.isSortedTerms());
+
+      // 迭代更新信息
       while ((bufferedUpdate = iterator.next()) != null) {
         // TODO: we traverse the terms in update order (not term order) so that we
         // apply the updates in the correct order, i.e. if two terms update the
@@ -301,13 +323,16 @@ final class FrozenBufferedUpdates {
         // which will get same docIDUpto, yet will still need to respect the order
         // those updates arrived.
         // TODO: we could at least *collate* by field?
+        // 返回该term 所在的所有docId的迭代器
         final DocIdSetIterator docIdSetIterator = termDocsIterator.nextTerm(bufferedUpdate.termField, bufferedUpdate.termValue);
         if (docIdSetIterator != null) {
           final int limit;
+          // 代表当前 update对象是由本次 segment刷盘时生成的  这时采用设置的 upTo
           if (delGen == segState.delGen) {
             assert segmentPrivateDeletes;
             limit = bufferedUpdate.docUpTo;
           } else {
+            // 否则没有doc限制
             limit = Integer.MAX_VALUE;
           }
           final BytesRef binaryValue;
@@ -319,8 +344,10 @@ final class FrozenBufferedUpdates {
             longValue = bufferedUpdate.numericValue;
             binaryValue = bufferedUpdate.binaryValue;
           }
+          // 包装成一个  DV update 对象
           if (dvUpdates == null) {
             if (isNumeric) {
+              // 代表该 对象下所有更新的结果都是同一个值
               if (value.hasSingleValue()) {
                 dvUpdates = new NumericDocValuesFieldUpdates
                     .SingleValueNumericDocValuesFieldUpdates(delGen, updateField, segState.reader.maxDoc(),
@@ -330,12 +357,15 @@ final class FrozenBufferedUpdates {
                     value.getMaxNumeric(), segState.reader.maxDoc());
               }
             } else {
+              // 创建一个二进制的update 对象
               dvUpdates = new BinaryDocValuesFieldUpdates(delGen, updateField, segState.reader.maxDoc());
             }
+            // 将结果设置到 list中
             resolvedUpdates.add(dvUpdates);
           }
           final IntConsumer docIdConsumer;
           final DocValuesFieldUpdates update = dvUpdates;
+          // 将更新信息插入到 DocValuesFieldUpdates 中
           if (bufferedUpdate.hasValue == false) {
             docIdConsumer = doc -> update.reset(doc);
           } else if (isNumeric) {
@@ -343,7 +373,10 @@ final class FrozenBufferedUpdates {
           } else {
             docIdConsumer = doc -> update.add(doc, binaryValue);
           }
+          // 经过上面 termDelete 和 queryDelete的处理后 此时已经更新了存活的doc  以及被标记成待删除的doc 就不需要再处理了
+          // TODO 从代码看这样会导致之前记录的删除信息丢失
           final Bits acceptDocs = segState.rld.getLiveDocs();
+          // TODO 先忽略
           if (segState.rld.sortMap != null && segmentPrivateDeletes) {
             // This segment was sorted on flush; we must apply seg-private deletes carefully in this case:
             int doc;
@@ -358,11 +391,14 @@ final class FrozenBufferedUpdates {
             }
           } else {
             int doc;
+            // 遍历当前term 所在的所有doc
             while ((doc = docIdSetIterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
               if (doc >= limit) {
                 break; // no more docs that can be updated for this term
               }
+              // 确定当前doc 还存活
               if (acceptDocs == null || acceptDocs.get(doc)) {
+                // 进行处理
                 docIdConsumer.accept(doc);
                 updateCount++;
               }
@@ -373,8 +409,10 @@ final class FrozenBufferedUpdates {
     }
 
     // now freeze & publish:
+    // 这里已经存储了所有的结果
     for (DocValuesFieldUpdates update : resolvedUpdates) {
       if (update.any()) {
+        // 将内部数据按照docId 排序
         update.finish();
         segState.rld.addDVUpdate(update);
       }
@@ -490,7 +528,8 @@ final class FrozenBufferedUpdates {
         // our deletes don't apply to this segment
         continue;
       }
-      // rld 对象初始状态 引用计数就是1 如果首次创建 引用计数还会加 1  TODO 先不考虑如何出现这种情况
+      // rld 对象初始状态 引用计数就是1 如果首次创建 引用计数还会加 1
+      // 代表当前段  正在merge 中 忽略对它的删除操作
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running

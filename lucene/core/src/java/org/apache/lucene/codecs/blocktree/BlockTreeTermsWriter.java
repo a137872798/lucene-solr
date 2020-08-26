@@ -602,8 +602,7 @@ public final class BlockTreeTermsWriter extends FieldsConsumer {
 
             // 这里以fst作为一个索引 有点像disi中rank的定位 实际上在 termOut中已经包含了所有term的信息了  这里只要存储前缀信息就可以 便于快速检测定位term的位置
             // Copy over index for all sub-blocks
-            // 将所有子block 整合到 fst中
-            // 将所有block数据写入到一个fst中
+            // 针对 writerBlocks 中写入多个block的场景  只有有出度的block才会被写入信息 (写入sub-block)
             for (PendingBlock block : blocks) {
                 // 如果blocks只包含一个block
                 if (block.subIndices != null) {

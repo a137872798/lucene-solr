@@ -30,7 +30,7 @@ import org.apache.lucene.util.packed.PagedMutable;
  * {@link BinaryDocValuesField}.
  * 
  * @lucene.experimental
- * 这里描述的是 更新了某些二进制值类型的doc对象
+ * 更对象会存储 记录的所有有关某个field的更新信息
  */
 final class BinaryDocValuesFieldUpdates extends DocValuesFieldUpdates {
   
@@ -70,6 +70,12 @@ final class BinaryDocValuesFieldUpdates extends DocValuesFieldUpdates {
   private PagedGrowableWriter offsets, lengths;
   private BytesRefBuilder values;
 
+  /**
+   *
+   * @param delGen  segment 对应的delGen
+   * @param field   本次更新是针对哪个field的
+   * @param maxDoc   segment最大的doc
+   */
   public BinaryDocValuesFieldUpdates(long delGen, String field, int maxDoc) {
     super(maxDoc, delGen, field, DocValuesType.BINARY);
     offsets = new PagedGrowableWriter(1, PAGE_SIZE, 1, PackedInts.FAST);
@@ -87,9 +93,16 @@ final class BinaryDocValuesFieldUpdates extends DocValuesFieldUpdates {
     add(docId, iterator.binaryValue());
   }
 
+  /**
+   * 记录某个doc 的值将会被更新
+   * @param doc
+   * @param value
+   */
   @Override
   synchronized public void add(int doc, BytesRef value) {
+    // 存储到 doc对应的容器 并返回下标
     int index = add(doc);
+    // 存储相关信息
     offsets.set(index, values.length());
     lengths.set(index, value.length);
     values.append(value);

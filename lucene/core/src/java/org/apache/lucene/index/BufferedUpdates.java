@@ -175,7 +175,7 @@ class BufferedUpdates implements Accountable {
     }
 
     /**
-     * 某个 field 更新了docValue  记录这次更新信息
+     * NumericDocValuesUpdate 应该代表的是 针对某个 field 下 将某个term 全局性的替换成某个value
      * @param update   更新的数值
      * @param docIDUpto  文档的id
      */

@@ -45,6 +45,9 @@ final class SegmentTermsEnumFrame {
      * 该值初始状态就是 hasTerms
      */
     boolean hasTermsOrig;
+    /**
+     * 如果本次 writeBlocks 仅产生了一个block 该属性为false  否则为true
+     */
     boolean isFloor;
 
     // 这里涉及到 FST
@@ -158,8 +161,7 @@ final class SegmentTermsEnumFrame {
     }
 
     /**
-     * 首先 BlockTreeTermsWriter写入到 fst中的数据 每次写入都代表写入了一个 XXX*  这个值作为一个词典 或者说某些term的前缀 每次生成可能是对应某个block下所有的node 也可能只匹配部分node
-     * 进入该方法就表示 本次数据还包含多个 block   对应 PendingBlock.compileIndex
+     * 如果某次 writeBlocks 产生了多个block  那么将产生的block数量 前缀 等信息填充到属性中
      *
      * @param in
      * @param source
@@ -187,6 +189,11 @@ final class SegmentTermsEnumFrame {
         return isLeafBlock ? nextEnt : state.termBlockOrd;
     }
 
+    /**
+     * 切换到 某次 writeBlocks 中生成的多个block的下一个   又或者是直接切换到下一个block   这里能够确保不会发生回退
+     * 比如   当前存在  a*   ab*  ac*  实际写入索引文件的顺序应该是  ab* ac* a* 因为a* 的共享前缀是最小的 它最后被冻结   在外层next的判断中已经过滤掉 ac* -> a*的情况了 这里直接往下读取只可能出现 ab* -> ac* 的情况
+     * @throws IOException
+     */
     void loadNextFloorBlock() throws IOException {
         //if (DEBUG) {
         //System.out.println("    loadNextFloorBlock fp=" + fp + " fpEnd=" + fpEnd);
@@ -336,6 +343,9 @@ final class SegmentTermsEnumFrame {
         // }
     }
 
+    /**
+     * 复位
+     */
     void rewind() {
 
         // Force reload:
@@ -426,9 +436,10 @@ final class SegmentTermsEnumFrame {
     public boolean nextNonLeaf() throws IOException {
         //if (DEBUG) System.out.println("  stef.next ord=" + ord + " nextEnt=" + nextEnt + " entCount=" + entCount + " fp=" + suffixesReader.getPosition());
         while (true) {
-            // 代表此时已经处理到最后一个node
+            // 代表此时已经读取到当前block的最后一个节点了
             if (nextEnt == entCount) {
                 assert arc == null || (isFloor && isLastInFloor == false) : "isFloor=" + isFloor + " isLastInFloor=" + isLastInFloor;
+                // 进入到这里时已经确保此 isFloor && isLastInFloor == false  否则会被外层的 next() 逻辑拦截
                 loadNextFloorBlock();
                 if (isLeafBlock) {
                     nextLeaf();
@@ -463,7 +474,7 @@ final class SegmentTermsEnumFrame {
                 ste.termExists = false;
                 // 当前block数据写入前文件偏移量 对应 生成该blockNode 的那批node开始写入的文件偏移量
                 subCode = suffixLengthsReader.readVLong();
-                //
+                // 获取子block的fp
                 lastSubFP = fp - subCode;
                 //if (DEBUG) {
                 //System.out.println("    lastSubFP=" + lastSubFP);
@@ -476,7 +487,7 @@ final class SegmentTermsEnumFrame {
     // TODO: make this array'd so we can do bin search?
     // likely not worth it?  need to measure how many
     // floor blocks we "typically" get
-    // 这里应该只是定位到最接近的frame
+    // 当 writeBlocks下有多个block时 定位一个更精确的block
     public void scanToFloorFrame(BytesRef target) {
 
         // !isFloor 代表当前block 对应某次 writerBlocks下所有的node  所以应该是不用再缩小范围了
@@ -648,6 +659,7 @@ final class SegmentTermsEnumFrame {
     // Scans to sub-block that has this target fp; only
     // called by next(); NOTE: does not set
     // startBytePos/suffix as a side effect
+    // 确保此时扫描的 sub-block 就是给定偏移量对应的这个   sub-block的定义就是 blockNode
     public void scanToSubBlock(long subFP) {
         assert !isLeafBlock;
         //if (DEBUG) System.out.println("  scanToSubBlock fp=" + fp + " subFP=" + subFP + " entCount=" + entCount + " lastSubFP=" + lastSubFP);
@@ -657,11 +669,14 @@ final class SegmentTermsEnumFrame {
             return;
         }
         assert subFP < fp : "fp=" + fp + " subFP=" + subFP;
+        // 倒推出 code值
         final long targetSubCode = fp - subFP;
         //if (DEBUG) System.out.println("    targetSubCode=" + targetSubCode);
+        // 遍历所有 sub-block 直到找到符合条件的位置
         while (true) {
             assert nextEnt < entCount;
             nextEnt++;
+            // 这里开始跳过之前处理过的前缀
             final int code = suffixLengthsReader.readVInt();
             suffixesReader.skipBytes(code >>> 1);
             if ((code & 1) != 0) {
@@ -855,6 +870,8 @@ final class SegmentTermsEnumFrame {
             //  suffixBytesRef.length = suffix;
             //  System.out.println("      cycle: " + ((code&1)==1 ? "sub-block" : "term") + " " + (nextEnt-1) + " (of " + entCount + ") suffix=" + brToString(suffixBytesRef));
             //}
+
+            // 因为在外层 target 没有匹配到 blockNode 所以在这里只可能以termNode 的形式匹配  又或者没匹配成功
 
             // 获取此时term的长度
             final int termLen = prefix + suffix;

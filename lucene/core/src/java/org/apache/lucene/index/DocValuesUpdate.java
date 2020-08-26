@@ -29,7 +29,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
 
 /** An in-place update to a DocValues field. */
-// 代表更新文档的值
+// 这个对象指的是将 某个field 下对应的term全部替换成 新的value
 abstract class DocValuesUpdate {
   
   /* Rough logic: OBJ_HEADER + 3*PTR + INT
@@ -167,6 +167,7 @@ abstract class DocValuesUpdate {
   }
 
   /** An in-place update to a numeric DocValues field */
+  // 代表将某个 field的值替换成 数字类型
   static final class NumericDocValuesUpdate extends DocValuesUpdate {
     private final long value;
 

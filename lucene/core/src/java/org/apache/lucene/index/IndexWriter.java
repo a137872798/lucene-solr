@@ -812,7 +812,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 开始处理一些 update操作  前提是开启了自动刷盘
+     * 当没有开启自动刷盘时  也就代表内存中的数据无法自动减少 那么一些比较占用内存的数据就需要尽早清除
+     * 这里是处理doc的更新信息
      *
      * @throws IOException
      */
@@ -821,12 +822,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             try {
                 final double ramBufferSizeMB = config.getRAMBufferSizeMB();
                 // If the reader pool is > 50% of our IW buffer, then write the updates:
-                // 只要该数值是有效的 就代表开启了自动刷盘
+                // 代表没有开启自动刷盘
                 if (ramBufferSizeMB != IndexWriterConfig.DISABLE_AUTO_FLUSH) {
                     long startNS = System.nanoTime();
 
                     long ramBytesUsed = readerPool.ramBytesUsed();
-                    // 此时记录的有关更新的数据 达到一定的内存值时 才会触发更新
+                    // 此时在 pool 中 所有 ReaderAndUpdate对象中已经存储了很多 update数据
                     if (ramBytesUsed > 0.5 * ramBufferSizeMB * 1024 * 1024) {
                         if (infoStream.isEnabled("BD")) {
                             infoStream.message("BD", String.format(Locale.ROOT, "now write some pending DV updates: %.2f MB used vs IWC Buffer %.2f MB",
@@ -834,11 +835,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         }
 
                         // Sort by largest ramBytesUsed:
-                        // 按照内存占用大小倒序 返回所有待处理的reader
+                        // 按照内存占用大小倒序 返回所有待处理的reader      TODO ReaderAndUpdates 应该是由于用户的某次更新请求而生成的 这些数据应该在  apply() 中已经处理掉了啊
                         final List<ReadersAndUpdates> list = readerPool.getReadersByRam();
                         int count = 0;
                         for (ReadersAndUpdates rld : list) {
 
+                            // 此时内存占用已经低于阈值了 停止处理
                             if (ramBytesUsed <= 0.5 * ramBufferSizeMB * 1024 * 1024) {
                                 break;
                             }
@@ -855,10 +857,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                                 // is dropped before being processed here. If it happens, we need to skip that reader.
                                 // this is also best effort to free ram, there might be some other thread writing this rld concurrently
                                 // which wins and then if readerPooling is off this rld will be dropped.
+                                // 尝试获取该segment对应的reader 对象
                                 if (readerPool.get(rld.info, false) == null) {
                                     continue;
                                 }
-                                // 将update对象写入到索引文件
+                                // 将update对象写入到索引文件    bufferedUpdatesStream.getCompletedDelGen() 代表此时已经完全处理完的 update 对应的gen
                                 if (rld.writeFieldUpdates(directory, globalFieldNumberMap, bufferedUpdatesStream.getCompletedDelGen(), infoStream)) {
                                     checkpointNoSIS();
                                 }
@@ -5784,6 +5787,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // 用于记录结果的变量
                 AtomicBoolean success = new AtomicBoolean();
                 long delCount;
+
+                // 这里就是将 update对象作用在目标 segment的过程   只要至少删除了一个 doc 那么就会标记成需要merge
                 try (Closeable finalizer = () -> finishApply(segStates, success.get(), delFiles)) {
                     assert finalizer != null; // access the finalizer to prevent a warning
                     // don't hold IW monitor lock here so threads are free concurrently resolve deletes/updates:
@@ -5794,7 +5799,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 // Since we just resolved some more deletes/updates, now is a good time to write them:
-                // 在锁竞争不激烈的情况下 检测此时内存中是否数据过多  过多的话 就将部分update数据写入到磁盘
+                // 在这里执行有关 doc的update操作
                 writeSomeDocValuesUpdates();
 
                 // It's OK to add this here, even if the while loop retries, because delCount only includes newly
@@ -5924,7 +5929,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 if (infoStream.isEnabled("IW")) {
                     infoStream.message("IW", "drop 100% deleted segments: " + segString(result.allDeleted));
                 }
-                // 删除对应数据
+                // 关闭当前段对应的 输入流
                 for (SegmentCommitInfo info : result.allDeleted) {
                     dropDeletedSegment(info);
                 }
