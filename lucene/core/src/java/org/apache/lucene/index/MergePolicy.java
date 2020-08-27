@@ -660,12 +660,16 @@ public abstract class MergePolicy {
      * 计算某个 segment的大小
      */
     protected long size(SegmentCommitInfo info, MergeContext mergeContext) throws IOException {
+        // 返回该segment相关的索引文件总大小
         long byteSize = info.sizeInBytes();
+        // 返回本次删除了多少doc
         int delCount = mergeContext.numDeletesToMerge(info);
         assert assertDelCount(delCount, info);
+        // 这里在计算删除率  删除率越高代表合并的效果越好
         double delRatio = info.info.maxDoc() <= 0 ? 0d : (double) delCount / (double) info.info.maxDoc();
         assert delRatio <= 1.0;
-        // 这里返回的就是 除了要被删除之外的 segment大小
+
+        // 这里只是大致计算一个大小   预估合并后大小为多少
         return (info.info.maxDoc() <= 0 ? byteSize : (long) (byteSize * (1.0 - delRatio)));
     }
 
@@ -757,6 +761,7 @@ public abstract class MergePolicy {
      * @param readerSupplier a supplier that allows to obtain a {@link CodecReader} for this segment
      * @see IndexWriter#softUpdateDocument(Term, Iterable, Field...)
      * @see IndexWriterConfig#setSoftDeletesField(String)
+     * 根据情况返回 被删除了多少数据  delCount指代本删除的doc数量
      */
     public int numDeletesToMerge(SegmentCommitInfo info, int delCount,
                                  IOSupplier<CodecReader> readerSupplier) throws IOException {

@@ -79,7 +79,7 @@ public class SegmentCommitInfo {
   private long nextWriteDocValuesGen;
 
   // Track the per-field DocValues update files
-  // 代表在哪些文件中存储了有关 docValue 变化的数据
+  //
   private final Map<Integer,Set<String>> dvUpdatesFiles = new HashMap<>();
   
   // TODO should we add .files() to FieldInfosFormat, like we have on
@@ -273,7 +273,7 @@ public class SegmentCommitInfo {
     info.getCodec().liveDocsFormat().files(this, files);
 
     // must separately add any field updates files
-    // 追加描述 docValue 变化的文件
+    // 追加描述 docValue 的文件
     for (Set<String> updatefiles : dvUpdatesFiles.values()) {
       files.addAll(updatefiles);
     }

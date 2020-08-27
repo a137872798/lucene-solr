@@ -242,7 +242,7 @@ final class BufferedUpdatesStream implements Accountable {
   }
 
   /**
-   * 使用该 writer 处理所有待执行的 删除/更新节点
+   * 等待 waitFor的所有update都被处理  (此时update对象可能被分配到多个线程)
    * @param waitFor
    * @param writer
    * @throws IOException
@@ -266,12 +266,11 @@ final class BufferedUpdatesStream implements Accountable {
 
     ArrayList<FrozenBufferedUpdates> pendingPackets = new ArrayList<>();
     long totalDelCount = 0;
-    // 遍历每个 更新对象
     for (FrozenBufferedUpdates packet : waitFor) {
       // Frozen packets are now resolved, concurrently, by the indexing threads that
       // create them, by adding a DocumentsWriter.ResolveUpdatesEvent to the events queue,
       // but if we get here and the packet is not yet resolved, we resolve it now ourselves:
-      // 尝试抢占锁 并在成功时 执行 forceApply
+      // 代表其他线程正在使用这个对象 那么这些对象就是需要等待的  而tryApply成功的话就会顺便处理该update
       if (writer.tryApply(packet) == false) {
         // if somebody else is currently applying it - move on to the next one and force apply below
         pendingPackets.add(packet);
@@ -280,7 +279,7 @@ final class BufferedUpdatesStream implements Accountable {
     }
     for (FrozenBufferedUpdates packet : pendingPackets) {
       // now block on all the packets that were concurrently applied to ensure they are due before we continue.
-      // 到了这里还是要强制执行
+      // 实际上是利用内部 lock() 方法 强制阻塞等待所有packet执行完成
       writer.forceApply(packet);
     }
 

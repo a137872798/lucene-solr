@@ -285,13 +285,18 @@ final class ReadersAndUpdates {
         return pendingDeletes.numDeletesToMerge(policy, this::getLatestReader);
     }
 
+    /**
+     * 获取最新的reader对象
+     * @return
+     * @throws IOException
+     */
     private synchronized CodecReader getLatestReader() throws IOException {
         // 确保reader对象已经被初始化
         if (this.reader == null) {
             // get a reader and dec the ref right away we just make sure we have a reader
             getReader(IOContext.READ).decRef();
         }
-        // 代表该reader对象内部的删除数域 pendingDelete的不一致 需要做同步处理
+        // 代表此时 reader对象读取的 liveDoc 信息已经过时了 需要重新生成reader 对象
         if (pendingDeletes.needsRefresh(reader)) {
             // we have a reader but its live-docs are out of sync. let's create a temporary one that we never share
             swapNewReaderWithLatestLiveDocs();
@@ -637,7 +642,7 @@ final class ReadersAndUpdates {
      * @param fieldInfos  当前field的信息
      * @param dir  目标目录
      * @param infosFormat  标明 fieldInfo 会以什么格式存储
-     * @return
+     * @return 返回的是本次存储最新fieldInfo 信息的索引文件
      * @throws IOException
      */
     private synchronized Set<String> writeFieldInfosGen(FieldInfos fieldInfos, Directory dir,
@@ -749,7 +754,7 @@ final class ReadersAndUpdates {
                         // (which is guaranteed to exist) and remaps its field number locally.
                         // 因为  update对象是全局共用的  所以内部可能包含了全局范围内各种field  而该segment 就不一定有该field
                         assert fieldNumbers.contains(update.field, update.type);
-                        // 这个时候选择生成一个该field的副本 并使用新的 num   TODO 为什么用这个新号码
+                        // 这个时候选择生成一个该field的副本 并使用新的 num
                         FieldInfo fi = cloneFieldInfo(builder.getOrAdd(update.field), ++maxFieldNumber);
                         // 指定 docValue的类型 并添加到映射容器中
                         fi.setDocValuesType(update.type);
@@ -796,7 +801,8 @@ final class ReadersAndUpdates {
         // Prune the now-written DV updates:
         long bytesFreed = 0;
         Iterator<Map.Entry<String, List<DocValuesFieldUpdates>>> it = pendingDVUpdates.entrySet().iterator();
-        // 这里是第三次遍历这些  DVupdate了
+
+        // 将已经处理过的update 移除掉
         while (it.hasNext()) {
             Map.Entry<String, List<DocValuesFieldUpdates>> ent = it.next();
             int upto = 0;
@@ -829,6 +835,7 @@ final class ReadersAndUpdates {
 
         // writing field updates succeeded
         assert fieldInfosFiles != null;
+        // 更新segment 下读取fieldInfo 信息的索引文件
         info.setFieldInfosFiles(fieldInfosFiles);
 
         // update the doc-values updates files. the files map each field to its set
@@ -836,12 +843,13 @@ final class ReadersAndUpdates {
         // were not updated in this session, and add new mappings for fields that
         // were updated now.
         assert newDVFiles.isEmpty() == false;
-        // 将此时包含docValue update 信息的文件设置到 info对象上
+        // 某些未命中的fieldInfo 信息不会保存在newDVFiles 中 这样就要从之前的容器中取出信息
         for (Entry<Integer, Set<String>> e : info.getDocValuesUpdatesFiles().entrySet()) {
             if (newDVFiles.containsKey(e.getKey()) == false) {
                 newDVFiles.put(e.getKey(), e.getValue());
             }
         }
+        // 之后将所有fieldInfo DV对应的索引文件写入到 segmentInfo中
         info.setDocValuesUpdatesFiles(newDVFiles);
 
         if (infoStream.isEnabled("BD")) {
@@ -865,7 +873,7 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * 读取最新的数据
+     * 更新之前reader读取的 索引文件
      *
      * @param reader
      * @return

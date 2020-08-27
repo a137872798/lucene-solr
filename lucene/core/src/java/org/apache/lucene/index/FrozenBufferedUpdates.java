@@ -374,7 +374,6 @@ final class FrozenBufferedUpdates {
             docIdConsumer = doc -> update.add(doc, binaryValue);
           }
           // 经过上面 termDelete 和 queryDelete的处理后 此时已经更新了存活的doc  以及被标记成待删除的doc 就不需要再处理了
-          // TODO 从代码看这样会导致之前记录的删除信息丢失
           final Bits acceptDocs = segState.rld.getLiveDocs();
           // TODO 先忽略
           if (segState.rld.sortMap != null && segmentPrivateDeletes) {

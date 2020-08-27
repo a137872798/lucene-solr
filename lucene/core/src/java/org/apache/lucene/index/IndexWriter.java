@@ -471,7 +471,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private final IndexFileDeleter deleter;
 
     // used by forceMerge to note those needing merging
-    // 标记哪些段信息需要merge
+    // merge时挑选的segment 必须确保在该容器内
     private final Map<SegmentCommitInfo, Boolean> segmentsToMerge = new HashMap<>();
     /**
      * 每次最多允许merge 多少segment
@@ -494,7 +494,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private Iterable<Map.Entry<String, String>> commitUserData;
 
     // Holds all SegmentInfo instances currently involved in
-    // 代表哪些段正在/正要 进行merging
+    // 此时正在merge的 segment
     private final HashSet<SegmentCommitInfo> mergingSegments = new HashSet<>();
     /**
      * 该对象就是标记了 每隔多久触发一次merge  同时从 mergeSource中获取数据 并进行合并
@@ -511,6 +511,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private final Set<MergePolicy.OneMerge> runningMerges = new HashSet<>();
     private final List<MergePolicy.OneMerge> mergeExceptions = new ArrayList<>();
     private long mergeGen;
+
+    /**
+     * 这个标识 在什么时候修改 ???  当检测到该标识为true时 不会执行merge操作
+     */
     private boolean stopMerges; // TODO make sure this is only changed once and never set back to false
     private boolean didMessageState;
 
@@ -520,7 +524,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private final AtomicInteger flushCount = new AtomicInteger();
 
     /**
-     * 记录总计处理了多少个 FrozenBufferedUpdates
+     * 记录总计处理了多少次 FrozenBufferedUpdates
      */
     private final AtomicInteger flushDeletesCount = new AtomicInteger();
     private final ReaderPool readerPool;
@@ -861,8 +865,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                                 if (readerPool.get(rld.info, false) == null) {
                                     continue;
                                 }
-                                // 将update对象写入到索引文件    bufferedUpdatesStream.getCompletedDelGen() 代表此时已经完全处理完的 update 对应的gen
+                                // 处理update信息 并将新的 DocValueType持久化到索引文件中 以及将最新的fieldInfo信息持久化到索引文件
+                                // bufferedUpdatesStream.getCompletedDelGen() 代表此时已经完全处理完的 update 对应的gen
                                 if (rld.writeFieldUpdates(directory, globalFieldNumberMap, bufferedUpdatesStream.getCompletedDelGen(), infoStream)) {
+                                    // 将新增的索引文件引用计数+1
                                     checkpointNoSIS();
                                 }
                             }
@@ -2349,8 +2355,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * 检测是否需要对 segment 进行合并
-     * @param mergePolicy
-     * @param trigger  触发merge的原因
+     * @param mergePolicy  使用的merge策略 默认是 TieredMergePolicy
+     * @param trigger  触发merge的原因  比如由于手动调用flush merge触发就是 FULL_FLUSH
      * @param maxNumSegments   最多允许多少segment  如果是-1代表没有数量限制
      * @throws IOException
      */
@@ -2362,10 +2368,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 一个OneMerge 对象就对应某次merge 的所有参与者
-     * @param mergePolicy
-     * @param trigger
-     * @param maxNumSegments
+     * @param mergePolicy  使用的merge策略 默认是 TieredMergePolicy
+     *
+     * @param trigger  触发原因
+     * @param maxNumSegments   本次merge的数量上限
      * @return
      * @throws IOException
      */
@@ -2389,11 +2395,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
         boolean newMergesFound = false;
         final MergePolicy.MergeSpecification spec;
-        // 代表本次 merge 有数量限制   一般是在某种 force的场景下才会限定数量
+        // 代表本次 merge 有数量限制
+        // TODO 先跳过这段
         if (maxNumSegments != UNBOUNDED_MAX_MERGE_SEGMENTS) {
             assert trigger == MergeTrigger.EXPLICIT || trigger == MergeTrigger.MERGE_FINISHED :
                     "Expected EXPLICT or MERGE_FINISHED as trigger even with maxNumSegments set but was: " + trigger.name();
 
+            // 基于当前的段信息生成一个 描述本次merge任务的对象
             spec = mergePolicy.findForcedMerges(segmentInfos, maxNumSegments, Collections.unmodifiableMap(segmentsToMerge), this);
             newMergesFound = spec != null;
             if (newMergesFound) {
@@ -3582,18 +3590,23 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * Ensures that all changes in the reader-pool are written to disk.
      *
-     * @param writeDeletes if <code>true</code> if deletes should be written to disk too.   是否还需要将 delete 信息写入到索引文件中
-     *                     确保此时所有的变化都已经写入到磁盘
+     * @param writeDeletes if <code>true</code> if deletes should be written to disk too.
+     *                     需要将delete的影响持久化到磁盘
+     *
+     * 确保所有变化都已经持久化
      */
     private void writeReaderPool(boolean writeDeletes) throws IOException {
         assert Thread.holdsLock(this);
         if (writeDeletes) {
-            // 这里 又执行一个 处理 docValueUpdate  和 delete  多个任务一起执行不会出问题吗???
+            // 将此时 liveDoc 与 docValue 信息写入到磁盘
             if (readerPool.commit(segmentInfos)) {
+                // 这种检查点仅增加 新索引文件的引用计数  不会增加segment的版本信息
                 checkpointNoSIS();
             }
         } else { // only write the docValues
+            // 仅仅将更新信息持久化
             if (readerPool.writeAllDocValuesUpdates()) {
+                // 为新增的索引文件增加引用计数
                 checkpoint();
             }
         }
@@ -3611,6 +3624,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         for (SegmentCommitInfo info : toDrop) {
             dropDeletedSegment(info);
         }
+        // 更新 segmentInfos的版本信息
         if (toDrop.isEmpty() == false) {
             checkpoint();
         }
@@ -3843,7 +3857,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      *
      * @param triggerMerge    if true, we may merge segments (if
      *                        deletes or docs were flushed) if necessary      当刷盘完成时 根据情况尝试将segment 合并
-     * @param applyAllDeletes whether pending deletes should also             使用要处理所有待执行的 delete   看来之前解析完的数据会直接写入到磁盘，而删除动作是尽可能等到合并时才做
+     * @param applyAllDeletes whether pending deletes should also   是否要阻塞等待当前所有update任务都完成
      */
     final void flush(boolean triggerMerge, boolean applyAllDeletes) throws IOException {
 
@@ -3856,7 +3870,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
         // We can be called during close, when closing==true, so we must pass false to ensureOpen:
         ensureOpen(false);
+        // doFlush 返回true 代表有数据发生了持久化  无论是处理 update 还是将之前解析并暂存在内存中的数据持久化
         if (doFlush(applyAllDeletes) && triggerMerge) {
+            // 执行merge操作
             maybeMerge(config.getMergePolicy(), MergeTrigger.FULL_FLUSH, UNBOUNDED_MAX_MERGE_SEGMENTS);
         }
     }
@@ -3895,7 +3911,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     }
                     if (!anyChanges) {
                         // flushCount is incremented in flushAllThreads
-                        // 只是增加刷盘次数
+                        // 即使没有发生数据刷盘也要增加刷盘次数   至于成功刷盘的情况 在 publishFlushedSegment中会增加刷盘次数
                         flushCount.incrementAndGet();
                     }
                     // 之前因为多线程抢占 可能导致某些 ticket 还没有发布 这里就要将所有ticket发布
@@ -3905,19 +3921,23 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 } finally {
                     assert Thread.holdsLock(fullFlushLock);
                     docWriter.finishFullFlush(flushSuccess);
-                    // 以非merge形式 执行之前存储在任务队列中的所有任务
+                    // 执行之前存储在任务队列中的所有任务   并且不进行merge
                     processEvents(false);
                 }
             }
 
+            // 因为多线程会并发处理delete 和 update 这里是等待所有update对象都处理完
             if (applyAllDeletes) {
                 applyAllDeletesAndUpdates();
             }
 
+            // 只要有数据被刷盘 又或者 update对象修改了之前的数据 就标记成需要merge
             anyChanges |= maybeMerge.getAndSet(false);
 
             synchronized (this) {
+                // 将最新的 docValue信息持久化   如果applyAllDeletes == true 将最新的liveDoc信息持久化  同时检测如果发现某个segment下所有doc都被删除 则清除reader对象
                 writeReaderPool(applyAllDeletes);
+                // 执行刷盘完成后的后置钩子
                 doAfterFlush();
                 success = true;
                 return anyChanges;
@@ -3935,6 +3955,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 阻塞，并等待所有正在处理update的线程完成
+     * @throws IOException
+     */
     private void applyAllDeletesAndUpdates() throws IOException {
         assert Thread.holdsLock(this) == false;
         flushDeletesCount.incrementAndGet();
@@ -5619,20 +5643,21 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * @param info the segment to get the number of deletes for
      * @lucene.experimental
      * @see MergePolicy#numDeletesToMerge(SegmentCommitInfo, int, org.apache.lucene.util.IOSupplier)
-     * 获取该段会有多少byte被删除
+     * 返回某个段下此时被删除的数量
      */
     @Override
     public final int numDeletesToMerge(SegmentCommitInfo info) throws IOException {
         ensureOpen(false);
         validate(info);
         MergePolicy mergePolicy = config.getMergePolicy();
+        // 返回 rld实例
         final ReadersAndUpdates rld = getPooledInstance(info, false);
         int numDeletesToMerge;
         if (rld != null) {
-            // 默认情况 返回的就是pendingDelete删除数量
             numDeletesToMerge = rld.numDeletesToMerge(mergePolicy);
         } else {
             // if we don't have a  pooled instance lets just return the hard deletes, this is safe!
+            // 返回此时已经删除的数量  如果某些doc仅仅是被标记成删除 没有做持久化 那么该值是不会增大的
             numDeletesToMerge = info.getDelCount();
         }
         assert numDeletesToMerge <= info.info.maxDoc() :
@@ -5728,6 +5753,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // Optimistic concurrency: assume we are free to resolve the deletes against all current segments in the index, despite that
             // concurrent merges are running.  Once we are done, we check to see if a merge completed while we were running.  If so, we must retry
             // resolving against the newly merged segment(s).  Eventually no merge finishes while we were running and we are done.
+            // 下面是一套乐观锁的逻辑 乐观删除以及merge
             while (true) {
                 String messagePrefix;
                 if (iter == 0) {
@@ -5799,11 +5825,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 // Since we just resolved some more deletes/updates, now is a good time to write them:
-                // 在这里执行有关 doc的update操作
+                // 当此时update占用的内存开销比较大  且关闭自动刷盘的情况  为了避免oom 而尝试将一些内存开销大的update处理掉 并持久化最新的 docValue， fieldInfo  在更新过程中要修改gen
                 writeSomeDocValuesUpdates();
 
                 // It's OK to add this here, even if the while loop retries, because delCount only includes newly
                 // deleted documents, on the segments we didn't already do in previous iterations:
+                // 累加删除的总数
                 totalDelCount += delCount;
 
                 if (infoStream.isEnabled("BD")) {
@@ -5811,6 +5838,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             messagePrefix + "done inner apply del packet (%s) to %d segments; %d new deletes/updates; took %.3f sec",
                             this, segStates.length, delCount, (System.nanoTime() - iterStartNS) / 1000000000.));
                 }
+                // 代表该update 仅针对单个segment
                 if (updates.privateSegment != null) {
                     // No need to retry for a segment-private packet: the merge that folds in our private segment already waits for all deletes to
                     // be applied before it kicks off, so this private segment must already not be in the set of merging segments
@@ -5820,7 +5848,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
                 // Must sync on writer here so that IW.mergeCommit is not running concurrently, so that if we exit, we know mergeCommit will succeed
                 // in pulling all our delGens into a merge:
+                // 代表此时 update对象已经作用在多个segment 上了 因为每个段在处理后都会变小 比起挨个的更新doc信息  还不如直接将多个段的信息合并到一个新的段中  并在这个过程中忽略被标记删除的doc
                 synchronized (this) {
+
+                    // 获取此时的 merge Gen
                     long mergeGenCur = mergeFinishedGen.get();
 
                     // 代表没有其他线程竞争
@@ -5849,8 +5880,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 iter++;
             }
 
+            // 针对单个segment的update对象 不会在上面的逻辑中循环处理
+
+            // 针对单个段的情况 必然是false   能够退出循环的就是2种情况 私有段 以false的形式退出循环 而 针对所有segment的update必须要等待finished为true时才会退出上面的循环
             if (finished == false) {
                 // Record that this packet is finished:
+                // 私有段在这个时候已经认为处理完毕了  推测是这样的 针对单个segment下doc的删除 不会强制刷盘  而是等到多个segment都改动后 一次性将多个segment merge
                 bufferedUpdatesStream.finished(updates);
             }
 
@@ -5920,7 +5955,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (result.anyDeletes) {
                 // 只要有任意数据被删除了 就标记成需要merge
                 maybeMerge.set(true);
-                // TODO 这里调用该方法的意图不是很明白
+                // 主要是更新 segment的版本
                 checkpoint();
             }
 

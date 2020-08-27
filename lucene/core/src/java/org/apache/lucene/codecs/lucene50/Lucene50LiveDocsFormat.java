@@ -107,15 +107,19 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
    * @param bits
    * @param dir    索引文件写入的目标目录
    * @param info
-   * @param newDelCount   记录此时有多少待删除的doc
-   * @param context  对应文件对象 该参数是无效的
+   * @param newDelCount   本次新删除了多少数量
+   * @param context
    * @throws IOException
    */
   @Override
   public void writeLiveDocs(Bits bits, Directory dir, SegmentCommitInfo info, int newDelCount, IOContext context) throws IOException {
+
+    // 每次针对同一个段 发生一次 更新liveDoc的动作 就会使用新的gen作为文件名后缀
     long gen = info.getNextDelGen();
     // 索引文件是以段为单位的  记录某个段 的哪个 gen 对应的liveDoc 和 delCount
     String name = IndexFileNames.fileNameFromGeneration(info.info.name, EXTENSION, gen);
+
+    // 每当某个doc不存在时 +1
     int delCount = 0;
     try (IndexOutput output = dir.createOutput(name, context)) {
       CodecUtil.writeIndexHeader(output, CODEC_NAME, VERSION_CURRENT, info.info.getId(), Long.toString(gen, Character.MAX_RADIX));
@@ -136,6 +140,7 @@ public final class Lucene50LiveDocsFormat extends LiveDocsFormat {
       }
       CodecUtil.writeFooter(output);
     }
+    // info.getDelCount() 代表此前记录的删除的数量 是一个过期的值   通过新增本次删除的量 需要与 delCount相等
     if (delCount != info.getDelCount() + newDelCount) {
       throw new CorruptIndexException("bits.deleted=" + delCount + 
           " info.delcount=" + info.getDelCount() + " newdelcount=" + newDelCount, name);

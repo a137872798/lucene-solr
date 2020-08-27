@@ -58,7 +58,7 @@ public final class FieldInfo {
   private final Map<String,String> attributes;
 
   /**
-   * 代表该field此时对应的doc  每当doc发生更换时 该field出现在doc下 就要更新dvGen
+   * 代表docValue
    */
   private long dvGen;
 

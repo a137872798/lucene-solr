@@ -361,6 +361,7 @@ final class ReaderPool implements Closeable {
    * the provided infos.
    *
    * @throws IOException If there is a low-level I/O error
+   * 将此时最新的 liveDoc信息持久化到磁盘
    */
   synchronized boolean commit(SegmentInfos infos) throws IOException {
     boolean atLeastOneChange = false;
@@ -368,6 +369,8 @@ final class ReaderPool implements Closeable {
       final ReadersAndUpdates rld = readerMap.get(info);
       if (rld != null) {
         assert rld.info == info;
+        // 将最新的liveDoc信息写入到磁盘    虽然最新的doc已经更新 但是它跟 docValue并没有做同步  docValue此时获取到的也是更新后的最新值 但是已经被删除的doc 可能还是会被读取到  包括这些影响都没有同步到最核心的 term相关的索引文件
+        // term还是按照之前的 value解析出来的 以及遍历时还会出现不存在的doc
         boolean changed = rld.writeLiveDocs(directory);
         changed |= rld.writeFieldUpdates(directory, fieldNumbers, completedDelGenSupplier.getAsLong(), infoStream);
 

@@ -88,7 +88,7 @@ class PendingDeletes {
   }
 
   /**
-   * 返回可变位图 数据根据 liveDocs 初始化
+   * 返回一个 可以修改的位图对象  并且在修改后能够反映到 liveDoc上  (因为2个对象底层连接的是同一个位图)
    * @return
    */
   protected FixedBitSet getMutableBits() {
@@ -127,8 +127,7 @@ class PendingDeletes {
     final boolean didDelete = mutableBits.get(docID);
     // 如果位图上的标识被清除代表增加了要删除的doc
     if (didDelete) {
-      // 每次要修改的都是 writableBitSet
-      // 之后才会同步到liveDocs，那个时候应该就是写入到索引文件的时候
+      // 虽然修改的都是 writeableLiveDocs 但是liveDoc 实际上底层也是连接到该位图上 所以修改能反映到 liveDoc上
       mutableBits.clear(docID);
       pendingDeleteCount++;
     }
@@ -140,7 +139,6 @@ class PendingDeletes {
    */
   Bits getLiveDocs() {
     // Prevent modifications to the returned live docs
-    // 这个方法应该有特定的调用时机 否则针对writeableLiveDocs 的改动都丢失了
     writeableLiveDocs = null;
     return liveDocs;
   }
@@ -210,10 +208,10 @@ class PendingDeletes {
 
   /**
    * Writes the live docs to disk and returns <code>true</code> if any new docs were written.
-   * 将标记此时还有哪些 doc存活的信息写入到索引文件
+   * 将此时最新的 liveDoc信息持久化
    */
   boolean writeLiveDocs(Directory dir) throws IOException {
-    // 只有此时存在未删除的doc时 才允许写入索引文件 否则没有意义
+    // 代表没有发生变化
     if (pendingDeleteCount == 0) {
       return false;
     }
@@ -235,7 +233,6 @@ class PendingDeletes {
     boolean success = false;
     try {
       Codec codec = info.info.getCodec();
-      // TODO 执行该方法时 liveDocs 应该已经同步过一次最新数据了 (删除动作已经生效)
       codec.liveDocsFormat().writeLiveDocs(liveDocs, trackingDir, info, pendingDeleteCount, IOContext.DEFAULT);
       success = true;
     } finally {
@@ -280,6 +277,13 @@ class PendingDeletes {
   void onDocValuesUpdate(FieldInfo info, DocValuesFieldUpdates.Iterator iterator) throws IOException {
   }
 
+  /**
+   * 默认情况下 pendingDelCount 也会被认为是已经删除的数量
+   * @param policy
+   * @param readerIOSupplier
+   * @return
+   * @throws IOException
+   */
   int numDeletesToMerge(MergePolicy policy, IOSupplier<CodecReader> readerIOSupplier) throws IOException {
     return policy.numDeletesToMerge(info, getDelCount(), readerIOSupplier);
   }
