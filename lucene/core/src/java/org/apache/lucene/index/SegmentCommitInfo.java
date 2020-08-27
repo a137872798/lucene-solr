@@ -75,7 +75,7 @@ public class SegmentCommitInfo {
   
   // Normally 1+dvGen, unless an exception was hit on last attempt to
   // write
-  // 代表下一次写入 docValue的年代
+  // 每当某个field 的docValueType 发生了变化
   private long nextWriteDocValuesGen;
 
   // Track the per-field DocValues update files
@@ -191,6 +191,7 @@ public class SegmentCommitInfo {
   }
   
   /** Called when we succeed in writing a new FieldInfos generation. */
+  // 每当 segment 对应的fieldInfo 发生了变化 并写入到索引文件时 增加gen  这个gen可以作为 索引文件的后缀名 也可以表示该segment自创建后发生了几次改动
   void advanceFieldInfosGen() {
     fieldInfosGen = nextWriteFieldInfosGen;
     nextWriteFieldInfosGen = fieldInfosGen + 1;
@@ -216,6 +217,7 @@ public class SegmentCommitInfo {
   }
 
   /** Called when we succeed in writing a new DocValues generation. */
+  // 当该段下某个 field的docValue发生变化时 更新gen
   void advanceDocValuesGen() {
     docValuesGen = nextWriteDocValuesGen;
     nextWriteDocValuesGen = docValuesGen + 1;

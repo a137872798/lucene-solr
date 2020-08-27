@@ -167,8 +167,8 @@ abstract class DocValuesFieldUpdates implements Accountable {
 
     /**
      * Merge-sorts multiple iterators, one per delGen, favoring the largest delGen that has updates for a given docID.
+     * 将多个迭代器doc的对象合并成一个
      */
-    // 将多个迭代器doc的对象合并成一个
     public static Iterator mergedIterator(Iterator[] subs) {
 
         if (subs.length == 1) {
@@ -189,6 +189,7 @@ abstract class DocValuesFieldUpdates implements Accountable {
                 int cmp = Integer.compare(a.docID(), b.docID());
                 if (cmp == 0) {
                     // then by larger delGen
+                    // 按照 gen倒序  因为gen小的 doc不会被处理了  (重复的doc不会被处理)
                     cmp = Long.compare(b.delGen(), a.delGen());
 
                     // delGens are unique across our subs:
@@ -225,13 +226,13 @@ abstract class DocValuesFieldUpdates implements Accountable {
                     }
                     // 返回最小的doc
                     int newDoc = queue.top().docID();
-                    // 第二次读取doc 肯定是一样的 此时就要触发 updateTop
+                    // 存在多个doc相同的可能  当不相同时返回
                     if (newDoc != doc) {
                         assert newDoc > doc : "doc=" + doc + " newDoc=" + newDoc;
                         doc = newDoc;
                         break;
                     }
-                    // 在这里切换了 顶点元素的 doc  然后需要重新构建最小堆
+                    // 在这里切换了顶点元素的 doc  然后需要重新构建最小堆
                     if (queue.top().nextDoc() == NO_MORE_DOCS) {
                         queue.pop();
                     } else {
@@ -496,6 +497,10 @@ abstract class DocValuesFieldUpdates implements Accountable {
             this.delGen = delGen;
         }
 
+        /**
+         * 迭代doc
+         * @return
+         */
         @Override
         public final int nextDoc() {
             if (idx >= size) {

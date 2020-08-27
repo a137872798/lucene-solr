@@ -23,7 +23,7 @@ import org.apache.lucene.util.BytesRef;
 
 /**
  * A per-document numeric value.
- * 定义了 docValue的值为二进制数据流
+ * 在迭代器docId的同时能获得doc绑定的value
  */
 public abstract class BinaryDocValues extends DocValuesIterator {
   

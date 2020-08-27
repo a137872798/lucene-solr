@@ -338,12 +338,14 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * @param infos      此时对应某个段下 最新的fieldInfo (也就是已经按照docValue 更新过数值的docType)
-     * @param dir
-     * @param dvFormat
-     * @param reader
-     * @param fieldFiles 代表该field关联的所有索引文件 包含 meta data 等  在该方法结束后会将创建的fileName回填到容器中
-     * @param maxDelGen
+     *
+     * 将此时更新后 最新的docValueType 信息写入到索引文件中
+     * @param infos      此时segment下最新的fieldInfos
+     * @param dir        目标目录
+     * @param dvFormat   对应的文件格式
+     * @param reader     用于读取当前segment下所有数据的 reader
+     * @param fieldFiles 用于回填数据的容器   key 对应本次处理的fieldNum   value 对应新生成的存储docValue的索引文件
+     * @param maxDelGen  此时已经处理完的 update gen 也就是 bufferedUpdateStream.completeGen
      * @param infoStream
      * @throws IOException
      */
@@ -355,13 +357,13 @@ final class ReadersAndUpdates {
         for (Entry<String, List<DocValuesFieldUpdates>> ent : pendingDVUpdates.entrySet()) {
             final String field = ent.getKey();
             final List<DocValuesFieldUpdates> updates = ent.getValue();
-            // 看来默认所有update对象的 docValue type 都是一样的
+            // 以field为单位 所有docUpdate 对象的 type都是一致的  TODO 为什么能确定type一致
             DocValuesType type = updates.get(0).type;
             assert type == DocValuesType.NUMERIC || type == DocValuesType.BINARY : "unsupported type: " + type;
             final List<DocValuesFieldUpdates> updatesToApply = new ArrayList<>();
             long bytes = 0;
             for (DocValuesFieldUpdates update : updates) {
-                // 只有年代小于 maxDelGen的才会被考虑需要处理   TODO maxDelGen 难道记录的不是已经处理好的年代吗  不是应该忽略该年代之前的请求吗
+                // 只有年代小于 maxDelGen的才会被考虑需要处理
                 if (update.delGen <= maxDelGen) {
                     // safe to apply this one
                     bytes += update.ramBytesUsed();
@@ -380,9 +382,9 @@ final class ReadersAndUpdates {
                         info,
                         bytes / 1024. / 1024.));
             }
-            // 获取下一个有关 docValue 的年代
+            // 每当更新某个field下的 docValueType 就更新一次gen
             final long nextDocValuesGen = info.getNextDocValuesGen();
-            // 生成后缀文件名 并准备开启一个新的索引文件
+            // 根据年代生成后缀名
             final String segmentSuffix = Long.toString(nextDocValuesGen, Character.MAX_RADIX);
             final IOContext updatesContext = new IOContext(new FlushInfo(info.info.maxDoc(), bytes));
 
@@ -391,11 +393,11 @@ final class ReadersAndUpdates {
             assert fieldInfo != null;
             // 更新当前该field 的 docValue 所在索引文件的年代
             fieldInfo.setDocValuesGen(nextDocValuesGen);
-            // !!!只针对这个field 创建了一个新的 fieldInfos
+            // 只针对这个field 创建了一个新的 fieldInfos
             final FieldInfos fieldInfos = new FieldInfos(new FieldInfo[]{fieldInfo});
             // separately also track which files were created for this gen
             final TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
-            // 生成了一个以该 field 为单位的 上下文对象
+            // 生成的  state 对象仅包含 一个fieldInfo
             final SegmentWriteState state = new SegmentWriteState(null, trackingDir, info.info, fieldInfos, null, updatesContext, segmentSuffix);
 
             // format 对象以field 为单位存储数据
@@ -404,14 +406,16 @@ final class ReadersAndUpdates {
                     if (info != fieldInfo) {
                         throw new IllegalArgumentException("expected field info for field: " + fieldInfo.name + " but got: " + info.name);
                     }
-                    // 更新本次涉及到的所有 update 对象 生成docValue迭代器 并且将他们合并   合并后的迭代器 内部元素排序按照docId的正序
+                    // 每个迭代器 对应一个 符合条件 并会作用在该field上的 update对象
                     DocValuesFieldUpdates.Iterator[] subs = new DocValuesFieldUpdates.Iterator[updatesToApply.size()];
                     for (int i = 0; i < subs.length; i++) {
                         subs[i] = updatesToApply.get(i).iterator();
                     }
+                    // 将这些迭代器合并  实际上就是通过二叉堆 将这些update对象按照doc顺序排序   如果同一个doc 同时被多个update更新 只使用gen最大的进行处理
+                    // TODO 照理说 单个update对象中 doc也可能会重复啊 因为更新的时候指定field 和term 不能保证在所有doc中 value解析的term都不相同    难道在什么地方做了限制???
                     return DocValuesFieldUpdates.mergedIterator(subs);
                 };
-                // 在处理前的钩子
+                // 处理前置钩子
                 pendingDeletes.onDocValuesUpdate(fieldInfo, updateSupplier.apply(fieldInfo));
 
                 // 如果docValue 是 二进制类型
@@ -428,8 +432,10 @@ final class ReadersAndUpdates {
 
                             // 这个对象还是按照docId的顺序 返回 此时还在内存的 docValue 或者已经读取到磁盘的docValue
                             final MergedDocValues<BinaryDocValues> mergedDocValues = new MergedDocValues<>(
-                                    // 获取最新的 fieldInfo
+                                    // 读取之前写入到索引文件的数据    docValue的写入是这样的  在解析doc时是以field为单位 这时将field.value 写入索引文件 这个就叫 docValue
+                                    // 只有当之前写入时 docValueType 相同才会去读取 否则返回null
                                     reader.getBinaryDocValues(field),
+                                    // 当前 iterator是一个更宽泛的接口 有更多无关的api 通过包装后确保只暴露有关 binary相关的api
                                     DocValuesFieldUpdates.Iterator.asBinaryDocValues(iterator), iterator);
                             // Merge sort of the original doc values with updated doc values:
 
@@ -514,6 +520,7 @@ final class ReadersAndUpdates {
                     });
                 }
             }
+            // 在处理完后更新了 segment下 docValue 的gen
             info.advanceDocValuesGen();
             assert !fieldFiles.containsKey(fieldInfo.number);
             fieldFiles.put(fieldInfo.number, trackingDir.getCreatedFiles());
@@ -524,7 +531,8 @@ final class ReadersAndUpdates {
      * This class merges the current on-disk DV with an incoming update DV instance and merges the two instances
      * giving the incoming update precedence in terms of values, in other words the values of the update always
      * wins over the on-disk version.
-     * DocValuesInstance  代表某种具体类型的 docValue迭代器  比如 BinaryDocValues/NumericDocValues
+     * 应该是想将之前同类型的 数据 与本次update的 数据结合 起来 如果docValueType 本身发生了改变就丢弃之前的数据
+     * 因为本次更新只覆盖到部分doc 未覆盖的部分还是使用之前的value
      */
     static final class MergedDocValues<DocValuesInstance extends DocValuesIterator> extends DocValuesIterator {
 
@@ -548,9 +556,9 @@ final class ReadersAndUpdates {
         DocValuesInstance currentValuesSupplier;
 
         /**
-         * @param onDiskDocValues 这是从reader上读取出来的数据  也就是已经写入到磁盘的数据
-         * @param updateDocValues 这是本次要写入的数据
-         * @param updateIterator  同updateDocValues
+         * @param onDiskDocValues 这是 field此时写入到索引文件中的数据  如果之前的docValueType 与本次更新的docValueType的类型不同 则返回null
+         * @param updateDocValues 本次有关field下 哪些相关的doc被更新  以及更新的值
+         * @param updateIterator  同updateDocValues 不过updateDocValues 是被装饰器屏蔽了部分api
          */
         protected MergedDocValues(DocValuesInstance onDiskDocValues, DocValuesInstance updateDocValues, DocValuesFieldUpdates.Iterator updateIterator) {
             this.onDiskDocValues = onDiskDocValues;
@@ -589,32 +597,32 @@ final class ReadersAndUpdates {
         public int nextDoc() throws IOException {
             boolean hasValue = false;
             do {
-                // 迭代到磁盘中的下一个doc
+                // 初始状态2个值都是-1
                 if (docIDOnDisk == docIDOut) {
+                    // 读取磁盘中的数据
                     if (onDiskDocValues == null) {
                         docIDOnDisk = NO_MORE_DOCS;
                     } else {
                         docIDOnDisk = onDiskDocValues.nextDoc();
                     }
                 }
-                // 迭代到下一个要更新的值
+                // 从当前存储了  update数据的迭代器中 获取下一个docId
                 if (updateDocID == docIDOut) {
                     updateDocID = updateDocValues.nextDoc();
                 }
-                // 此时 下一个要更新的值 超过了当前迭代到的磁盘的值  那么本次还是将之前磁盘的数据返回
+                // 此时磁盘中的数据需要优先写入
                 if (docIDOnDisk < updateDocID) {
                     // no update to this doc - we use the on-disk values
                     docIDOut = docIDOnDisk;
                     currentValuesSupplier = onDiskDocValues;
                     hasValue = true;
                 } else {
-                    // 代表下一个要更新的值 比磁盘读取到的下一个值要小 先被读取到
+                    // 当update 迭代器doc <= 磁盘doc时都使用update的数据 间接说明doc相同时 会做覆盖操作
                     docIDOut = updateDocID;
                     if (docIDOut != NO_MORE_DOCS) {
                         currentValuesSupplier = updateDocValues;
                         hasValue = updateIterator.hasValue();
                     } else {
-                        // 代表已经读取到末尾了
                         hasValue = true;
                     }
                 }
@@ -625,7 +633,7 @@ final class ReadersAndUpdates {
 
 
     /**
-     *
+     * 将fieldInfo 信息持久化
      * @param fieldInfos  当前field的信息
      * @param dir  目标目录
      * @param infosFormat  标明 fieldInfo 会以什么格式存储
@@ -634,8 +642,9 @@ final class ReadersAndUpdates {
      */
     private synchronized Set<String> writeFieldInfosGen(FieldInfos fieldInfos, Directory dir,
                                                         FieldInfosFormat infosFormat) throws IOException {
+        // 获取更新对应的gen 作为索引文件名的后缀
         final long nextFieldInfosGen = info.getNextFieldInfosGen();
-        // 生成文件名
+        // 生成后缀名
         final String segmentSuffix = Long.toString(nextFieldInfosGen, Character.MAX_RADIX);
         // we write approximately that many bytes (based on Lucene46DVF):
         // HEADER + FOOTER: 40
@@ -663,9 +672,11 @@ final class ReadersAndUpdates {
     public synchronized boolean writeFieldUpdates(Directory dir, FieldInfos.FieldNumbers fieldNumbers, long maxDelGen, InfoStream infoStream) throws IOException {
         long startTimeNS = System.nanoTime();
         final Map<Integer, Set<String>> newDVFiles = new HashMap<>();
+        // 本次由于fieldInfo 信息发生了变化而 产生的新索引文件
         Set<String> fieldInfosFiles = null;
         FieldInfos fieldInfos = null;
         boolean any = false;
+        // 因为这些数据 并没有强制处理 所以可能会囤积很多不同gen的 update的数据
         for (List<DocValuesFieldUpdates> updates : pendingDVUpdates.values()) {
             // Sort by increasing delGen:
             // 按 delGen 正序排序
@@ -678,6 +689,7 @@ final class ReadersAndUpdates {
             }
         }
 
+        // 检测本次是否有需要处理的数据
         if (any == false) {
             // no updates
             return false;
@@ -686,7 +698,7 @@ final class ReadersAndUpdates {
         // Do this so we can delete any created files on
         // exception; this saves all codecs from having to do it:
 
-        // 上面确定了有需要更新的数据
+        // 上面确定了有需要更新的数据  使用该包装类 主要是当写入新的索引文件失败时 能够删除文件
         TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
 
         boolean success = false;
@@ -707,7 +719,7 @@ final class ReadersAndUpdates {
             try {
                 // clone FieldInfos so that we can update their dvGen separately from
                 // the reader's infos and write them to a new fieldInfos_gen file.
-                // 记录当前处理的所有 fieldInfo 最大的号码
+                // 记录本次处理的field中最大的号码
                 int maxFieldNumber = -1;
                 // 以 fieldName 为key 创建一个映射对象
                 Map<String, FieldInfo> byName = new HashMap<>();
@@ -716,28 +728,28 @@ final class ReadersAndUpdates {
                     // the local field number. Field numbers can be different from
                     // the global ones if the segment was created externally (and added to
                     // this index with IndexWriter#addIndexes(Directory)).
-                    // 创建副本对象 并存储到byName中
+                    // 创建副本对象 并存储到byName中  注意这里使用的是之前的num
                     byName.put(fi.name, cloneFieldInfo(fi, fi.number));
                     maxFieldNumber = Math.max(fi.number, maxFieldNumber);
                 }
 
                 // create new fields with the right DV type
                 FieldInfos.Builder builder = new FieldInfos.Builder(fieldNumbers);
+                // 开始处理之前存入的 update对象
                 for (List<DocValuesFieldUpdates> updates : pendingDVUpdates.values()) {
                     DocValuesFieldUpdates update = updates.get(0);
 
-                    // 如果update对象相关的field信息已经存在  代表是针对之前已经存在的field进行更新  这时使用update对象去覆盖之前的属性
+                    // 修改 field 的DV 类型
                     if (byName.containsKey(update.field)) {
                         // the field already exists in this segment
                         FieldInfo fi = byName.get(update.field);
-                        // 更新关于这个 field的值类型
                         fi.setDocValuesType(update.type);
                     } else {
                         // the field is not present in this segment so we clone the global field
                         // (which is guaranteed to exist) and remaps its field number locally.
-                        // 代表本次创建了新的field
+                        // 因为  update对象是全局共用的  所以内部可能包含了全局范围内各种field  而该segment 就不一定有该field
                         assert fieldNumbers.contains(update.field, update.type);
-                        // 这里 num+1
+                        // 这个时候选择生成一个该field的副本 并使用新的 num   TODO 为什么用这个新号码
                         FieldInfo fi = cloneFieldInfo(builder.getOrAdd(update.field), ++maxFieldNumber);
                         // 指定 docValue的类型 并添加到映射容器中
                         fi.setDocValuesType(update.type);
@@ -745,16 +757,19 @@ final class ReadersAndUpdates {
                     }
                 }
 
-                // 这时 byName 已经存放了针对该segment 下最新的field信息了
+                // 将该 segment下面的field 组成一个新的 fieldInfos 包含新增的fieldInfo
                 fieldInfos = new FieldInfos(byName.values().toArray(new FieldInfo[0]));
                 final DocValuesFormat docValuesFormat = codec.docValuesFormat();
 
-                // 将 docValue 进行持久化
+                // 将最新的 docValueType信息 写入到索引文件中  同时将本次相关的所有fieldNum 和新写入的所有索引文件存储到 newDVFiles 中
                 handleDVUpdates(fieldInfos, trackingDir, docValuesFormat, reader, newDVFiles, maxDelGen, infoStream);
 
-                // 这里更新 fieldInfo的信息
+                // 由于docValueType的更新 可能会导致2个结果  需要将结果持久化
+                // 1. 该segment下增加了新的fieldInfo
+                // 2. 该fieldInfo的 docValueType 发生了变化
                 fieldInfosFiles = writeFieldInfosGen(fieldInfos, trackingDir, codec.fieldInfosFormat());
             } finally {
+                // 代表临时生成的reader 使用完后就要关闭
                 if (reader != this.reader) {
                     reader.close();
                 }
@@ -765,10 +780,12 @@ final class ReadersAndUpdates {
             if (success == false) {
                 // Advance only the nextWriteFieldInfosGen and nextWriteDocValuesGen, so
                 // that a 2nd attempt to write will write to a new file
+                // 当写入失败时 可能此时出现了不正确的 索引文件 所以就要更新 nextGen
                 info.advanceNextWriteFieldInfosGen();
                 info.advanceNextWriteDocValuesGen();
 
                 // Delete any partially created file(s):
+                // 尝试删除不完整的文件
                 for (String fileName : trackingDir.getCreatedFiles()) {
                     IOUtils.deleteFilesIgnoringExceptions(dir, fileName);
                 }
@@ -779,6 +796,7 @@ final class ReadersAndUpdates {
         // Prune the now-written DV updates:
         long bytesFreed = 0;
         Iterator<Map.Entry<String, List<DocValuesFieldUpdates>>> it = pendingDVUpdates.entrySet().iterator();
+        // 这里是第三次遍历这些  DVupdate了
         while (it.hasNext()) {
             Map.Entry<String, List<DocValuesFieldUpdates>> ent = it.next();
             int upto = 0;

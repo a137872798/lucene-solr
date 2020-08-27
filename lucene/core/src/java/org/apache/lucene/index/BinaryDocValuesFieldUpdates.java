@@ -55,6 +55,10 @@ final class BinaryDocValuesFieldUpdates extends DocValuesFieldUpdates {
       return value;
     }
 
+    /**
+     * 当获取到doc对应的偏移量时 为之后读取数据做准备
+     * @param idx the internal index to set the value to
+     */
     @Override
     protected void set(long idx) {
       offset = (int) offsets.get(idx);

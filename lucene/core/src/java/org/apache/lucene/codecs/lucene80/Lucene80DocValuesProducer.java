@@ -1043,16 +1043,18 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
      */
     @Override
     public BinaryDocValues getBinary(FieldInfo field) throws IOException {
+        // TODO 忽略不支持压缩的旧版本
         if (version < Lucene80DocValuesFormat.VERSION_BIN_COMPRESSED) {
             return getUncompressedBinary(field);
         }
 
         // entry 是从元数据文件读取出来的
         BinaryEntry entry = binaries.get(field.name);
+        // -2 代表没有数据
         if (entry.docsWithFieldOffset == -2) {
             return DocValues.emptyBinary();
         }
-        // 为-1时 代表数据是密集的
+        // 为-1时 代表所有doc都被使用 （也就是该segment下所有的doc都包含这个field）
         if (entry.docsWithFieldOffset == -1) {
             // dense
             // 这里根据 address相关信息生成一个 随机读取输入流
@@ -1079,9 +1081,9 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                 }
             };
         } else {
-            // sparse   看来这个DISI 是按照某种特殊算法存储的
+            // sparse   专门用于存储稀疏的doc
             final IndexedDISI disi = new IndexedDISI(data, entry.docsWithFieldOffset, entry.docsWithFieldLength,
-                    // 跳跃表内部的实体数量 每个占用8 byte
+                    // 通过 jumpTable 作为索引结构 加快doc的查找
                     entry.jumpTableEntryCount, entry.denseRankPower, entry.numDocsWithField);
 
             // 同样要读取有关 doc-block 体系偏移量的元数据

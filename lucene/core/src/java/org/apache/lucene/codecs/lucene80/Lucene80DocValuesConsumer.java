@@ -604,13 +604,12 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
   /**
    * 存储某个 field 下的docValue  (类型为 二进制数据)
    * @param field field information
-   * @param valuesProducer Binary values to write.
+   * @param valuesProducer Binary values to write.   对应哪些doc发生了变化
    * @throws IOException
    */
   @Override
   public void addBinaryField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
     // 往元数据索引文件中写入 fieldNum 和 docValue 类型
-
     // 标明 此时存储的 docValue是属于哪个 field的
     meta.writeInt(field.number);
     // 代表 docValue 的值类型是 二进制类型
@@ -618,7 +617,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
 
     // 该 writer对象采用LZ4 压缩算法存储数据
     try (CompressedBinaryBlockWriter blockWriter = new CompressedBinaryBlockWriter()){
-      // 获取该field在所有相关doc下的value
+      // BinaryDocValues 的意思是在迭代docId的同时能获取到对应的二进制值 这个值就是field.value
       BinaryDocValues values = valuesProducer.getBinary(field);
       // 记录此时偏移量的起点
       long start = data.getFilePointer();
@@ -627,7 +626,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       int numDocsWithField = 0;
       int minLength = Integer.MAX_VALUE;
       int maxLength = 0;
-      // 开始遍历该field 涉及到的所有doc
+      // 将所有相关的doc 以及对应的value 写入到数据索引文件中
       for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
         // 随着每次读取到一个doc 增加该值
         numDocsWithField++;

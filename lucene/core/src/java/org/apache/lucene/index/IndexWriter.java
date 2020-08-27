@@ -827,7 +827,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     long startNS = System.nanoTime();
 
                     long ramBytesUsed = readerPool.ramBytesUsed();
-                    // 此时在 pool 中 所有 ReaderAndUpdate对象中已经存储了很多 update数据
+                    // 此时在 pool 中 所有 ReaderAndUpdate对象中已经存储了很多 update数据  但是如果本次的update数据不够多的话不会强制处理
                     if (ramBytesUsed > 0.5 * ramBufferSizeMB * 1024 * 1024) {
                         if (infoStream.isEnabled("BD")) {
                             infoStream.message("BD", String.format(Locale.ROOT, "now write some pending DV updates: %.2f MB used vs IWC Buffer %.2f MB",
@@ -835,7 +835,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         }
 
                         // Sort by largest ramBytesUsed:
-                        // 按照内存占用大小倒序 返回所有待处理的reader      TODO ReaderAndUpdates 应该是由于用户的某次更新请求而生成的 这些数据应该在  apply() 中已经处理掉了啊
+                        // 按照内存占用大小倒序 返回所有待处理的reader
                         final List<ReadersAndUpdates> list = readerPool.getReadersByRam();
                         int count = 0;
                         for (ReadersAndUpdates rld : list) {
