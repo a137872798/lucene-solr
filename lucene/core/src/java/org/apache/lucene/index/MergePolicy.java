@@ -134,7 +134,7 @@ public abstract class MergePolicy {
         /**
          * Abort the merge this progress tracks at the next
          * possible moment.
-         * 禁止融合 同时唤醒被阻塞的线程    当线程唤醒时 应该会检测 aborted 标识 然后终止任务之类的
+         * 代表相关的oneMerge对象被禁止执行 同时唤醒被阻塞的线程    当线程唤醒时 应该会检测 aborted 标识 然后终止任务之类的
          */
         public void abort() {
             aborted = true;
@@ -250,12 +250,12 @@ public abstract class MergePolicy {
 
         /**
          * Estimated size in bytes of the merged segment.
+         * 预估在融合完成时的大小     通过参与的所有段 有效大小的累加
          */
-        // 预计会融合多少byte  (所有segment未删除的部分总和)   这里没有考虑数量限制
         public volatile long estimatedMergeBytes;       // used by IndexWriter
 
         // Sum of sizeInBytes of all SegmentInfos; set by IW.mergeInit
-        // 与上面相比 还追加了会被删除的数量
+        // 与estimatedMergeBytes相比 还包含了会被删除doc所占的 bytes
         volatile long totalMergeBytes;
 
         /**
@@ -458,7 +458,7 @@ public abstract class MergePolicy {
      * A MergeSpecification instance provides the information
      * necessary to perform multiple merges.  It simply
      * contains a list of {@link OneMerge} instances.
-     * 代表某次段合并时的信息
+     * 某次merge操作的描述信息
      */
 
     public static class MergeSpecification {

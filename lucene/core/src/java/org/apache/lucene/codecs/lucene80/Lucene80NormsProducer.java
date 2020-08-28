@@ -109,7 +109,7 @@ final class Lucene80NormsProducer extends NormsProducer implements Cloneable {
   }
 
   /**
-   * 在merge过程中 生成一个reader对象的副本
+   * 获取一个 merge专用的实体
    * @return
    */
   @Override

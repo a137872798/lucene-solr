@@ -218,13 +218,13 @@ final class BufferedUpdatesStream implements Accountable {
    */
   void waitApplyForMerge(List<SegmentCommitInfo> mergeInfos, IndexWriter writer) throws IOException {
     long maxDelGen = Long.MIN_VALUE;
+    // 找到最大的 gen 并且等待该gen以及之前的 所有 update对象都处理完
     for (SegmentCommitInfo info : mergeInfos) {
       maxDelGen = Math.max(maxDelGen, info.getBufferedDeletesGen());
     }
 
     Set<FrozenBufferedUpdates> waitFor = new HashSet<>();
     synchronized (this) {
-      // 这里将 delGen 小于 maxDelGen 的都加入到容器中 并执行更新操作
       for (FrozenBufferedUpdates packet : updates) {
         if (packet.delGen() <= maxDelGen) {
           // We must wait for this packet before finishing the merge because its

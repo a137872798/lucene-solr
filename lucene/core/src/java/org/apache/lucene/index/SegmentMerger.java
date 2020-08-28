@@ -39,16 +39,16 @@ import org.apache.lucene.util.Version;
  * segments.
  *
  * @see #merge
- * 该对象负责将多个 segment 融合到一个中
+ * 用于管理 segment merge的核心对象
  */
 final class SegmentMerger {
   /**
-   * 这些segment 归属于哪个directory
+   * 经包装后的目录对象 同时具备限流 以及记录创建的文件的属性
    */
   private final Directory directory;
 
   /**
-   * 编解码器
+   * 内部包含各种索引文件格式
    */
   private final Codec codec;
 
@@ -65,7 +65,7 @@ final class SegmentMerger {
 
   /**
    * note, just like in codec apis Directory 'dir' is NOT the same as segmentInfo.dir!!
-   * @param readers  本次参与merge的segment对应的reader
+   * @param readers  本次参与merge的segment对应的reader 此时已经确保 liveDoc 和 dv fieldInfo 信息都是最新的 (在merge前已经阻塞等待对用gen的update对象处理完毕)
    * @param segmentInfo   merge后将会写入到哪个段中
    * @param infoStream
    * @param dir  包装后的目录对象 追加了限流能力   就是在 writerXXX方法时 会阻塞
@@ -79,7 +79,7 @@ final class SegmentMerger {
       throw new IllegalArgumentException("IOContext.context should be MERGE; got: " + context.context);
     }
 
-    // 根据reader内部的信息 生成state对象
+    // MergeState 存储了merge过程中需要的各种参数  以及将每个段对应的存活doc 映射到全局doc 的映射对象
     mergeState = new MergeState(readers, segmentInfo, infoStream);
     directory = dir;
     this.codec = segmentInfo.getCodec();
@@ -88,7 +88,7 @@ final class SegmentMerger {
     this.fieldInfosBuilder = new FieldInfos.Builder(fieldNumbers);
     Version minVersion = Version.LATEST;
 
-    // 考虑兼容性 返回了 他们之中最小的版本号
+    // TODO 兼容性相关的先忽略
     for (CodecReader reader : readers) {
       Version leafMinVersion = reader.getMetaData().getMinVersion();
       if (leafMinVersion == null) {
@@ -122,7 +122,7 @@ final class SegmentMerger {
    * @return The number of documents that were merged
    * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
-   * 将所有相关数据merge后写入到文件
+   * 这里才是真正将数据合并的地方
    */
   MergeState merge() throws IOException {
     if (!shouldMerge()) {

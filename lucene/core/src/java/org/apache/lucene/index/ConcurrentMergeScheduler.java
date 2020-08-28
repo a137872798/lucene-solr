@@ -99,7 +99,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
 
   // Max number of merges we accept before forcefully
   // throttling the incoming threads
-  // 该值跟maxThreadCount一样是 检测环境后生成的   并且  maxMergeCount = maxThreadCount + 5
+  // 代表此时处理merge的线程数过多 超过该值时就会阻塞当前线程等待
   private int maxMergeCount = AUTO_DETECT_MERGES_AND_THREADS;
 
   /** How many {@link MergeThread}s have kicked off (this is use
@@ -318,6 +318,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
 
     // Only look at threads that are alive & not in the
     // process of stopping (ie have an active merge):
+    // 存储此时还活跃的线程
     final List<MergeThread> activeMerges = new ArrayList<>();
 
     // 将此时失活的线程移除
@@ -342,7 +343,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     // 有多少个大块对象
     int bigMergeCount = 0;
 
-    // 从小到大
+    // 从后往前倒序遍历 并找到首个大块对象  同时也代表总计有多少大块对象
     for (threadIdx=activeMergeCount-1;threadIdx>=0;threadIdx--) {
       MergeThread mergeThread = activeMerges.get(threadIdx);
       // 发现首个 大块对象 记录下标
@@ -370,7 +371,10 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       OneMerge merge = mergeThread.merge;
 
       // pause the thread if maxThreadCount is smaller than the number of merge threads.
-      // 如果merge大块数据的线程数 小于 要求值 那么都不会被暂停   当merge大块数据的线程数超过限制时 超过的线程将会被暂停
+      // 如果此时没有bigMerge 那么 bigMergeCount - maxThreadCount 是一个负数   代表所有处理都不会被暂停
+      // 当bigMerge的数量比较多的时候 代表merge这些对象会比较耗时 且数量超过了了线程数 也就无法靠提高并行度来减小大块对象的影响   换句话说 只要线程数分配的足够多 即使大块对象很多 也不会阻塞线程
+      // 总结下来  如果此时运作的每个线程处理的都是小任务 那么不会阻塞  如果某几个线程处理的是大任务 但是数量没有达到maxThreadCount 也不会阻塞
+      // 但是在线程数量多 且 较多线程都是执行大块任务时  超出部分对应的线程就需要暂停 以空出更多的IO计算能力 确保小块merge对象能够先完成任务   maxThreadCount 也就是根据硬盘属性计算出来的  比如机械硬盘 线程数就是1
       final boolean doPause = threadIdx < bigMergeCount - maxThreadCount;
 
       // 这个就是 merge的流量
@@ -378,10 +382,10 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       if (doPause) {
         // 被暂停 流量就是0
         newMBPerSec = 0.0;
-        // 如果设置了最大值
+        // 下面情况是根据 相关参数确定 非暂停情况的 流量阀值  TODO
       } else if (merge.maxNumSegments != -1) {
         newMBPerSec = forceMergeMBPerSec;
-        // 代表不需要启用阀门
+        // 不启动阀门时 不做限流
       } else if (doAutoIOThrottle == false) {
         newMBPerSec = Double.POSITIVE_INFINITY;
         // 小块数据的merge 不做限制操作
@@ -389,7 +393,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
         // Don't rate limit small merges:
         newMBPerSec = Double.POSITIVE_INFINITY;
       } else {
-        // 阀门限流量
+        // 使用一个默认的限流量
         newMBPerSec = targetMBPerSec;
       }
 
@@ -546,7 +550,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   }
 
   /**
-   * @param mergeSource 产生 oneMerge对象
+   * @param mergeSource 实际上就是 IndexWriter的包装类  相关方法都委托给 IndexWriter
    * @param trigger 代表本次merge操作是由什么原因引发的  当某个线程merge结束时也会调用该方法
    *
    */
@@ -557,7 +561,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     if (trigger == MergeTrigger.CLOSING) {
       // Disable throttling on close:
       targetMBPerSec = MAX_MERGE_MB_PER_SEC;
-      // 这里就是根据当前情况调整每个merge线程的流量控制
+      // 更新每个线程的限流量
       updateMergeThreads();
     }
 
@@ -577,9 +581,13 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     // pending merges, until it's empty:
     while (true) {
 
+      // 一旦进入merge方法就会不断的创建新线程 并让每个线程去执行 oneMerge任务 当创建的线程数达到上限时  阻塞等待任务队列为空
+      // 同时每个完成首次merge的 MergeThread 会回调merge方法 帮助创建线程 但是他们在帮助创建满线程后 就会返回false 并从循环中退出 结束run()方法
       if (maybeStall(mergeSource) == false) {
         break;
       }
+
+      // 经过一段时间等待后 确保此时正在merge的线程数 小于一个阈值
 
       // 当所有任务都执行完毕后 从merge的死循环中解放出来
       OneMerge merge = mergeSource.getNextMerge();
@@ -594,11 +602,11 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       try {
         // OK to spawn a new merge thread to handle this
         // merge:
-        // 就是开启一个线程调用  mergeSource.merge  会转发到 indexWriter.merge  并在merge结束后重新触发该方法 唤醒下一个执行merge的线程
+        // 创建后台线程执行merge任务
         final MergeThread newMergeThread = getMergeThread(mergeSource, merge);
         mergeThreads.add(newMergeThread);
 
-        // 根据新插入的 merge任务 动态调节阈值
+        // 检测此时是否发生了堆积 并根据情况调整   targetMBPerSec 的值
         updateIOThrottle(newMergeThread.merge, newMergeThread.rateLimiter);
 
         if (verbose()) {
@@ -607,12 +615,13 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
 
         // 启动merge线程
         newMergeThread.start();
-        // 调节merge线程的限制值
+        // 更新所有 mergeThread线程的值
         updateMergeThreads();
 
         success = true;
       } finally {
         if (!success) {
+          // 当merge任务创建失败时 提前触发结束钩子
           mergeSource.onMergeFinished(merge);
         }
       }
@@ -635,8 +644,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   protected synchronized boolean maybeStall(MergeSource mergeSource) {
     long startStallTime = 0;
 
-    // 每个创建的merge线程 在执行完一个任务后 会回调merge() 这样又会创建下一个merge线程 这样只要在没达到上限时 就会不断创建线程 有点类似线程池的套路
-    // 而当线程数达到一个上限值时 这时之前创建的线程就不必再执行了 可以释放资源
+    // 此时还有待执行的任务  且 此时正在执行merge的线程超过了 限制值  就需要判断是否阻塞
     while (mergeSource.hasPendingMerges() && mergeThreadCount() >= maxMergeCount) {
 
       // This means merging has fallen too far behind: we
@@ -649,7 +657,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       // thread to prevent creation of new segments,
       // until merging has caught up:
 
-      // 这里就是旧线程释放资源的过程
+      // 执行完任务的merge线程将会回调该方法
       if (mergeThreads.contains(Thread.currentThread())) {
         // Never stall a merge thread since this blocks the thread from
         // finishing and calling updateMergeThreads, and blocking it
@@ -661,6 +669,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
         message("    too many merges; stalling...");
       }
       startStallTime = System.currentTimeMillis();
+      // 当前线程等待一定时间  因为越多的线程争用 IO 反而会降低性能  所以此时要避免新的线程执行merge任务
       doStall();
     }
 
@@ -668,6 +677,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       message("  stalled for " + (System.currentTimeMillis()-startStallTime) + " msec");
     }
 
+    // 此时执行merge的线程数在合理范围内  或者一开始不在范围内 通过wait 等待一定时间后执行merge的线程数减少了 此时本线程也可以开始执行merge
     return true;
   }
 
@@ -706,6 +716,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     assert mergeThreads.contains(Thread.currentThread()) : "caller is not a merge thread";
     // Let CMS run new merges if necessary:
     try {
+      // 触发merge 这样当发现还有待处理的merge任务时 且线程数还没有达到上限时  会继续创建线程 当线程数达到上限时 maybeStall 返回false 并退出创建线程的循环
       merge(mergeSource, MergeTrigger.MERGE_FINISHED);
     } catch (AlreadyClosedException ace) {
       // OK
@@ -713,9 +724,11 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       throw new UncheckedIOException(ioe);
     } finally {
       removeMergeThread();
+      // 当任务结束时 更新 限流阀值 确保 之前大块数据不会就此停止处理
       updateMergeThreads();
       // In case we had stalled indexing, we can now wake up
       // and possibly unstall:
+      // 唤醒在maybeStall 阻塞并等待结果的线程
       notifyAll();
     }
   }
@@ -725,7 +738,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   protected class MergeThread extends Thread implements Comparable<MergeThread> {
     // 应该是多线程共用该对象
     final MergeSource mergeSource;
-    // 应该是当前merge的对象
+    // 该线程正在处理的 merge对象
     final OneMerge merge;
     // merge限流器
     final MergeRateLimiter rateLimiter;
@@ -739,7 +752,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     }
 
     /**
-     * 这里是倒序
+     * 按照merge后的总大小倒序
      * @param other
      * @return
      */
@@ -810,7 +823,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
   }
 
   /**
-   * 是否发生了积压
+   * 是否有某个 大数据块 运行了比较长的时候都没有merge完成   记得在 调整阀值的方法中 如果此时有超过 maxThreadCount的数据块 那么处理大数据块的线程将会将阀值调整成0  也就是会暂停merge操作 那么哪些大块数据块就会长时间存在于内存中 发生积压
    * @param now
    * @param merge
    * @return
@@ -823,12 +836,13 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
       // 找到其他正在处理中的任务
       if (mergeThread.isAlive() && mergeThread.merge != merge &&
           mergeStartNS != -1 &&
-              // 代表该对象需要merge的量很大 同时已经执行了超过3秒
+              // 首先它必须是一个 大数据块才有积压的概念  其次 距离开始到现在已经超过3秒都没有处理完
           mergeThread.merge.estimatedMergeBytes >= MIN_BIG_MERGE_MB*1024*1024 &&
           nsToSec(now-mergeStartNS) > 3.0) {
         double otherMergeMB = bytesToMB(mergeThread.merge.estimatedMergeBytes);
+        // 计算那个大数据块与 本次将要处理的新数据块的比率
         double ratio = otherMergeMB / mergeMB;
-        // 这个比率是怎么出来的???
+        // 应该是这样子  如果比率大于3.0 代表该数据块本身就要这么多的耗时 所以无法判断此时是否积压了      如果比率小于0.3 代表本次要处理的数据比之前的大很多 相较之下认为没有发生堆积
         if (ratio > 0.3 && ratio < 3.0) {
           return true;
         }
@@ -840,6 +854,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
 
   /**
    * Tunes IO throttle when a new merge starts.
+   * 每当启用新的 mergeThread 时 根据情况调整io阀值  发现此时有数据积压时 就将当前merge线程的限流值调高 使得本线程数据尽可能快的处理
    * @param newMerge 新加入的 merge对象
    * @param rateLimiter  对应的限流对象
    * */
@@ -850,7 +865,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     }
 
     double mergeMB = bytesToMB(newMerge.estimatedMergeBytes);
-    // 小块的 数据块直接忽略
+    // 小块数据块 不会影响io阀值
     if (mergeMB < MIN_BIG_MERGE_MB) {
       // Only watch non-trivial merges for throttling; this is safe because the MP must eventually
       // have to do larger merges:
@@ -870,7 +885,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
 
     // 新插入的对象没有与 旧的形成积压
     if (newBacklog == false) {
-      // 只要此时merge线程数超量 久认为发生了积压
+      // 此时merge线程数 超过了 推荐的io线程数 就认为当前已经积压了
       if (mergeThreads.size() > maxThreadCount) {
         // If there are already more than the maximum merge threads allowed, count that as backlog:
         curBacklog = true;

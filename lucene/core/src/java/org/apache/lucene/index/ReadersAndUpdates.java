@@ -87,7 +87,7 @@ final class ReadersAndUpdates {
     // Holds resolved (to docIDs) doc values updates that were resolved while
     // this segment was being merged; at the end of the merge we carry over
     // these updates (remapping their docIDs) to the newly merged segment
-    // 当本对象正处在 merging时  插入的update对象会保存在该容器中
+    // 在执行merge时 会将pendingDVUpdates 的任务拷贝一份到该容器中
     private final Map<String, List<DocValuesFieldUpdates>> mergingDVUpdates = new HashMap<>();
 
     // Only set if there are doc values updates against this segment, and the index is sorted:
@@ -417,7 +417,7 @@ final class ReadersAndUpdates {
                         subs[i] = updatesToApply.get(i).iterator();
                     }
                     // 将这些迭代器合并  实际上就是通过二叉堆 将这些update对象按照doc顺序排序   如果同一个doc 同时被多个update更新 只使用gen最大的进行处理
-                    // TODO 照理说 单个update对象中 doc也可能会重复啊 因为更新的时候指定field 和term 不能保证在所有doc中 value解析的term都不相同    难道在什么地方做了限制???
+                    // 这里如果多个更新 对应到同一个doc时 应该只按照最新的处理
                     return DocValuesFieldUpdates.mergedIterator(subs);
                 };
                 // 处理前置钩子
@@ -903,7 +903,7 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * 将当前对象标记成 merge中   在merge() 时可以看到 会为参与merge的所有reader对象都打上标记
+     * 将当前对象标记成正在merging中
      */
     synchronized void setIsMerging() {
         // This ensures any newly resolved doc value updates while we are merging are
@@ -921,6 +921,10 @@ final class ReadersAndUpdates {
 
     final static class MergeReader {
         final SegmentReader reader;
+
+        /**
+         * 没有使用软删除的情况下 该位图与 liveDocs一样
+         */
         final Bits hardLiveDocs;
 
         MergeReader(SegmentReader reader, Bits hardLiveDocs) {
@@ -931,7 +935,7 @@ final class ReadersAndUpdates {
 
     /**
      * Returns a reader for merge, with the latest doc values updates and deletions.
-     * 获取一个用于merge的 reader对象  就是除了 SegmentReader 外 还携带了 最新的liveDoc
+     * 获取一个用于merge的reader对象  它包含了此时最新的 DV 信息 fieldInfo 信息  和 liveDoc信息
      */
     synchronized MergeReader getReaderForMerge(IOContext context) throws IOException {
 
@@ -939,7 +943,7 @@ final class ReadersAndUpdates {
         // successfully written, e.g. because there was a hole in the delGens,
         // or they arrived after we wrote all DVs for merge but before we set
         // isMerging here:
-        // 将待执行的 update 对象 全部转移到 merging 中
+        // 将待执行的 update 对象  在mergingDVUpdates 中也存储了一份
         for (Map.Entry<String, List<DocValuesFieldUpdates>> ent : pendingDVUpdates.entrySet()) {
             List<DocValuesFieldUpdates> mergingUpdates = mergingDVUpdates.get(ent.getKey());
             if (mergingUpdates == null) {
@@ -950,7 +954,7 @@ final class ReadersAndUpdates {
         }
 
         SegmentReader reader = getReader(context);
-        // 代表有部分 删除的doc信息没有更新到reader内部
+        // 代表 liveDoc 信息发生了变化  将最新的liveDoc信息同步到 segmentReader中  因为此时马上就要merge了 所以就没必要将最新的liveDoc信息持久化了
         if (pendingDeletes.needsRefresh(reader)) {
             // beware of zombies:
             assert pendingDeletes.getLiveDocs() != null;

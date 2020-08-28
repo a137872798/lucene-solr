@@ -103,11 +103,11 @@ public class MergeState {
 
     this.infoStream = infoStream;
 
-    // 这个属性是从 IndexWriter.IndexSort 获取的
+    // 获取目标段的排序规则
     final Sort indexSort = segmentInfo.getIndexSort();
     int numReaders = originalReaders.size();
     leafDocMaps = new DocMap[numReaders];
-    // 检测每个reader的排序方式是否与目标segment匹配 否则抛出异常
+    // 返回的reader对象 已经处理过 doc的顺序了
     List<CodecReader> readers = maybeSortReaders(originalReaders, segmentInfo);
 
     // 生成存储各个segment关键信息的数组对象
@@ -155,7 +155,7 @@ public class MergeState {
       if (pointsReaders[i] != null) {
         pointsReaders[i] = pointsReaders[i].getMergeInstance();
       }
-      // 这里已经将之前的del刷盘了 所以确保此时得到的就是准确的doc数量
+      // 在merge前已经确保此时读取到的就是当前最新的 doc信息
       numDocs += reader.numDocs();
     }
 
@@ -163,6 +163,7 @@ public class MergeState {
 
     this.segmentInfo = segmentInfo;
 
+    // 为每个段创建 将旧doc 映射到合并后全局doc的映射对象
     this.docMaps = buildDocMaps(readers, indexSort);
   }
 
@@ -184,7 +185,7 @@ public class MergeState {
         // 将doc编号前移  避免已经被删除的doc占用无效的位置
         delDocMap = removeDeletes(reader.maxDoc(), liveDocs);
       } else {
-        // 这样应该是代表所有doc 都存活
+        // 因为所有doc都存活 所以不需要处理
         delDocMap = null;
       }
 
@@ -223,6 +224,7 @@ public class MergeState {
       // no index sort ... we only must map around deletions, and rebase to the merged segment's docID space
       // 避免 被删除的doc占用空间 这里做了整理工作
       return buildDeletionDocMaps(readers);
+    // TODO 先忽略 indexSort
     } else {
       // do a merge sort of the incoming leaves:
       long t0 = System.nanoTime();
@@ -268,6 +270,8 @@ public class MergeState {
     if (indexSort == null) {
       return originalReaders;
     }
+
+    // TODO 先忽略 IndexSort 第二轮的时候再看
 
     List<CodecReader> readers = new ArrayList<>(originalReaders.size());
 

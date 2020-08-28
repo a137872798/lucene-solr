@@ -278,7 +278,7 @@ final class ReaderPool implements Closeable {
   /**
    * Writes all doc values updates to disk if there are any.
    * @return <code>true</code> iff any files where written
-   * 此时将所有 update信息写入到索引文件中  同时标记成merge
+   * 将之前处理 update对象时 抽取出来的更新信息与之前的数据合并成新的 DV FieldInfo 索引文件
    */
   boolean writeDocValuesUpdatesForMerge(List<SegmentCommitInfo> infos) throws IOException {
     boolean any = false;

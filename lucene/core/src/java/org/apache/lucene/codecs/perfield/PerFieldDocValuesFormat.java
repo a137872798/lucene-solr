@@ -313,9 +313,15 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
          */
         private final Map<String, DocValuesProducer> formats = new HashMap<>();
 
-        // clone for merge
+        /**
+         * clone for merge
+         * 该构造函数 主要是获取一个merge时使用的对象而调用的
+         * @param other
+         */
         FieldsReader(FieldsReader other) {
             Map<DocValuesProducer, DocValuesProducer> oldToNew = new IdentityHashMap<>();
+            // 主要就是保存了 每个field使用的存储数据的索引文件名
+
             // First clone all formats
             for (Map.Entry<String, DocValuesProducer> ent : other.formats.entrySet()) {
                 DocValuesProducer values = ent.getValue().getMergeInstance();
