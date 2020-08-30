@@ -61,7 +61,7 @@ final class PerFieldMergeState {
    */
   private final FieldInfos[] orgFieldInfos;
   /**
-   * 负责读取orgFieldInfos 数据
+   * 对应的是FieldsReader
    */
   private final FieldsProducer[] orgFieldsProducers;
 
@@ -88,7 +88,7 @@ final class PerFieldMergeState {
   MergeState apply(Collection<String> fields) {
     // 因为外层使用者 已经将field 根据写入的格式进行划分了 所以此时使用一层包装确保接下来的使用不会处理到标明要以其他格式写入的field
     in.mergeFieldInfos = new FilterFieldInfos(orgMergeFieldInfos, fields);
-    // 针对 merge前的field信息也要做处理
+    // 针对 merge前的field信息也要做处理  确保在处理过程中 仅能访问当目标fields
     for (int i = 0; i < orgFieldInfos.length; i++) {
       in.fieldInfos[i] = new FilterFieldInfos(orgFieldInfos[i], fields);
     }

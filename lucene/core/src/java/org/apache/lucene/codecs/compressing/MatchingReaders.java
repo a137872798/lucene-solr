@@ -30,7 +30,6 @@ class MatchingReaders {
   /** {@link SegmentReader}s that have identical field
    * name/number mapping, so their stored fields and term
    * vectors may be bulk merged. */
-  // 如果某个 下标为 false 代表对应的field 没有存入到merge中
   final boolean[] matchingReaders;
 
   /** How many {@link #matchingReaders} are set. */
@@ -50,10 +49,13 @@ class MatchingReaders {
     // stored fields:
 
     nextReader:
+    // 外层循环 遍历每个 reader
     for (int i = 0; i < numReaders; i++) {
-      // 遍历某个 segment 下所有的 fieldInfo   照理说所有 field 都会被写入到 merge后的fieldInfos中
+      // 遍历某个 segment下所有的 field
       for (FieldInfo fi : mergeState.fieldInfos[i]) {
+        // 通过fieldNum 反向查找fieldInfo 照理说应该是全部命中的
         FieldInfo other = mergeState.mergeFieldInfos.fieldInfo(fi.number);
+        // 未找到或者 name不一致的情况 被认为未命中
         if (other == null || !other.name.equals(fi.name)) {
           continue nextReader;
         }
@@ -61,7 +63,7 @@ class MatchingReaders {
       matchingReaders[i] = true;
       matchedCount++;
     }
-    
+
     this.count = matchedCount;
 
     if (mergeState.infoStream.isEnabled("SM")) {

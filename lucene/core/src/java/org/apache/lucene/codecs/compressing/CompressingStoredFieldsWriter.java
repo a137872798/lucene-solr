@@ -138,6 +138,9 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     private int numBufferedDocs; // docBase + numBufferedDocs == current doc ID
 
     private long numChunks; // number of compressed blocks written
+    /**
+     * 当调用 finish 时  发现还有部分数据未刷盘 就会将剩余数据一次性刷盘完成 此时该chunk 就被认为是"脏"的 也就是内部数据不足一个chunk
+     */
     private long numDirtyChunks; // number of incomplete compressed blocks written
 
     /**
@@ -305,7 +308,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
         // save docBase and numBufferedDocs
         fieldsStream.writeVInt(docBase);
-        // 这里相当于已经存入了长度信息  TODO slicedBit这个标识怎么用???
+        // 这里相当于已经存入了长度信息
         fieldsStream.writeVInt((numBufferedDocs) << 1 | slicedBit);
 
         // save numStoredFields
@@ -331,13 +334,13 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
      * @throws IOException
      */
     private void flush() throws IOException {
-        // 写入本次刷盘多少doc 以及刷盘前索引文件的偏移量
+        // 写入本次刷盘多少doc 以及刷盘前索引文件的偏移量   因为要从所有doc中 快速定位到某个doc是比较困难的 这里通过维护一个索引结构 配合二分查找 可以快速定位到某个doc的起始偏移量
         indexWriter.writeIndex(numBufferedDocs, fieldsStream.getFilePointer());
 
         // transform end offsets into lengths
         final int[] lengths = endOffsets;
         for (int i = numBufferedDocs - 1; i > 0; --i) {
-            // 差值就是某个doc 往BB总计写入的 数据长度
+            // 差值就是2个doc之前所有field写入的信息长度
             lengths[i] = endOffsets[i] - endOffsets[i - 1];
             assert lengths[i] >= 0;
         }
@@ -639,7 +642,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
 
     /**
-     * 在对多个 segment 进行数据合并时调用该方法
+     * 当参与merge的多个 fieldInfo 合并后 通过该方法将结果写入到索引文件
      *
      * @param mergeState
      * @return
@@ -652,8 +655,9 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         int docCount = 0;
         int numReaders = mergeState.maxDocs.length;
 
+        // 先假设全部都命中吧  不知道什么场景会出现未命中的情况
         MatchingReaders matching = new MatchingReaders(mergeState);
-        // 代表需要做排序处理
+        // TODO 先忽略 indexSort
         if (mergeState.needsIndexSort) {
             /**
              * If all readers are compressed and they have the same fieldinfos then we can merge the serialized document
@@ -704,15 +708,15 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
         }
 
 
-        // 代表数据一开始就是有序的 不需要上面创建sub这种复杂的做法
+        // 按照默认顺序处理
         for (int readerIndex = 0; readerIndex < numReaders; readerIndex++) {
 
             // visitor 只是开放了一些读取内部属性的api
             MergeVisitor visitor = new MergeVisitor(mergeState, readerIndex);
             CompressingStoredFieldsReader matchingFieldsReader = null;
 
-            // 代表该 segment对应的所有field 都已经合并到新的 segment
             if (matching.matchingReaders[readerIndex]) {
+                // 获取的是基于 ThreadLocal的 本地线程变量
                 final StoredFieldsReader fieldsReader = mergeState.storedFieldsReaders[readerIndex];
                 // we can only bulk-copy if the matching reader is also a CompressingStoredFieldsReader
                 if (fieldsReader != null && fieldsReader instanceof CompressingStoredFieldsReader) {
@@ -720,12 +724,12 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                 }
             }
 
-            // 读取该segment对应的 maxDoc 和 liveDocs
+            // 读取该segment对应的 maxDoc 和 liveDocs   因为在merge前 已经确保此时liveDoc 与 pendingDelete的liveDoc做同步了
             final int maxDoc = mergeState.maxDocs[readerIndex];
             final Bits liveDocs = mergeState.liveDocs[readerIndex];
 
             // if its some other format, or an older version of this format, or safety switch:
-            // 跳过兼容老代码的部分
+            // TODO 跳过兼容老代码的部分
             if (matchingFieldsReader == null || matchingFieldsReader.getVersion() != VERSION_CURRENT || BULK_MERGE_ENABLED == false) {
                 // naive merge...
                 StoredFieldsReader storedFieldsReader = mergeState.storedFieldsReaders[readerIndex];
@@ -741,21 +745,24 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                     finishDocument();
                     ++docCount;
                 }
-                // 如果此时segment下的doc都还存在
+                // 首先要求 压缩格式 chunk大小  版本 等都相同  并且 此时所有doc都存活   在上面的matchingFieldsReader == null 实际上已经确保了之前的field 本次依然存活
             } else if (matchingFieldsReader.getCompressionMode() == compressionMode &&
                     matchingFieldsReader.getChunkSize() == chunkSize &&
                     matchingFieldsReader.getPackedIntsVersion() == PackedInts.VERSION_CURRENT &&
-                    liveDocs == null &&
+                    liveDocs == null &&   // doc都存活的话 就不需要通过liveDoc 做匹配工作了 同时能确保每个chunk存储的doc量应该是一样的 这样通过数据的转移能最快的完成某个reader下field数据的写入
+                    // 这个writer对象还是新创建的 所以一开始是没有任何 dirtyChunk 的
                     !tooDirty(matchingFieldsReader)) {
                 // optimized merge, raw byte copy
                 // its not worth fine-graining this if there are deletions.
 
                 // if the format is older, its always handled by the naive merge case above
+                // 这里应该就是一种比较快捷的 merge方式
                 assert matchingFieldsReader.getVersion() == VERSION_CURRENT;
+                // 校验文件
                 matchingFieldsReader.checkIntegrity();
 
                 // flush any pending chunks
-                // 将上一个reader存储在 内存中的数据刷盘
+                // 在merge中 每写入一个 reader对象的数据就会生成一个 numDirtyChunks （除非刚好没有剩余的 numBufferedDocs）
                 if (numBufferedDocs > 0) {
                     flush();
                     numDirtyChunks++; // incomplete: we had to force this flush
@@ -764,13 +771,14 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                 // iterate over each chunk. we use the stored fields index to find chunk boundaries,
                 // read the docstart + doccount from the chunk header (we write a new header, since doc numbers will change),
                 // and just copy the bytes directly.
-                // 该对象负责读取 field 数据   一个doc 内部也就是由多个field组成的
+                // 获取索引文件输入流
                 IndexInput rawDocs = matchingFieldsReader.getFieldsStream();
                 // 该对象负责读取元数据信息
                 FieldsIndex index = matchingFieldsReader.getIndexReader();
+                // 每次写入doc时都会在 index中记录文件的起始偏移量 这里通过 二分查找定位
                 rawDocs.seek(index.getStartPointer(0));
                 int docID = 0;
-                // 根据文档号 将之前存储的所有数据读取出来   doc的数据以field的形式存储在 rawDocs 中
+                // 挨个遍历每个doc  并读取数据
                 while (docID < maxDoc) {
                     // read header
                     // 这里是读取block下首个 doc的id
@@ -779,19 +787,20 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                         throw new CorruptIndexException("invalid state: base=" + base + ", docID=" + docID, rawDocs);
                     }
 
-                    // TODO 最低位存的是什么
+                    // 对应 writeHeader() 的逻辑  这里存储的高位是 本次刷盘的chunk 对应多少个doc 低位代表数据是分块压缩的 还是整体压缩
                     int code = rawDocs.readVInt();
 
                     // write a new index entry and new header for this chunk.
                     // 该block下一共存储了多少doc
                     int bufferedDocs = code >>> 1;
-                    // indexWriter是写数据文件的索引信息的   这里记录本次block的相关信息
+                    // 将数据原封不动的写入到新的索引文件中
                     indexWriter.writeIndex(bufferedDocs, fieldsStream.getFilePointer());
 
-                    // 看来是要将 某个segment的 block 原封不动的转移到新的 segment中
+                    // 写入的数据与读取的也完全一致
                     fieldsStream.writeVInt(docBase); // rebase
                     fieldsStream.writeVInt(code);
                     docID += bufferedDocs;
+                    // 更新下一个索引读取的起始doc的偏移量
                     docBase += bufferedDocs;
                     docCount += bufferedDocs;
 
@@ -810,7 +819,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                         // 找到终点对应的偏移量
                         end = index.getStartPointer(docID);
                     }
-                    // 这里没有用0拷贝技术 应该是 FileChannel#transferTo
+                    // 将2个偏移量直接的数据直接拷贝
                     fieldsStream.copyBytes(rawDocs, end - rawDocs.getFilePointer());
                 }
 
@@ -824,7 +833,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                 numChunks += matchingFieldsReader.getNumChunks();
                 numDirtyChunks += matchingFieldsReader.getNumDirtyChunks();
             } else {
-                // 代表该 segment下部分doc 已经被删除了 无法直接拷贝所有数据
+                // 由于本次要写入的索引文件格式 与要读取的索引文件格式不一致  又或者有部分doc被删除 就无法无脑的拷贝了 需要做过滤操作
 
                 // optimized merge, we copy serialized (but decompressed) bytes directly
                 // even on simple docs (1 stored field), it seems to help by about 20%
@@ -838,6 +847,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                     if (liveDocs != null && liveDocs.get(docID) == false) {
                         continue;
                     }
+                    // 只挑选有效的doc   将之前存储到索引文件的数据还原到内存后 按正常套路处理
                     SerializedDocument doc = matchingFieldsReader.document(docID);
                     startDocument();
                     bufferedDocs.copyBytes(doc.in, doc.length);
@@ -847,6 +857,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
                 }
             }
         }
+        // 无论是通过正常写入field信息 还是通过merge 最终都是通过finish收尾
         finish(mergeState.mergeFieldInfos, docCount);
         return docCount;
     }
@@ -857,11 +868,12 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
      * The last chunk written for a segment is typically incomplete, so without recompressing,
      * in some worst-case situations (e.g. frequent reopen with tiny flushes), over time the
      * compression ratio can degrade. This is a safety switch.
-     * 在什么情况下 reader 会被认为是 dirty呢???
+     * 代表某些数据可能不足一个 chunk 就被刷盘了  比如在调用finish时 部分数据还未flush
+     * 如果dirty的chunk数量超过了 1% 返回true
      */
     boolean tooDirty(CompressingStoredFieldsReader candidate) {
         // more than 1% dirty, or more than hard limit of 1024 dirty chunks
-        return candidate.getNumDirtyChunks() > 1024 ||
+        return candidate.getNumDirtyChunks() > 1024 || // 这个是兼容旧代码吗 怎么会出现1024呢
                 candidate.getNumDirtyChunks() * 100 > candidate.getNumChunks();
     }
 

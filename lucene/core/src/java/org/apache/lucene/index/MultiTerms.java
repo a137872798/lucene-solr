@@ -30,7 +30,7 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * sub-segments.
  *
  * @lucene.experimental
- * 多个terms的组合对象
+ * 多个terms的组合对象   一般情况下在merge中使用 并且就是 FieldReader
  */
 public final class MultiTerms extends Terms {
   private final Terms[] subs;
@@ -180,7 +180,7 @@ public final class MultiTerms extends Terms {
   }
 
   /**
-   * 迭代合并后的term信息
+   * 比较核心的是这个方法  涉及到将所有term合并的逻辑
    * @return
    * @throws IOException
    */
@@ -189,7 +189,7 @@ public final class MultiTerms extends Terms {
 
     final List<MultiTermsEnum.TermsEnumIndex> termsEnums = new ArrayList<>();
     for(int i=0;i<subs.length;i++) {
-      // 先获取每个 term的迭代器 之后进行整合
+      // 先获取每个 term的迭代器 之后进行整合    一般返回的就是 SegmentTermsEnum
       final TermsEnum termsEnum = subs[i].iterator();
       if (termsEnum != null) {
         termsEnums.add(new MultiTermsEnum.TermsEnumIndex(termsEnum, i));
@@ -197,7 +197,7 @@ public final class MultiTerms extends Terms {
     }
 
     if (termsEnums.size() > 0) {
-      // 初始化
+      // 最终迭代 merge时相关的所有 term 就是依靠 MultiTermsEnum   这里还调用了reset 进行初始化
       return new MultiTermsEnum(subSlices).reset(termsEnums.toArray(MultiTermsEnum.TermsEnumIndex.EMPTY_ARRAY));
     } else {
       return TermsEnum.EMPTY;

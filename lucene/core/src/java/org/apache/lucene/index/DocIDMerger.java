@@ -34,7 +34,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
   /** Represents one sub-reader being merged */
   public static abstract class Sub {
     /** Mapped doc ID */
-    // 此时映射到的 globalDocId
+    // 映射到的merge后的docId
     public int mappedDocID;
 
     /**
@@ -56,6 +56,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
    * 将多个Sub对象组合
    * */
   public static <T extends DocIDMerger.Sub> DocIDMerger<T> of(List<T> subs, int maxCount, boolean indexIsSorted) throws IOException {
+    // TODO 先忽略排序的情况
     if (indexIsSorted && maxCount > 1) {
       // 代表需要排序
       return new SortedDocIDMerger<>(subs, maxCount);

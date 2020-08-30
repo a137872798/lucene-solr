@@ -82,8 +82,10 @@ public abstract class NormsConsumer implements Closeable {
     }
   }
   
-  /** Tracks state of one numeric sub-reader that we are merging */
-  // 代表进行有关标准因子合并的最小单位
+  /**
+   * Tracks state of one numeric sub-reader that we are merging
+   * 在merge 过程中 每个field的标准因子是通过从所有段中找到该field的标准因子信息 并整合后形成的 每个sub对象就对应一个segment下的field
+   */
   private static class NumericDocValuesSub extends DocIDMerger.Sub {
 
     /**
@@ -108,7 +110,8 @@ public abstract class NormsConsumer implements Closeable {
    * <p>
    * The default implementation calls {@link #addNormsField}, passing
    * an Iterable that merges and filters deleted documents on the fly.
-   * 将某个携带 标准因子信息的field写入到索引文件中
+   * @param mergeFieldInfo  将多个segment的field合并后 的某个field
+   * @param mergeState 包含了merge所需要的全部信息
    */
   public void mergeNormsField(final FieldInfo mergeFieldInfo, final MergeState mergeState) throws IOException {
 
@@ -130,6 +133,7 @@ public abstract class NormsConsumer implements Closeable {
                           // 获取段对应的 标准因子读取对象
                           NormsProducer normsProducer = mergeState.normsProducers[i];
                           if (normsProducer != null) {
+                            // 从某个段下从获取查找对应的field    如果在该段下的这个field 有标准因子 就生成reader对象
                             FieldInfo readerFieldInfo = mergeState.fieldInfos[i].fieldInfo(mergeFieldInfo.name);
                             if (readerFieldInfo != null && readerFieldInfo.hasNorms()) {
                               norms = normsProducer.getNorms(readerFieldInfo);
@@ -137,12 +141,12 @@ public abstract class NormsConsumer implements Closeable {
                           }
 
                           // 将多个 reader对应的标准因子合并成一个对象
-                          // mergeState.docMaps 负责将每个reader对象 docId 映射到merge docId
                           if (norms != null) {
                             subs.add(new NumericDocValuesSub(mergeState.docMaps[i], norms));
                           }
                         }
 
+                        // 将这些sub对象合并
                         final DocIDMerger<NumericDocValuesSub> docIDMerger = DocIDMerger.of(subs, mergeState.needsIndexSort);
 
                         // 该对象是将多个段 整合后  按照globalDocId 顺序 获取对应的标准因子  (标准因子是以field为维度创建 doc为单位存储的)

@@ -31,6 +31,7 @@ import org.apache.lucene.util.PriorityQueue;
  * This does a merge sort, by term text, of the sub-readers.
  *
  * @lucene.experimental
+ * 在merge时使用 遍历参与merge的所有segment中 某个field下的所有 term
  */
 public final class MultiTermsEnum extends BaseTermsEnum {
 
@@ -47,9 +48,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
      * 只有有效的 termEnum 才会填充到该数组中
      */
     private final TermsEnumWithSlice[] currentSubs; // current subs that have at least one term for this field
-    /**
-     * 此时最小值对应的迭代器
-     */
+
     private final TermsEnumWithSlice[] top;
 
     /**
@@ -76,10 +75,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
      */
     static class TermsEnumIndex {
         public final static TermsEnumIndex[] EMPTY_ARRAY = new TermsEnumIndex[0];
-        /**
-         * 先是这样 参与merge 的所有段信息  通过指定某个field后 各自返回了对应  terms  之后想要获取一个能够遍历所有term的迭代器
-         * 这个下标就对应该迭代器在整组迭代器的位置
-         */
+
         final int subIndex;
         final TermsEnum termsEnum;
 
@@ -108,7 +104,8 @@ public final class MultiTermsEnum extends BaseTermsEnum {
      * Sole constructor.
      *
      * @param slices Which sub-reader slices we should
-     *               merge.     readSlice 内部的长度 应该是还没有整理过doc的  也就是有部分doc实际是没有数据的  不过在merge后的新段是做过整理的
+     *               merge.
+     *               分片信息是记载每个segment 起始doc  包含的doc数量  以及在segment[] 的下标
      */
     public MultiTermsEnum(ReaderSlice[] slices) {
         queue = new TermMergeQueue(slices.length);
@@ -131,7 +128,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
     /**
      * The terms array must be newly created TermsEnum, ie
      * {@link TermsEnum#next} has not yet been called.
-     * 此时已经从所有参与merge的段中找到某个 field 的terms信息 现在根据这些现有信息进行合并
+     * 使用每个segment 对应的 terms 进行重置   (在使用该对象前必须调用该方法)
      */
     public TermsEnum reset(TermsEnumIndex[] termsEnumsIndex) throws IOException {
         assert termsEnumsIndex.length <= top.length;
@@ -140,6 +137,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
         queue.clear();
         for (int i = 0; i < termsEnumsIndex.length; i++) {
 
+            // TermsEnumIndex 除了能迭代term外 还携带了 对应segment的下标
             final TermsEnumIndex termsEnumIndex = termsEnumsIndex[i];
             assert termsEnumIndex != null;
 
@@ -326,24 +324,27 @@ public final class MultiTermsEnum extends BaseTermsEnum {
         // extract all subs from the queue that have the same
         // top term
         assert numTop == 0;
-        // 获取此时最小的term 并填充到top中
+        // 获取此时最小的term 并填充到top中  如果多个term值相同 就都取出来   numTop 代表此时有多少term一样
         numTop = queue.fillTop(top);
+        // 更新顶部的元素
         current = top[0].current;
     }
 
     /**
-     * 更新最小值
      * @throws IOException
      */
     private void pushTop() throws IOException {
         // call next() on each top, and reorder queue
-        // 此时队列中有 numTop个相同的值 都要切换
+        // 更新栈顶的值  numTop 代表上一轮相同的term数量  这些都是需要替换的
         for (int i = 0; i < numTop; i++) {
             TermsEnumWithSlice top = queue.top();
+            // 切换后重新入队  同时之前重复的term 就会自动到堆顶 正好就开始下一轮处理
             top.current = top.terms.next();
             if (top.current == null) {
+                // 代表某个terms已经遍历完了 就从堆中剔除
                 queue.pop();
             } else {
+                // 重建堆结构
                 queue.updateTop();
             }
         }
@@ -351,13 +352,13 @@ public final class MultiTermsEnum extends BaseTermsEnum {
     }
 
     /**
-     * 获取下一个term
+     * 遍历 所有参与merge的 terms
+     * 这里要注意一点  每个segment 对应该field的 terms 已经按照从小到大的顺序排序过了
      * @return
      * @throws IOException
      */
     @Override
     public BytesRef next() throws IOException {
-        // 代表刚调用过 seekExact
         if (lastSeekExact) {
             // Must seekCeil at this point, so those subs that
             // didn't have the term can find the following term.
@@ -366,21 +367,20 @@ public final class MultiTermsEnum extends BaseTermsEnum {
             // most impls short-circuit if you seekCeil to term
             // they are already on.
             final SeekStatus status = seekCeil(current);
-            // TODO 这里为什么能认定一定会找到 ???
             assert status == SeekStatus.FOUND;
             lastSeekExact = false;
         }
         lastSeek = null;
 
         // restore queue
-        // 更新最小值
+        // 更新堆顶元素
         pushTop();
 
         // gather equal top fields
         if (queue.size() > 0) {
             // TODO: we could maybe defer this somewhat costly operation until one of the APIs that
             // needs to see the top is invoked (docFreq, postings, etc.)
-            // 取出最小值 设置到top[]上
+            // 取出最小值 设置到top[]上  因为可能某些 terms 取出来的值是一样的
             pullTop();
         } else {
             current = null;
@@ -415,7 +415,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
     }
 
     /**
-     * 获取当前term 关联的posting信息
+     * 获取当前term 关联的posting信息  会被 MappingMultiPostingsEnum 包裹
      * @param reuse pass a prior PostingsEnum for possible reuse   有可能传入的参数为null
      * @param flags specifies which optional per-document values
      *        you require; see {@link PostingsEnum#FREQS}
@@ -441,7 +441,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
 
         int upto = 0;
 
-        // 将此时 term相同的所有元素 按照readSlice的顺序排序
+        // 每次在获取位置信息时 需要检测该term出现在多少个 子termsEnum上 如果出现多个 那么需要将这些位置进行合并
         ArrayUtil.timSort(top, 0, numTop, INDEX_COMPARATOR);
 
         for (int i = 0; i < numTop; i++) {
@@ -449,10 +449,9 @@ public final class MultiTermsEnum extends BaseTermsEnum {
             final TermsEnumWithSlice entry = top[i];
 
             assert entry.index < docsEnum.subPostingsEnums.length : entry.index + " vs " + docsEnum.subPostingsEnums.length + "; " + subs.length;
-            // 这里是读取 原生term的posting信息  注意这里还打算复用之前的对象
             final PostingsEnum subPostingsEnum = entry.terms.postings(docsEnum.subPostingsEnums[entry.index], flags);
             assert subPostingsEnum != null;
-            // 将数据读取出来后 重新设置到 docsEnum上
+            // 将每个子对象设置到 MultiPostingsEnum中
             docsEnum.subPostingsEnums[entry.index] = subPostingsEnum;
             subDocs[upto].postingsEnum = subPostingsEnum;
             subDocs[upto].slice = entry.subSlice;
@@ -469,7 +468,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
     }
 
     /**
-     * 这也是临时对象  存储一些排序用的必要信息
+     * 这个对象作为 优先队列中排序的实体
      */
     final static class TermsEnumWithSlice {
         private final ReaderSlice subSlice;
@@ -489,7 +488,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
         }
 
         /**
-         * 设置该分片对应的 segment 此时读取的 term 以及对应的迭代器
+         * 使用该分片对应的 terms 以及 当前term来重置
          * @param terms
          * @param term
          */
@@ -509,6 +508,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
      */
     private final static class TermMergeQueue extends PriorityQueue<TermsEnumWithSlice> {
 
+        // [0] 纪录着此时有多少term一样
         final int[] stack;
 
         TermMergeQueue(int size) {
@@ -527,11 +527,12 @@ public final class MultiTermsEnum extends BaseTermsEnum {
          * 将此时最小的值取出来 存到数组中 如果此时有多个迭代器的 current都等于这个 最小值 那么都取出来
          */
         int fillTop(TermsEnumWithSlice[] tops) {
+            // 这个长度 就是 readSlice的长度
             final int size = size();
             if (size == 0) {
                 return 0;
             }
-            // 将头节点设置到 top中
+            // 将头节点设置到 top中    在使用 MultiTermsEnum 前已经触发过 reset了 所以每个 terms已经将最小的term通过优先队列排序了
             tops[0] = top();
             int numTop = 1;
             stack[0] = 1;
@@ -542,7 +543,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
 
                 // 第一次  stackLen是1 这里就是获取 stack[0]
                 final int index = stack[--stackLen];
-                // 二叉堆 左子节点 2n  右子节点 2n+1
+                // 这里是检测 二叉堆中是否有与top一样的值 也取出来  避免重复写入到索引文件中
                 final int leftChild = index << 1;
                 for (int child = leftChild, end = Math.min(size, leftChild + 1); child <= end; ++child) {
                     // 获取下标对应的元素
@@ -553,6 +554,7 @@ public final class MultiTermsEnum extends BaseTermsEnum {
                     }
                 }
             }
+            // 此时有多少个一样的  term
             return numTop;
         }
 

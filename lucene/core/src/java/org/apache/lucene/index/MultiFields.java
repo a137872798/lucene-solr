@@ -41,10 +41,11 @@ import org.apache.lucene.util.MergedIterator;
  * instead of using this class.
  *
  * @lucene.internal
+ * 将多个fields 合并成一个 fields
  */
 public final class MultiFields extends Fields {
   /**
-   * 每个对象都是参与merge的某个segment下所有field
+   * Fields 只是一个高层抽象 代表可以遍历field信息 子类实现还可以展示field的各种信息 甚至该field下的所有terms
    */
   private final Fields[] subs;
   /**
@@ -69,14 +70,13 @@ public final class MultiFields extends Fields {
   public Iterator<String> iterator() {
     Iterator<String> subIterators[] = new Iterator[subs.length];
     for(int i=0;i<subs.length;i++) {
-      // 这里的 fields 已经做过处理了 只能够得到同一format的field
       subIterators[i] = subs[i].iterator();
     }
     return new MergedIterator<>(subIterators);
   }
 
   /**
-   * 读取某个field下所有的term
+   * 将参与merge的每个 segment下抽取该field的terms信息 并合并
    * @param field
    * @return
    * @throws IOException
@@ -96,12 +96,15 @@ public final class MultiFields extends Fields {
 
     // Gather all sub-readers that share this field
     for(int i=0;i<subs.length;i++) {
+      // 获取每个segment 下该field的terms
       final Terms terms = subs[i].terms(field);
+      // 只有该segment下确实有该field的信息时  才获取terms 并且参与合并     此时subs[?].terms 就是 FieldReader
       if (terms != null) {
         subs2.add(terms);
         slices2.add(subSlices[i]);
       }
     }
+    // 代表在所有参与merge的segment下都没有该field信息
     if (subs2.size() == 0) {
       result = null;
       // don't cache this case with an unbounded cache, since the number of fields that don't exist

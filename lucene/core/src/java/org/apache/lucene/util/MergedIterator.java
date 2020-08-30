@@ -61,13 +61,16 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
   }
 
   @SuppressWarnings({"unchecked","rawtypes"})
+  /**
+   * @param removeDuplicates 是否要移除重复的 field
+   */
   public MergedIterator(boolean removeDuplicates, Iterator<T>... iterators) {
     this.removeDuplicates = removeDuplicates;
     queue = new TermMergeQueue<>(iterators.length);
     top = new SubIterator[iterators.length];
     int index = 0;
     for (Iterator<T> iterator : iterators) {
-      // 初始化首元素后 插入到优先队列中
+      // 确保该迭代器是有效的  (也就是有field信息)
       if (iterator.hasNext()) {
         SubIterator<T> sub = new SubIterator<>();
         sub.current = iterator.next();
@@ -99,6 +102,7 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
   @Override
   public T next() {
     // restore queue
+    // 将之前弹出的所有迭代器重新入堆 并维护堆结构
     pushTop();
     
     // gather equal top elements
@@ -125,11 +129,11 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
    */
   private void pullTop() {
     assert numTop == 0;
-    // 在调用了 pop之后 会自动重组堆 确保此时 top还是最小元素
+    // 弹出的是剩余的迭代器中 首个元素最小的那个迭代器  注意每次会从堆中弹出
     top[numTop++] = queue.pop();
     if (removeDuplicates) {
       // extract all subs from the queue that have the same top element
-      // 这里取出所有相同的元素    因为在单个迭代器内 field是不会重复的所以可以确保 最坏情况 field重复的数量刚好就是 迭代器的数量
+      // 尝试将剩余迭代器的最小值取出来做比较 如果大小一致 也弹出 并暂存在top中
       while (queue.size() != 0
              && queue.top().current.equals(top[0].current)) {
         top[numTop++] = queue.pop();
@@ -145,6 +149,7 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
     // call next() on each top, and put back into queue
     for (int i = 0; i < numTop; i++) {
       if (top[i].iterator.hasNext()) {
+        // 更新当前元素 并通过比较该元素形成新的堆结构
         top[i].current = top[i].iterator.next();
         queue.add(top[i]);
       } else {
@@ -167,6 +172,7 @@ public final class MergedIterator<T extends Comparable<T>> implements Iterator<T
    */
   private static class TermMergeQueue<C extends Comparable<C>> extends PriorityQueue<SubIterator<C>> {
     TermMergeQueue(int size) {
+      // 规定二叉堆的大小
       super(size);
     }
     

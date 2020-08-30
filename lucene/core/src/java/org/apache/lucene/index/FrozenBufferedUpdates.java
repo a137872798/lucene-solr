@@ -324,6 +324,7 @@ final class FrozenBufferedUpdates {
         // those updates arrived.
         // TODO: we could at least *collate* by field?
         // 返回该term 所在的所有docId的迭代器
+        // 即使在全局范围内存在针对某个field的更新数据  但是当前segment 没有这个 field的信息是无法生成 DocIdSetIterator 的
         final DocIdSetIterator docIdSetIterator = termDocsIterator.nextTerm(bufferedUpdate.termField, bufferedUpdate.termValue);
         if (docIdSetIterator != null) {
           final int limit;

@@ -83,12 +83,14 @@ public abstract class FieldsConsumer implements Closeable {
    *  and maps around deleted documents, and calls {@link #write(Fields,NormsProducer)}.
    *  Implementations can override this method for more sophisticated
    *  merging (bulk-byte copying, etc).
-   * @param mergeState 包含merge需要的相关信息
-   * @param norms 存储了merge后的标准因子
+   * @param mergeState 包装后的 state对象 此时只能访问到使用同一format写入的field
+   * @param norms 标准因子没有做处理
+   *
+   *              在PerFieldPostingsFormat 中覆盖了 merge方法 主要是针对 perField特性做了处理  将参与merge的所有field按照format进行分组 每次仅处理一组field
    */
   public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
     final List<Fields> fields = new ArrayList<>();
-    // 内部划分了每个分片多少doc  对应的reader下标是多少
+
     final List<ReaderSlice> slices = new ArrayList<>();
 
     int docBase = 0;
@@ -97,9 +99,11 @@ public abstract class FieldsConsumer implements Closeable {
       // 遍历参与merge操作的所有segment
       final FieldsProducer f = mergeState.fieldsProducers[readerIndex];
 
-      // 该segment下有多少doc
+      // 每个segment 下的maxDoc
       final int maxDoc = mergeState.maxDocs[readerIndex];
       f.checkIntegrity();
+
+      // 这里存储了多个分片信息
       slices.add(new ReaderSlice(docBase, maxDoc, readerIndex));
       fields.add(f);
       docBase += maxDoc;

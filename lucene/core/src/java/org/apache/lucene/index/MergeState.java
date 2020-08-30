@@ -55,7 +55,7 @@ public class MergeState {
   public final SegmentInfo segmentInfo;
 
   /** {@link FieldInfos} of the newly merged segment. */
-  // fieldInfos merge后的结果  内部针对相同的 fieldInfo 已经去重
+  // 在将所有参与merge的fieldInfo合并后 会将结果设置到该字段上
   public FieldInfos mergeFieldInfos;
 
   /** Stored field producers being merged */

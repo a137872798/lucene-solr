@@ -649,12 +649,13 @@ public class FieldInfos implements Iterable<FieldInfo> {
 
                 if (docValues != DocValuesType.NONE) {
                     // Only pay the synchronization cost if fi does not already have a DVType
-                    // 如果设置了 docValue Type 是会影响到全局的
+                    // 代表此时 docValue 从不限定类型  到限定存储的类型时
                     boolean updateGlobal = fi.getDocValuesType() == DocValuesType.NONE;
                     if (updateGlobal) {
                         // Must also update docValuesType map so it's
                         // aware of this field's DocValuesType.  This will throw IllegalArgumentException if
                         // an illegal type change was attempted.
+                        // 在全局容器中修改映射关系
                         globalFieldNumbers.setDocValuesType(fi.number, name, docValues);
                     }
 

@@ -28,6 +28,7 @@ import org.apache.lucene.util.BytesRef;
  * remapping docIDs (this is used for segment merging).
  *
  * @lucene.experimental
+ * 在merge时使用  存储每个term的位置信息    位置信息应该是把所有参与merge的segment的位置累加起来
  */
 
 final class MappingMultiPostingsEnum extends PostingsEnum {
@@ -38,7 +39,7 @@ final class MappingMultiPostingsEnum extends PostingsEnum {
   MultiPostingsEnum multiDocsAndPositionsEnum;
   final String field;
   /**
-   * 将每个段对应的数据 整合起来
+   * 从实现逻辑上可以看到 如果 没有设置IndexSort  那么排序就默认按照所有segment的doc连接
    */
   final DocIDMerger<MappingPostingsSub> docIDMerger;
   private MappingPostingsSub current;
@@ -68,7 +69,8 @@ final class MappingMultiPostingsEnum extends PostingsEnum {
 
   /**
    * Sole constructor.
-   * @param field 此时绑定的field信息  (field定位到一组terms,之后再定位到这里)
+   * 在merge时使用 (在合并term的相关信息时 还需要合并postings信息)
+   * @param field
    */
   public MappingMultiPostingsEnum(String field, MergeState mergeState) throws IOException {
     this.field = field;
@@ -84,7 +86,7 @@ final class MappingMultiPostingsEnum extends PostingsEnum {
 
   /**
    * 使用相关属性进行初始化
-   * @param postingsEnum
+   * @param postingsEnum  将多个postingsEnum合并的结果
    * @return
    * @throws IOException
    */

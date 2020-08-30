@@ -394,6 +394,7 @@ final class ReadersAndUpdates {
             final IOContext updatesContext = new IOContext(new FlushInfo(info.info.maxDoc(), bytes));
 
             // 找到fieldInfo
+            // ！！！ 从下面的逻辑可以看出  即使将某个field下所有的值都更新成 hasValue == false 但是field本身并不会从这个segment中移除 也就是在merge时 该field还是要写入
             final FieldInfo fieldInfo = infos.fieldInfo(field);
             assert fieldInfo != null;
             // 更新当前该field 的 docValue 所在索引文件的年代
@@ -416,7 +417,7 @@ final class ReadersAndUpdates {
                     for (int i = 0; i < subs.length; i++) {
                         subs[i] = updatesToApply.get(i).iterator();
                     }
-                    // 将这些迭代器合并  实际上就是通过二叉堆 将这些update对象按照doc顺序排序   如果同一个doc 同时被多个update更新 只使用gen最大的进行处理
+                    // 将这些迭代器合并  实际上就是通过二叉堆 将这些update对象按照doc顺序排序   如果同一个doc 同时被多个update更新 只使用gen最大的进行处理   同时同一gen针对同一doc更新多次 也是取最后次的
                     // 这里如果多个更新 对应到同一个doc时 应该只按照最新的处理
                     return DocValuesFieldUpdates.mergedIterator(subs);
                 };
@@ -753,6 +754,8 @@ final class ReadersAndUpdates {
                         // the field is not present in this segment so we clone the global field
                         // (which is guaranteed to exist) and remaps its field number locally.
                         // 因为  update对象是全局共用的  所以内部可能包含了全局范围内各种field  而该segment 就不一定有该field
+                        // 但是从插入  pendingDVUpdates 的逻辑来看 如果该segment下无法找到 某个field的数据 那么是无法生成对应的DocValuesFieldUpdates   以及插入到 pendingDVUpdates 的
+                        // TODO 所以可以先忽略这里的逻辑
                         assert fieldNumbers.contains(update.field, update.type);
                         // 这个时候选择生成一个该field的副本 并使用新的 num
                         FieldInfo fi = cloneFieldInfo(builder.getOrAdd(update.field), ++maxFieldNumber);

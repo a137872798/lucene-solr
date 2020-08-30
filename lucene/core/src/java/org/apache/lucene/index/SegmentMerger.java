@@ -84,7 +84,7 @@ final class SegmentMerger {
     directory = dir;
     this.codec = segmentInfo.getCodec();
     this.context = context;
-    // 这样通过该对象创建的 field 会在 全局 Num对象中分配数字
+    // 这是一个新的 builder对象 也就是内部的 byName 容器都还未初始化  但是共用之前的全局num容器
     this.fieldInfosBuilder = new FieldInfos.Builder(fieldNumbers);
     Version minVersion = Version.LATEST;
 
@@ -128,12 +128,13 @@ final class SegmentMerger {
     if (!shouldMerge()) {
       throw new IllegalStateException("Merge would result in 0 document segment");
     }
+    // 首先将 fieldInfo 合并
     mergeFieldInfos();
     long t0 = 0;
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
-    // 将每个 segment的doc数据 写入到新的段中   写入到doc内的数据都是已经排好序的吗  在哪里处理的 以及为什么要这么做???
+    // 这里存储的内容是 每个doc下包含的 field信息
     int numMerged = mergeFields();
     if (mergeState.infoStream.isEnabled("SM")) {
       long t1 = System.nanoTime();
@@ -141,13 +142,13 @@ final class SegmentMerger {
     }
     assert numMerged == mergeState.segmentInfo.maxDoc(): "numMerged=" + numMerged + " vs mergeState.segmentInfo.maxDoc()=" + mergeState.segmentInfo.maxDoc();
 
-    // 这里创建2个记录状态信息的对象
+    // 有些数据是基于 field存储的  也就是每个 field单独生成一个索引文件  (文件名不包含fieldName  但是每个field会分配一个唯一的数字作为后缀)
     final SegmentWriteState segmentWriteState = new SegmentWriteState(mergeState.infoStream, directory, mergeState.segmentInfo,
                                                                       mergeState.mergeFieldInfos, null, context);
     final SegmentReadState segmentReadState = new SegmentReadState(directory, mergeState.segmentInfo, mergeState.mergeFieldInfos,
         IOContext.READ, segmentWriteState.segmentSuffix);
 
-    // fieldInfos 由参与merge的所有segment携带的 fieldInfo 合并成  只要有一个fieldInfo 携带标准因子 该标识就为true
+    // 只要最终合并后的field中 有一个包含标准因子信息  就需要将标准因子合并
     if (mergeState.mergeFieldInfos.hasNorms()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
@@ -163,7 +164,8 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
-    // 这里找到合并后段的 标准因子
+
+    // 合并term的时候不知道为啥要带标准因子   之前进行flush时 也要这么做
     try (NormsProducer norms = mergeState.mergeFieldInfos.hasNorms()
         ? codec.normsFormat().normsProducer(segmentReadState)
         : null) {
@@ -172,7 +174,7 @@ final class SegmentMerger {
         // Use the merge instance in order to reuse the same IndexInput for all terms
         normsMergeInstance = norms.getMergeInstance();
       }
-      // term和doc是什么关系  以及 为什么要针对标准因子 单独merge一次
+      // 在这里将所有term信息合并 term的排序借助了二叉堆  而写入term同时相关的postings 则是连续写入 (前提是不考虑IndexSort的情况)
       mergeTerms(segmentWriteState, normsMergeInstance);
     }
     if (mergeState.infoStream.isEnabled("SM")) {
@@ -252,10 +254,12 @@ final class SegmentMerger {
 
   /**
    * 将 fieldInfo 信息merge   这里会对fieldInfo 去重  (这里认为相同指的是 fieldInfo.name 一致 与num无关)
+   * 在同一个IndexWriter生成的segment中 认为fieldName相同的 field 是一致的  从update会影响到所有 segmentState就可以看出来 (update只能指定field和 term 以及更新的结果  却会作用到所有的segment上 )
    */
   public void mergeFieldInfos() {
     for (FieldInfos readerFieldInfos : mergeState.fieldInfos) {
       for (FieldInfo fi : readerFieldInfos) {
+        // 要注意的一点是 内部的 fieldInfo.dvGen 都被重复成-1了
         fieldInfosBuilder.add(fi);
       }
     }
@@ -288,6 +292,7 @@ final class SegmentMerger {
 
   private void mergeTerms(SegmentWriteState segmentWriteState, NormsProducer norms) throws IOException {
     try (FieldsConsumer consumer = codec.postingsFormat().fieldsConsumer(segmentWriteState)) {
+      // consumer是 PerFieldPostingsFormat
       consumer.merge(mergeState, norms);
     }
   }

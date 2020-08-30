@@ -151,7 +151,6 @@ public abstract class StoredFieldsWriter implements Closeable {
    *   finishDocument();
    * }
    * </pre>
-   * 这个对象 仅在参与merge的段文档数据原本就有序的情况使用
    */
   protected class MergeVisitor extends StoredFieldVisitor implements IndexableField {
     BytesRef binaryValue;
@@ -170,7 +169,7 @@ public abstract class StoredFieldsWriter implements Closeable {
       // fieldname each time, and remap to a new number.
       // 遍历目标段的所有 field
       for (FieldInfo fi : mergeState.fieldInfos[readerIndex]) {
-        // 照理说一定能在merge后的 fieldInfo 内找到映射对象啊
+        // TODO 先忽略找不到的情况
         FieldInfo other = mergeState.mergeFieldInfos.fieldInfo(fi.number);
         if (other == null || !other.name.equals(fi.name)) {
           remapper = mergeState.mergeFieldInfos;

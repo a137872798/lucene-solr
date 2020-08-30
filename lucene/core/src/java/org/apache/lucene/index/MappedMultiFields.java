@@ -27,7 +27,8 @@ import static org.apache.lucene.index.FilterLeafReader.FilterTermsEnum;
  *  Fields into one, and maps around deleted documents.
  *  This is used for merging. 
  *  @lucene.internal
- *  将多个segment映射到 merge后的新segment上
+ *  实现merge term的核心类 隐藏了内部整合 各个参与merge的segment的 对应fields的逻辑
+ *  实现都是委托给 MultiFields
  */
 public class MappedMultiFields extends FilterFields {
 
@@ -41,7 +42,7 @@ public class MappedMultiFields extends FilterFields {
   }
 
   /**
-   * 通过field信息 获取term   在上层是读取每个合并前段的term信息 合并后返回
+   * 合并逻辑就是通过 获取某个field下所有的term 进行写入  而在这里应该会想办法从每个参与merge的segment中获取field下所有term
    * @param field
    * @return
    * @throws IOException
@@ -114,7 +115,7 @@ public class MappedMultiFields extends FilterFields {
   }
 
   /**
-   * 包装整合过的 term迭代器
+   * 对外暴露的是这个对象
    */
   private static class MappedMultiTermsEnum extends FilterTermsEnum {
     final MergeState mergeState;
@@ -137,9 +138,9 @@ public class MappedMultiFields extends FilterFields {
     }
 
     /**
-     * 将当前term 有关pos的信息填充到 reuse中
+     * 在merge时  写入term前 还会将所有field下所有term的 posting信息写入到 PostingWriter中   这时会通过 postings() 获取可以遍历位置信息的迭代器
      * @param reuse
-     * @param flags
+     * @param flags  代表存储了哪些位置信息
      * @return
      * @throws IOException
      */
@@ -158,7 +159,7 @@ public class MappedMultiFields extends FilterFields {
         mappingDocsAndPositionsEnum = new MappingMultiPostingsEnum(field, mergeState);
       }
 
-      // 在这一步中 数据会填充到 docsAndPositionsEnum
+      // 返回的是被包装的对象生成的 postings
       MultiPostingsEnum docsAndPositionsEnum = (MultiPostingsEnum) in.postings(mappingDocsAndPositionsEnum.multiDocsAndPositionsEnum, flags);
       mappingDocsAndPositionsEnum.reset(docsAndPositionsEnum);
       return mappingDocsAndPositionsEnum;

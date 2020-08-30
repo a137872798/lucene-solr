@@ -510,6 +510,7 @@ abstract class DocValuesFieldUpdates implements Accountable {
             ++idx;
             for (; idx < size; idx++) {
                 // scan forward to last update to this doc
+                // 只使用针对某个doc 最后的处理
                 final long nextLongDoc = docs.get(idx);
                 if ((longDoc >>> 1) != (nextLongDoc >>> 1)) {
                     break;
@@ -517,6 +518,7 @@ abstract class DocValuesFieldUpdates implements Accountable {
                 longDoc = nextLongDoc;
             }
             hasValue = (longDoc & HAS_VALUE_MASK) > 0;
+            // TODO 很奇怪的一点 如果 hasValue == false   并不会取一个空值 而是取与上一个doc相同的值
             if (hasValue) {
                 set(idx - 1);
             }

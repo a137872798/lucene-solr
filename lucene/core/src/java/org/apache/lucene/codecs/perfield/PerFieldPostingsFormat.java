@@ -202,6 +202,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     }
 
     /**
+     * 将term信息合并
      * @param mergeState
      * @param norms   合并后的标准因子
      * @throws IOException
@@ -209,19 +210,20 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
     @Override
     public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
 
-      // FieldsProducer::iterator 就是获取该 segment下所有的 field    这里为所有参与段的 field 进行排序
+
+      // 这里就是将每个 segment下的fieldName 以迭代器形式范围  并将它们合并成一个
       @SuppressWarnings("unchecked") Iterable<String> indexedFieldNames = () ->
           new MergedIterator<>(true,
               Arrays.stream(mergeState.fieldsProducers).map(FieldsProducer::iterator).toArray(Iterator[]::new));
 
-      // 将 field 按照写入的格式进行分组
+      // 将 field 按照写入的格式进行分组  一般来说就是那个最新的格式
       Map<PostingsFormat, FieldsGroup> formatToGroups = buildFieldsGroupMapping(indexedFieldNames);
 
       // Merge postings
+      // 先开始合并 postings 信息
       PerFieldMergeState pfMergeState = new PerFieldMergeState(mergeState);
       boolean success = false;
       try {
-        // 一般情况下 应该只使用一个format吧
         for (Map.Entry<PostingsFormat, FieldsGroup> ent : formatToGroups.entrySet()) {
           PostingsFormat format = ent.getKey();
           final FieldsGroup group = ent.getValue();
@@ -231,6 +233,7 @@ public abstract class PerFieldPostingsFormat extends PostingsFormat {
           // 存储到钩子队列中 以便该对象关闭时  触发所有钩子
           toClose.add(consumer);
           // 实际是consumer是 BlockTreeTermsWriter
+          // pfMergeState.apply(group.fields) 主要是做了一层过滤  只能访问到当前 group 下的field
           consumer.merge(pfMergeState.apply(group.fields), norms);
         }
         success = true;

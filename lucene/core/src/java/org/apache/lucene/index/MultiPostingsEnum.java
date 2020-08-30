@@ -32,6 +32,10 @@ import org.apache.lucene.util.BytesRef;
 
 public final class MultiPostingsEnum extends PostingsEnum {
   private final MultiTermsEnum parent;
+
+  /**
+   * 每次在使用前会将此时正在处理的term对应的所有 postingEnum的数据填充到这里 (多个segment下同一field下term有可能会相同  所以这里使用一个数组)
+   */
   final PostingsEnum[] subPostingsEnums;
   /**
    * 存储 PostingsEnum 与 下标的bean对象
@@ -44,7 +48,7 @@ public final class MultiPostingsEnum extends PostingsEnum {
   int doc = -1;
 
   /** Sole constructor.
-   * @param parent The {@link MultiTermsEnum} that created us.   该对象是由哪个对象创建的  并且该对象可以被同一个parent复用
+   * @param parent The {@link MultiTermsEnum} that created us.   代表该位置信息针对的是哪一field下的 term迭代器
    * @param subReaderCount How many sub-readers are being merged.   代表由多少个segment合并
    * */
   public MultiPostingsEnum(MultiTermsEnum parent, int subReaderCount) {
@@ -127,6 +131,11 @@ public final class MultiPostingsEnum extends PostingsEnum {
     }
   }
 
+  /**
+   * 可以看到 postings的信息本身是没有大小概念的  所以不需要借助二叉堆排序  而是挨个遍历位置
+   * @return
+   * @throws IOException
+   */
   @Override
   public int nextDoc() throws IOException {
     while(true) {
@@ -170,8 +179,11 @@ public final class MultiPostingsEnum extends PostingsEnum {
   }
 
   // TODO: implement bulk read more efficiently than super
-  /** Holds a {@link PostingsEnum} along with the
-   *  corresponding {@link ReaderSlice}. */
+  /**
+   * Holds a {@link PostingsEnum} along with the
+   * corresponding {@link ReaderSlice}.
+   * 包裹 迭代位置信息的 PostingsEnum
+   *  */
   public final static class EnumWithSlice {
     /** {@link PostingsEnum} for this sub-reader. */
     public PostingsEnum postingsEnum;

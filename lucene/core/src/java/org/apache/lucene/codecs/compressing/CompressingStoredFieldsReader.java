@@ -72,7 +72,7 @@ import org.apache.lucene.util.packed.PackedInts;
 /**
  * {@link StoredFieldsReader} impl for {@link CompressingStoredFieldsFormat}.
  * @lucene.experimental
- * 该对象与 CompressingStoredFieldsWriter 对应  负责读取格式化的数据
+ * 存储fieldInfos 的信息
  */
 public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
@@ -99,7 +99,6 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
   private boolean closed;
 
   /**
-   * 调用 mergeInstance时 返回一个副本对象
    * @param reader
    * @param merging
    */
