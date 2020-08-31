@@ -238,7 +238,6 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
-      // 代表目标段已经在merge中了  那么该段马上就会被舍弃 放弃处理
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running
@@ -528,8 +527,7 @@ final class FrozenBufferedUpdates {
         // our deletes don't apply to this segment
         continue;
       }
-      // rld 对象初始状态 引用计数就是1 如果首次创建 引用计数还会加 1
-      // 代表当前段  正在merge 中 忽略对它的删除操作
+      // 代表该state之前已经处理过了
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running

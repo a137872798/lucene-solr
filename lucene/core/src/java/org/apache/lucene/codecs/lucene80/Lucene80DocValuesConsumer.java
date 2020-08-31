@@ -272,7 +272,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       numBitsPerValue = 0;
       meta.writeInt(-1); // tablesize
     } else {
-      // 代表一共出现的 不重复的 docValue值数量不超过 256  TODO 忽略 就当作简单的存储吧
+      // 代表一共出现的 不重复的 docValue值数量不超过 256
       if (uniqueValues != null
           && uniqueValues.size() > 1
           && DirectWriter.unsignedBitsRequired(uniqueValues.size() - 1) < DirectWriter.unsignedBitsRequired((max - min) / gcd)) {

@@ -1050,8 +1050,16 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
     BULK_MERGE_ENABLED = v;
   }
 
+
+  /**
+   * 合并向量信息
+   * @param mergeState
+   * @return
+   * @throws IOException
+   */
   @Override
   public int merge(MergeState mergeState) throws IOException {
+    // TODO 先忽略 IndexSort
     if (mergeState.needsIndexSort) {
       // TODO: can we gain back some optos even if index is sorted?  E.g. if sort results in large chunks of contiguous docs from one sub
       // being copied over...?
@@ -1074,7 +1082,8 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
 
       final int maxDoc = mergeState.maxDocs[readerIndex];
       final Bits liveDocs = mergeState.liveDocs[readerIndex];
-      
+
+      // 这个套路和merge FieldInfo 是一样的 先检测 chunk大小等是否一致 一致的话 直接照搬数据就好
       if (matchingVectorsReader != null &&
           matchingVectorsReader.getCompressionMode() == compressionMode &&
           matchingVectorsReader.getChunkSize() == chunkSize &&
@@ -1140,7 +1149,8 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
         // since we bulk merged all chunks, we inherit any dirty ones from this segment.
         numChunks += matchingVectorsReader.getNumChunks();
         numDirtyChunks += matchingVectorsReader.getNumDirtyChunks();
-      } else {        
+      } else {
+        // 以doc为单位 挨个写入 首先要确保 doc在 liveDoc中 还标记为存活
         // naive merge...
         if (vectorsReader != null) {
           vectorsReader.checkIntegrity();

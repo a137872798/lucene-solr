@@ -159,6 +159,11 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             getInstance(field).addSortedSetField(field, valuesProducer);
         }
 
+        /**
+         * 这层逻辑就是以 format格式为单位 对field进行分组
+         * @param mergeState
+         * @throws IOException
+         */
         @Override
         public void merge(MergeState mergeState) throws IOException {
             Map<DocValuesConsumer, Collection<String>> consumersToField = new IdentityHashMap<>();
@@ -182,6 +187,7 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             PerFieldMergeState pfMergeState = new PerFieldMergeState(mergeState);
             try {
                 for (Map.Entry<DocValuesConsumer, Collection<String>> e : consumersToField.entrySet()) {
+                    // 隐藏不属于该format的数据
                     e.getKey().merge(pfMergeState.apply(e.getValue()));
                 }
             } finally {
@@ -204,7 +210,6 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
          */
         private DocValuesConsumer getInstance(FieldInfo field, boolean ignoreCurrentFormat) throws IOException {
             DocValuesFormat format = null;
-            // TODO 这个值是什么时候设置的???
             if (field.getDocValuesGen() != -1) {
                 String formatName = null;
                 if (ignoreCurrentFormat == false) {
@@ -226,7 +231,6 @@ public abstract class PerFieldDocValuesFormat extends DocValuesFormat {
             }
             final String formatName = format.getName();
 
-            // 这里为啥要回填这个属性
             field.putAttribute(PER_FIELD_FORMAT_KEY, formatName);
             Integer suffix = null;
 

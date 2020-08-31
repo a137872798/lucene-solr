@@ -176,7 +176,6 @@ public abstract class TermsEnum implements BytesRefIterator {
   /**
    * Return a {@link ImpactsEnum}.
    * @see #postings(PostingsEnum, int)
-   * 什么是影响因子的迭代器 ???
    */
   public abstract ImpactsEnum impacts(int flags) throws IOException;
   

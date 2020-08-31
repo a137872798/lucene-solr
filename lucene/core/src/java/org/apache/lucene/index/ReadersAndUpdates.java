@@ -177,7 +177,7 @@ final class ReadersAndUpdates {
 
         fieldUpdates.add(update);
 
-        // 如果此时正在merge 就将数据也存储一份到对应的容器中
+        // 记录在merge过程中新增的 update信息  并在merge完成后 将这些update信息 作用到新的segment上
         if (isMerging) {
             fieldUpdates = mergingDVUpdates.get(update.field);
             if (fieldUpdates == null) {
@@ -977,6 +977,10 @@ final class ReadersAndUpdates {
         isMerging = false;
     }
 
+    /**
+     * 解除merge状态 并返回在merge过程中接收到的update信息
+     * @return
+     */
     public synchronized Map<String, List<DocValuesFieldUpdates>> getMergingDVUpdates() {
         // We must atomically (in single sync'd block) clear isMerging when we return the DV updates otherwise we can lose updates:
         isMerging = false;

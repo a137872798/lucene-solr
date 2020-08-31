@@ -558,6 +558,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * the right to add N docs, before they actually change the index,
      * much like how hotels place an "authorization hold" on your credit
      * card to make sure they can later charge you when you check out.
+     * 当前 Index维护的doc总数
      */
     private final AtomicLong pendingNumDocs = new AtomicLong();
     private final boolean softDeletesEnabled;
@@ -4004,6 +4005,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * and saves the resulting deletes and updates files (incrementing the delete
      * and DV generations for merge.info). If no deletes were flushed, no new
      * deletes file is saved.
+     * 当merge 正常完成时触发  主要作用就是捕捉在merge过程中发生的 delete 和 update信息 并作用到merge后的segment上
+     * 这样确保能接收到最新的 update信息  该方法还会检测在merge期间新增的merge信息 确保不丢失
+     *
+     * 针对mergeFinishedGen 的并发控制是通过synchronized 的 虽然在该方法内 没有将新的segment发布到 IndexWriter上
+     * 但是包裹该方法的 commitMerge 也是在synchronized 修饰下的 只要确保那个方法中完成了segment的发布就可以
      */
     private synchronized ReadersAndUpdates commitMergedDeletesAndUpdates(MergePolicy.OneMerge merge, MergeState mergeState) throws IOException {
 
@@ -4022,7 +4028,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         long minGen = Long.MAX_VALUE;
 
         // Lazy init (only when we find a delete or update to carry over):
+        // 将merge后的 segmentCommitInfo 设置到 readerPool中
         final ReadersAndUpdates mergedDeletesAndUpdates = getPooledInstance(merge.info, true);
+
         int numDeletesBefore = mergedDeletesAndUpdates.getDelCount();
         // field -> delGen -> dv field updates
         Map<String, Map<Long, DocValuesFieldUpdates>> mappedDVUpdates = new HashMap<>();
@@ -4030,8 +4038,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         boolean anyDVUpdates = false;
 
         assert sourceSegments.size() == mergeState.docMaps.length;
+
+        // 遍历参与merge的每个 segment
         for (int i = 0; i < sourceSegments.size(); i++) {
             SegmentCommitInfo info = sourceSegments.get(i);
+            // 计算所有segment 下 最小的 bufferedDeletesGen
             minGen = Math.min(info.getBufferedDeletesGen(), minGen);
             final int maxDoc = info.info.maxDoc();
             final ReadersAndUpdates rld = getPooledInstance(info, false);
@@ -4039,14 +4050,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             assert rld != null : "seg=" + info.info.name;
 
             MergeState.DocMap segDocMap = mergeState.docMaps[i];
+            // leafDocMaps 在未使用 IndexSort时  直接返回原docId 不做任何映射处理
             MergeState.DocMap segLeafDocMap = mergeState.leafDocMaps[i];
 
+            // 找到在merge期间被标记成删除的doc  并将删除信息添加到 合并后的segment中
             carryOverHardDeletes(mergedDeletesAndUpdates, maxDoc, mergeState.liveDocs[i], merge.hardLiveDocs.get(i), rld.getHardLiveDocs(),
                     segDocMap, segLeafDocMap);
 
             // Now carry over all doc values updates that were resolved while we were merging, remapping the docIDs to the newly merged docIDs.
             // We only carry over packets that finished resolving; if any are still running (concurrently) they will detect that our merge completed
             // and re-resolve against the newly merged segment:
+            // 将merge期间新增的merge信息作用到merge后的segment上
             Map<String, List<DocValuesFieldUpdates>> mergingDVUpdates = rld.getMergingDVUpdates();
             for (Map.Entry<String, List<DocValuesFieldUpdates>> ent : mergingDVUpdates.entrySet()) {
 
@@ -4058,8 +4072,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     mappedDVUpdates.put(field, mappedField);
                 }
 
+                // 将这些update信息 按照 delGen 分组
                 for (DocValuesFieldUpdates updates : ent.getValue()) {
 
+                    // 还未处理的 gen 不需要提前作用到 merge后的段上   可以看到  BufferedUpdateStream.finishedSegment 都是在 IndexWriter的synchronized 中执行的 所以这里检测到还未处理就不可能发生 中途突然完成的情况
                     if (bufferedUpdatesStream.stillRunning(updates.delGen)) {
                         continue;
                     }
@@ -4085,6 +4101,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     DocValuesFieldUpdates.Iterator it = updates.iterator();
                     int doc;
                     while ((doc = it.nextDoc()) != NO_MORE_DOCS) {
+                        // 将针对之前segment的某个field 的更新信息作用到merge后的segment上   这里涉及到 从某个segment的doc 映射到 全局segment的doc的逻辑
                         int mappedDoc = segDocMap.get(segLeafDocMap.get(doc));
                         if (mappedDoc != -1) {
                             if (it.hasValue()) {
@@ -4100,10 +4117,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
         }
 
+
+        // 代表至少有一个 update对象作用到了新的segment上
         if (anyDVUpdates) {
             // Persist the merged DV updates onto the RAU for the merged segment:
+            // 这里插入的都是被处理过的update   gen不符合的不会被插入到该容器中
             for (Map<Long, DocValuesFieldUpdates> d : mappedDVUpdates.values()) {
                 for (DocValuesFieldUpdates updates : d.values()) {
+                    // 固化这些update对象后 设置到mergedDeletesAndUpdates 中
                     updates.finish();
                     mergedDeletesAndUpdates.addDVUpdate(updates);
                 }
@@ -4124,6 +4145,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
         }
 
+        // 这个值其实不是特别重要 只要确保merge期间的update不丢失 以及之后新建的update 能作用到该segment (BufferedDeletesGen <= update.delGen) 就可以了
         merge.info.setBufferedDeletesGen(minGen);
 
         return mergedDeletesAndUpdates;
@@ -4131,6 +4153,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
     /**
      * This method carries over hard-deleted documents that are applied to the source segment during a merge.
+     * @param mergedReadersAndUpdates   merge后的段对应的  readersAndUpdates 对象
+     * @param maxDoc 当前segment的 maxDoc
+     * @param mergeLiveDocs  每个参与merge的segment对应的liveDoc
+     * @param prevHardLiveDocs   在 mergeMiddle中会设置  在没有使用软删除的情况下 它和 liveDoc是一样的
+     * @param currentHardLiveDocs  此时最新的 hardLiveDocs    在merge过程中 可能会产生新的删除
+     * @param segDocMap 该对象负责将 每个参与merge的段doc 映射到一个全局doc
+     * 应该是因为 segment已经合并完成了 就可以丢弃之前的数据
      */
     private static void carryOverHardDeletes(ReadersAndUpdates mergedReadersAndUpdates, int maxDoc,
                                              Bits mergeLiveDocs, // the liveDocs used to build the segDocMaps
@@ -4143,9 +4172,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // that were not deleted before. Otherwise the segDocMap doesn't contain a mapping.
         // yet this is also required if any MergePolicy modifies the liveDocs since this is
         // what the segDocMap is build on.
+        // TODO 正常情况下应该是相等的    可能涉及到软删除时情况会不一样 先不考虑软删除
+        // carryOverDelete 该函数就是检测某个doc 此时是否还存在
         final IntPredicate carryOverDelete = mergeLiveDocs == null || mergeLiveDocs == prevHardLiveDocs
                 ? docId -> currentHardLiveDocs.get(docId) == false
                 : docId -> mergeLiveDocs.get(docId) && currentHardLiveDocs.get(docId) == false;
+
+        // 代表在执行merge前 已经检测到某些doc被删除了
         if (prevHardLiveDocs != null) {
             // If we had deletions on starting the merge we must
             // still have deletions now:
@@ -4166,6 +4199,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // check if the before/after liveDocs have changed.
             // If so, we must carefully merge the liveDocs one
             // doc at a time:
+            // 在这个过程中 又有新的doc 被删除了
             if (currentHardLiveDocs != prevHardLiveDocs) {
                 // This means this segment received new deletes
                 // since we started the merge, so we
@@ -4174,16 +4208,20 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     if (prevHardLiveDocs.get(j) == false) {
                         // if the document was deleted before, it better still be deleted!
                         assert currentHardLiveDocs.get(j) == false;
+                    // 之前存在 但是此时不存在的doc
                     } else if (carryOverDelete.test(j)) {
                         // the document was deleted while we were merging:
+                        // 将merge后的对象的 该doc 标记成删除
                         mergedReadersAndUpdates.delete(segDocMap.get(segLeafDocMap.get(j)));
                     }
                 }
             }
+        // 代表之前所有doc 都存活 此时有部分doc被删除
         } else if (currentHardLiveDocs != null) {
             assert currentHardLiveDocs.length() == maxDoc;
             // This segment had no deletes before but now it
             // does:
+            // 遍历找到在merge期间删除的doc 并设置到 mergedReadersAndUpdates中
             for (int j = 0; j < maxDoc; j++) {
                 if (carryOverDelete.test(j)) {
                     mergedReadersAndUpdates.delete(segDocMap.get(segLeafDocMap.get(j)));
@@ -4193,6 +4231,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
+     * 当merge工作完成时触发
      * @param merge
      * @param mergeState
      * @return
@@ -4219,6 +4258,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // deleter.refresh() call that will remove any index
         // file that current segments does not reference), we
         // abort this merge
+        // 如果本次merge 在执行过程中被终止了
         if (merge.isAborted()) {
             if (infoStream.isEnabled("IW")) {
                 infoStream.message("IW", "commitMerge: skip: it was aborted");
@@ -4232,12 +4272,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // so it will be dropped shortly anyway, but not
             // doing this  makes  MockDirWrapper angry in
             // TestNRTThreads (LUCENE-5434):
+            // 如果该segment 已经设置到 readerPool中 就进行移除 这样方便删除相关文件
             readerPool.drop(merge.info);
             // Safe: these files must exist:
+            // 将该段下维护的所有相关文件都删除
             deleteNewFiles(merge.info.files());
             return false;
         }
 
+        // 避免在merge过程中  update/delete 信息丢失
         final ReadersAndUpdates mergedUpdates = merge.info.info.maxDoc() == 0 ? null : commitMergedDeletesAndUpdates(merge, mergeState);
 
         // If the doc store we are using has been closed and
@@ -4247,6 +4290,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
         assert !segmentInfos.contains(merge.info);
 
+        // 最新的segment 是否为空 或者 在处理了最新的delete信息后 变成空
         final boolean allDeleted = merge.segments.size() == 0 ||
                 merge.info.info.maxDoc() == 0 ||
                 (mergedUpdates != null && isFullyDeleted(mergedUpdates));
@@ -4274,6 +4318,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // Pass false for assertInfoLive because the merged
                 // segment is not yet live (only below do we commit it
                 // to the segmentInfos):
+                // 仅减少引用计数 实际上没有从池中移除  TODO 这里应该是对应 处理update时那个引用计数是否为1的判断  代表update已经处理过了
                 release(mergedUpdates, false);
                 success = true;
             } finally {
@@ -4288,6 +4333,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // exception is hit e.g. writing the live docs for the
         // merge segment, in which case we need to abort the
         // merge:
+        // 将merge后的段发布到IndexWriter中 同时将之前参与merge的段从 indexWriter中移除
         segmentInfos.applyMergeChanges(merge, dropSegment);
 
         // Now deduct the deleted docs that we just reclaimed from this
@@ -4301,6 +4347,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             delDocCount = merge.totalMaxDoc - merge.info.info.maxDoc();
         }
         assert delDocCount >= 0;
+        // 更新此时维护的doc总数
         adjustPendingNumDocs(-delDocCount);
 
         if (dropSegment) {
@@ -4310,10 +4357,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             deleteNewFiles(merge.info.files());
         }
 
+        // 因为 segmentInfos 中已经释放了之前参与merge的segment 在checkpoint中 这些segment的引用计数就会归0  这样就达到删除索引文件的目的    (同时基于引用计数的删除确保是安全的)
         try (Closeable finalizer = this::checkpoint) {
             // Must close before checkpoint, otherwise IFD won't be
             // able to delete the held-open files from the merge
             // readers:
+            // 将参与merge的所有段对应的reader对象关闭 否则无法删除索引文件
             closeMergeReaders(merge, false);
         }
 
@@ -4321,6 +4370,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             infoStream.message("IW", "after commitMerge: " + segString());
         }
 
+        // TODO 这个是啥时候设置的
         if (merge.maxNumSegments != UNBOUNDED_MAX_MERGE_SEGMENTS && !dropSegment) {
             // cascade the forceMerge:
             if (!segmentsToMerge.containsKey(merge.info)) {
@@ -4696,6 +4746,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private synchronized void closeMergeReaders(MergePolicy.OneMerge merge, boolean suppressExceptions) throws IOException {
         final boolean drop = suppressExceptions == false;
         try (Closeable finalizer = merge::mergeFinished) {
+            // 使用 第二个参数处理每个 readers
             IOUtils.applyToAll(merge.readers, sr -> {
                 final ReadersAndUpdates rld = getPooledInstance(sr.getOriginalSegmentInfo(), false);
                 // We still hold a ref so it should not have been removed:
@@ -4750,6 +4801,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * Does the actual (time-consuming) work of the merge,
      * but without holding synchronized lock on IndexWriter
      * instance
+     *
      * merge的核心逻辑就在这里
      */
     private int mergeMiddle(MergePolicy.OneMerge merge, MergePolicy mergePolicy) throws IOException {
@@ -4866,12 +4918,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // This is where all the work happens:
             // 确保此时合并后的doc总数>0 否则不需要处理 直接删除旧数据就好
             if (merger.shouldMerge()) {
-                // 执行真正的merge操作
+                // 执行真正的merge操作   在这里合并最核心的 term数据时 并没有将未存活的doc相关的数据剔除掉
                 merger.merge();
             }
 
             MergeState mergeState = merger.mergeState;
             assert mergeState.segmentInfo == merge.info.info;
+            // 将期间创建的所有索引文件设置到 segmentInfo中
             merge.info.info.setFiles(new HashSet<>(dirWrapper.getCreatedFiles()));
             Codec codec = config.getCodec();
             // ignore
@@ -4912,6 +4965,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (merger.shouldMerge() == false) {
                 // Merge would produce a 0-doc segment, so we do nothing except commit the merge to remove all the 0-doc segments that we "merged":
                 assert merge.info.info.maxDoc() == 0;
+                // 当某次merge工作完成时 触发
                 commitMerge(merge, mergeState);
                 return 0;
             }
@@ -4926,6 +4980,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 useCompoundFile = mergePolicy.useCompoundFile(segmentInfos, merge.info, this);
             }
 
+            // TODO 忽略复合文件
             if (useCompoundFile) {
                 success = false;
 
@@ -4993,11 +5048,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // above:
             boolean success2 = false;
             try {
+                // 这里将merge后最新的 segment 信息写入到索引文件
                 codec.segmentInfoFormat().write(directory, merge.info.info, context);
                 success2 = true;
             } finally {
                 if (!success2) {
                     // Safe: these files must exist
+                    // 段信息写入失败时 连同创建的所有索引文件一起删除
                     deleteNewFiles(merge.info.files());
                 }
             }
@@ -5010,6 +5067,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 infoStream.message("IW", String.format(Locale.ROOT, "merged segment size=%.3f MB vs estimate=%.3f MB", merge.info.sizeInBytes() / 1024. / 1024., merge.estimatedMergeBytes / 1024 / 1024.));
             }
 
+            // 一般情况下 warmer对象为null 可以先忽略
             final IndexReaderWarmer mergedSegmentWarmer = config.getMergedSegmentWarmer();
             if (readerPool.isReaderPoolingEnabled() && mergedSegmentWarmer != null) {
                 final ReadersAndUpdates rld = getPooledInstance(merge.info, true);
@@ -5024,6 +5082,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
             }
 
+            // 提交合并结果
             if (!commitMerge(merge, mergeState)) {
                 // commitMerge will return false if this merge was
                 // aborted
@@ -5040,6 +5099,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
         }
 
+        // 返回合并后的总doc数
         return merge.info.info.maxDoc();
     }
 
@@ -5799,7 +5859,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 Set<String> delFiles = new HashSet<>();
                 BufferedUpdatesStream.SegmentState[] segStates;
 
+                // 这个同步块会与 commitMerge相互作用
                 synchronized (this) {
+                    /**
+                     * 在下面检测到 mergeGen发生变化后  会进入第二次循环
+                     */
+
                     // 确定会影响到的范围
                     List<SegmentCommitInfo> infos = getInfosToApply(updates);
                     if (infos == null) {
@@ -5876,13 +5941,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
                 // Must sync on writer here so that IW.mergeCommit is not running concurrently, so that if we exit, we know mergeCommit will succeed
                 // in pulling all our delGens into a merge:
-                // 代表此时 update对象已经作用在多个segment 上了 因为每个段在处理后都会变小 比起挨个的更新doc信息  还不如直接将多个段的信息合并到一个新的段中  并在这个过程中忽略被标记删除的doc
                 synchronized (this) {
 
-                    // 获取此时的 merge Gen
+                    // 代表在这个期间检测到发生了一次merge 操作
+                    // mergeMiddle 在执行完merge后 会先增加mergeFinishedGen  并检测在merge期间是否处理了 update数据  这样更新数据就不会丢失了  同时处理update的线程在检测到 mergeFinishedGen 发生了变化 又会重复处理一次之前的数据
+                    // 这样就能确保merge后的segment 不会丢失update信息
                     long mergeGenCur = mergeFinishedGen.get();
 
-                    // 代表没有其他线程竞争
+                    // 本次segment都是可靠的 没有因为merge导致segment的变化
                     if (mergeGenCur == mergeGenStart) {
 
                         // Must do this while still holding IW lock else a merge could finish and skip carrying over our updates:

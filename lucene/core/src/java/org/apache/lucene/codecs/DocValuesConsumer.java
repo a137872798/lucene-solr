@@ -124,7 +124,9 @@ public abstract class DocValuesConsumer implements Closeable {
    *  or {@link #mergeSortedNumericField} for each field,
    *  depending on its type.
    *  Implementations can override this method 
-   *  for more sophisticated merging (bulk-byte copying, etc). */
+   *  for more sophisticated merging (bulk-byte copying, etc).
+   *  这里就是merge DocValue的实现的地方
+   *  */
   public void merge(MergeState mergeState) throws IOException {
     for(DocValuesProducer docValuesProducer : mergeState.docValuesProducers) {
       if (docValuesProducer != null) {
@@ -132,6 +134,7 @@ public abstract class DocValuesConsumer implements Closeable {
       }
     }
 
+    // mergeState.mergeFieldInfos 在下层已经做过包装了 确保每次merge只能看见使用同一 format的field
     for (FieldInfo mergeFieldInfo : mergeState.mergeFieldInfos) {
       DocValuesType type = mergeFieldInfo.getDocValuesType();
       if (type != DocValuesType.NONE) {
@@ -174,6 +177,7 @@ public abstract class DocValuesConsumer implements Closeable {
    * <p>
    * The default implementation calls {@link #addNumericField}, passing
    * a DocValuesProducer that merges and filters deleted documents on the fly.
+   * docValue merge的套路都是一样的 就是先确定要merge的field 然后去所有segment下找到该field的docValue迭代器 再将他们的数据合并
    */
   public void mergeNumericField(final FieldInfo mergeFieldInfo, final MergeState mergeState) throws IOException {
     addNumericField(mergeFieldInfo,
@@ -191,13 +195,16 @@ public abstract class DocValuesConsumer implements Closeable {
                           NumericDocValues values = null;
                           DocValuesProducer docValuesProducer = mergeState.docValuesProducers[i];
                           if (docValuesProducer != null) {
+                            // 尝试从参与merge的每个 segment 下寻找该field的信息
                             FieldInfo readerFieldInfo = mergeState.fieldInfos[i].fieldInfo(mergeFieldInfo.name);
+                            // field存在 且类型匹配的情况下 获取该field对应的 docValue迭代器
                             if (readerFieldInfo != null && readerFieldInfo.getDocValuesType() == DocValuesType.NUMERIC) {
                               values = docValuesProducer.getNumeric(readerFieldInfo);
                             }
                           }
                           if (values != null) {
                             cost += values.cost();
+                            // 将每个segment对应的 docValue 迭代器合并
                             subs.add(new NumericDocValuesSub(mergeState.docMaps[i], values));
                           }
                         }

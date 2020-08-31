@@ -208,7 +208,6 @@ final class ReaderPool implements Closeable {
     // Matches incRef in get:
     rld.decRef();
 
-    // 此时引用计数刚好为0
     if (rld.refCount() == 0) {
       // This happens if the segment was just merged away,
       // while a buffered deletes packet was still applying deletes/updates to it.
@@ -219,7 +218,7 @@ final class ReaderPool implements Closeable {
       // Pool still holds a ref:
       assert rld.refCount() > 0: "refCount=" + rld.refCount() + " reader=" + rld.info;
 
-      // 如果未开启池化 并且此时引用计数马上要归0    (contains为false应该就是已经释放掉了)
+      // ReadersAndUpdates 对象被创建时引用计数就是1 同时 如果create为true 引用计数再增加就是2   实际上正常操作每次引用计数刚好会回归1
       if (poolReaders == false && rld.refCount() == 1 && readerMap.containsKey(rld.info)) {
         // This is the last ref to this RLD, and we're not
         // pooling, so remove it:

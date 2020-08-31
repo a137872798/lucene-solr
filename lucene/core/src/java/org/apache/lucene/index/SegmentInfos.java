@@ -1108,7 +1108,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     /**
      * applies all changes caused by committing a merge to this SegmentInfos
-     * @param dropSegment 当segment重复时 是否选择丢弃
+     * @param dropSegment 该段是否应该被丢弃  如果merge后的segment下没有有效数据时 就需要被丢弃 那么就仅仅是将之前参与merge的segment 从 IndexWriter中移除 代表这些segment不再被维护
      */
     void applyMergeChanges(MergePolicy.OneMerge merge, boolean dropSegment) {
         if (indexCreatedVersionMajor >= 7 && merge.info.info.minVersion == null) {
@@ -1116,29 +1116,28 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
         }
 
         final Set<SegmentCommitInfo> mergedAway = new HashSet<>(merge.segments);
+
+        // 标记是否已经插入
         boolean inserted = false;
         int newSegIdx = 0;
         for (int segIdx = 0, cnt = segments.size(); segIdx < cnt; segIdx++) {
             assert segIdx >= newSegIdx;
-            // 获取本对象中 segment的描述对象
             final SegmentCommitInfo info = segments.get(segIdx);
-            // 只要merge中存在该对象 就替换成 merge.info 并且 之后遇到同样的情况就忽略
-            // 看来 merge.info 就是 merge内部所有segment的结合体
             if (mergedAway.contains(info)) {
+                // 首次插入 且 merge的段不需要被丢弃时 才插入
                 if (!inserted && !dropSegment) {
                     segments.set(segIdx, merge.info);
                     inserted = true;
                     newSegIdx++;
                 }
             } else {
-                // 不包含的情况下 将指定位置 设置成 merge.info
                 segments.set(newSegIdx, info);
                 newSegIdx++;
             }
         }
 
         // the rest of the segments in list are duplicates, so don't remove from map, only list!
-        // 代表后面的数据都重复了
+        // 后面的segment 就丢弃
         segments.subList(newSegIdx, segments.size()).clear();
 
         // Either we found place to insert segment, or, we did
@@ -1146,7 +1145,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
         // deleted while we are merging, in which case it should
         // be the case that the new segment is also all deleted,
         // we insert it at the beginning if it should not be dropped:
-        // 没有发生insert的情况 选择在头部增加一个 merge.info
+        // 代表没有在当前的 segments下找到参与merge的segment  但是合并后的段也需要加入到 segments中
         if (!inserted && !dropSegment) {
             segments.add(0, merge.info);
         }

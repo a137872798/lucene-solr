@@ -175,6 +175,7 @@ final class SegmentMerger {
         normsMergeInstance = norms.getMergeInstance();
       }
       // 在这里将所有term信息合并 term的排序借助了二叉堆  而写入term同时相关的postings 则是连续写入 (前提是不考虑IndexSort的情况)
+      // TODO 在merge term的过程中 没有按照liveDoc 剔除掉无效的doc是什么情况???
       mergeTerms(segmentWriteState, normsMergeInstance);
     }
     if (mergeState.infoStream.isEnabled("SM")) {
@@ -185,6 +186,8 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
+
+    // 合并 docValue
     if (mergeState.mergeFieldInfos.hasDocValues()) {
       mergeDocValues(segmentWriteState);
     }
@@ -196,6 +199,8 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
+
+    // 合并多维度信息
     if (mergeState.mergeFieldInfos.hasPointValues()) {
       mergePoints(segmentWriteState);
     }
@@ -204,6 +209,7 @@ final class SegmentMerger {
       mergeState.infoStream.message("SM", ((t1-t0)/1000000) + " msec to merge points [" + numMerged + " docs]");
     }
 
+    // 合并向量信息
     if (mergeState.mergeFieldInfos.hasVectors()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
@@ -220,6 +226,7 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
+    // 最后将合并的 fieldInfo信息写入到某个索引文件中
     codec.fieldInfosFormat().write(directory, mergeState.segmentInfo, "", mergeState.mergeFieldInfos, context);
     if (mergeState.infoStream.isEnabled("SM")) {
       long t1 = System.nanoTime();

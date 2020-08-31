@@ -143,6 +143,13 @@ public class Lucene60PointsWriter extends PointsWriter implements Closeable {
     }
   }
 
+
+  /**
+   * 将多个segment 下的point 信息合并
+   * BKD 相关的先不看了
+   * @param mergeState
+   * @throws IOException
+   */
   @Override
   public void merge(MergeState mergeState) throws IOException {
     /**
