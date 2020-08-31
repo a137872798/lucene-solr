@@ -477,7 +477,6 @@ final class IndexFileDeleter implements Closeable {
    * the filesystem and delete such files.  If segmentName
    * is non-null, we will only delete files corresponding to
    * that segment.
-   * 删除一些中间创建的文件 这些文件因为还没有生成commitPoint 所以还没有引用计数
    */
   void refresh() throws IOException {
     assert locked();
@@ -566,7 +565,7 @@ final class IndexFileDeleter implements Closeable {
    * removed, we decref their files as well.
    *
    * @param segmentInfos  存储了所有的段信息
-   * @param isCommit  代表是否要为  segment_N 文件增加引用计数
+   * @param isCommit  本次处理是否是一次提交动作
    * 这个检查点方法的意图就是为所有有效的索引文件维护一个正确的引用计数 确保文件不会在预料外的场景被删除
    * 每当有一种持久化的改变发生时 就会触发该方法 比如某次flush 生成了新的索引文件 就会调用该方法  为其增加引用计数
    */
@@ -584,19 +583,17 @@ final class IndexFileDeleter implements Closeable {
     // 为目标文件增加引用计数
     incRef(segmentInfos, isCommit);
 
-    // TODO 代表此时包含 segment_N 文件  先忽略
     if (isCommit) {
       // Append to our commits list:
-      // 在 commit的场景下调用 检查点方法 会创建新的检查点对象
+      // 在 commit的场景下调用 、会创建新的检查点对象
       commits.add(new CommitPoint(commitsToDelete, directoryOrig, segmentInfos));
 
       // Tell policy so it can remove commits:
-      // 触发策略对象的钩子 在这里就是因为生成了新的提交点 所以之前的提交点对象都允许被删除
-      // 将满足条件的提交点删除  (这里只是转移到 删除队列中 并没有真正删除)  同时调用该方法时 提交点并没有从commits中移除
+      // policy一般就是 KeepOnlyLastCommitDeletionPolicy   这里会触发除了最后一个commitPoint外的其他提交点的 delete 方法
       policy.onCommit(commits);
 
       // Decref files for commits that were deleted by the policy:
-      // 尝试删除 队列中的提交点
+      // 处理 commits中的提交点对象   就是将相关索引文件删除
       deleteCommits();
     } else {
       // DecRef old files from the last checkpoint, if any:
@@ -885,7 +882,7 @@ final class IndexFileDeleter implements Closeable {
 
     /**
      *
-     * @param commitsToDelete  当本对象确定要被删除时  添加到 commitsToDelete 中
+     * @param commitsToDelete  用于采集commitPoint的队列
      * @param directoryOrig  段文件所在的 目录
      * @param segmentInfos  该提交点对应的段信息
      * @throws IOException

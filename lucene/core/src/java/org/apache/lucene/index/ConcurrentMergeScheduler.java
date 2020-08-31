@@ -581,7 +581,7 @@ public class ConcurrentMergeScheduler extends MergeScheduler {
     // pending merges, until it's empty:
     while (true) {
 
-      // 一旦进入merge方法就会不断的创建新线程 并让每个线程去执行 oneMerge任务 当创建的线程数达到上限时  阻塞等待任务队列为空
+      // 一旦进入merge方法就会不断的创建新线程 并让每个线程去执行 oneMerge任务 当创建的线程数达到上限时  阻塞等待任务队列为空    如果在创建过程中发现已经没有需要执行的任务了 用户线程会提前返回
       // 同时每个完成首次merge的 MergeThread 会回调merge方法 帮助创建线程 但是他们在帮助创建满线程后 就会返回false 并从循环中退出 结束run()方法
       if (maybeStall(mergeSource) == false) {
         break;

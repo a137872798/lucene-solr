@@ -181,11 +181,9 @@ final class DocumentsWriterPerThread {
      * currently buffered docs.  This resets our state,
      * discarding any docs added since last flush.
      * 代表由该对象解析的数据 将被放弃
-     * TODO 被标记成 aborted的对象将在什么时候被完全废弃???
      */
     void abort() throws IOException {
         aborted = true;
-        //
         pendingNumDocs.addAndGet(-numDocsInRAM);
         try {
             if (infoStream.isEnabled("DWPT")) {

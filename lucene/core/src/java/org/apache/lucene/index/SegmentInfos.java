@@ -559,22 +559,22 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     boolean pendingCommit;
 
     /**
-     * 将变动写入到目标目录
+     * 应该就是将当前所有 segment信息写入到目录下
      *
      * @param directory
      * @throws IOException
      */
     private void write(Directory directory) throws IOException {
 
-        // 开始生成下一个年代
+        // 每次将 segmentInfos的信息写入到索引文件前 都会生成一个 gen
         long nextGeneration = getNextPendingGeneration();
-        // 生成有关新的年代的 segment元数据文件  注意这里的名称是  pending_segment 也就是当前还认为该文件是无效的
-        // rollback 刚好就是删除该文件
+        // 此时生成的文件名 主干部分是pending_segments
         String segmentFileName = IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS,
                 "",
                 nextGeneration);
 
         // Always advance the generation on write:
+        // 更新当前gen
         generation = nextGeneration;
 
         IndexOutput segnOutput = null;
@@ -590,7 +590,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             directory.sync(Collections.singleton(segmentFileName));
             success = true;
         } finally {
-            // 输盘结束后会设置一个 待提交的标识
+            // 输盘结束后会设置一个 待提交的标识  这时就无法重复调用 prepareCommit了
             if (success) {
                 pendingCommit = true;
             } else {
@@ -600,7 +600,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
                 IOUtils.closeWhileHandlingException(segnOutput);
                 // Try not to leave a truncated segments_N file in
                 // the index:
-                // 删除 不完整的segment的元数据文件
+                // 删除不完整的segment的元数据文件
                 IOUtils.deleteFilesIgnoringExceptions(directory, segmentFileName);
             }
         }
@@ -608,6 +608,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     /**
      * Write ourselves to the provided {@link IndexOutput}
+     * 将当前所有segment信息写入到索引文件中
      */
     public void write(IndexOutput out) throws IOException {
         CodecUtil.writeIndexHeader(out, "segments", VERSION_CURRENT,
@@ -910,16 +911,16 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * @param dir
      */
     final void rollbackCommit(Directory dir) {
-        // 代表当前数据已经写入到文件中了
+        // 首先确保 prepareCommit 已经被调用过 也就是 pendingCommit此时为true
         if (pendingCommit) {
             // 消除待提交状态
             pendingCommit = false;
 
-            // 删除 pending_segment 文件
             // we try to clean up our pending_segments_N
 
             // Must carefully compute fileName from "generation"
             // since lastGeneration isn't incremented:
+            // 找到之前的 pending_segment文件 并删除
             final String pending = IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", generation);
 
             // Suppress so we keep throwing the original exception
@@ -941,10 +942,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * 代表准备将当前数据写入到目标目录
      **/
     final void prepareCommit(Directory dir) throws IOException {
-        // 当前已经生成了 pending文件 无法预提交
+        // pendingCommit为true 代表已经为commit做好准备了 无法重复调用该方法 并提示用户应该调用 IndexWriter.commit or rollback
         if (pendingCommit) {
             throw new IllegalStateException("prepareCommit was already called");
         }
+        // 将目录对应的元数据刷盘 属于操作系统的概念
         dir.syncMetaData();
         write(dir);
     }
@@ -954,7 +956,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      * The returned collection is recomputed on each
      * invocation.
      *
-     * @param includeSegmentsFile  返回所有关联文件  segment_N 文件
+     * @param includeSegmentsFile  返回所有关联文件
      */
     public Collection<String> files(boolean includeSegmentsFile) throws IOException {
         HashSet<String> files = new HashSet<>();
@@ -975,8 +977,8 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     /**
      * Returns the committed segments_N filename.
+     * 本次segment_N 数据可以正常提交了
      */
-    // 进行提交动作
     final String finishCommit(Directory dir) throws IOException {
         // 必须确保当前处于待提交状态
         if (pendingCommit == false) {

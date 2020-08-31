@@ -282,8 +282,9 @@ final class DocumentsWriter implements Closeable, Accountable {
   /** Called if we hit an exception at a bad time (when
    *  updating the index files) and must discard all
    *  currently buffered docs.  This resets our state,
-   *  discarding any docs added since last flush. */
-  // 禁用该对象 这样其他线程无法使用该对象 修改doc
+   *  discarding any docs added since last flush.
+   *  一般是当 IndexWriter要被关闭时触发 丢弃所有更新数据 以及此时内存中解析doc后生成的数据
+   *  */
   synchronized void abort() throws IOException {
     boolean success = false;
     try {
@@ -292,17 +293,18 @@ final class DocumentsWriter implements Closeable, Accountable {
       if (infoStream.isEnabled("DW")) {
         infoStream.message("DW", "abort");
       }
-      // 为所有线程上锁
+
+      // 阻塞直到抢占到所有 perThread对象
       for (final DocumentsWriterPerThread perThread : perThreadPool.filterAndLock(x -> true)) {
         try {
-          // 一旦抢占到这个线程后 就禁用目标线程
+          // 将perThread 标记成abort
           abortDocumentsWriterPerThread(perThread);
         } finally {
           perThread.unlock();
         }
       }
       flushControl.abortPendingFlushes();
-      // 这里应该是  等待刷盘动作完成 (将当前已经存在的一些 更新动作持久化到磁盘)
+      // 如果此时有正在刷盘的线程 等待线程执行完成
       flushControl.waitForFlush();
       assert perThreadPool.size() == 0
           : "There are still active DWPT in the pool: " + perThreadPool.size();

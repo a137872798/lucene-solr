@@ -320,7 +320,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private volatile long lastCommitChangeCount; // last changeCount that was committed
 
     /**
-     * 该数据是原始数据  当提交失败时 会选择通过这些数据来回滚
+     * 在初始化IndexWriter时 会加载 segment_N 文件  读取此时的 segmentInfos信息 这个数据在rollback时使用  rollback会舍弃当前所有的segmentInfo 并还原到初始化该IndexWriter时的segment信息
      */
     private List<SegmentCommitInfo> rollbackSegments;      // list of segmentInfo we will fallback to if the commit fails
 
@@ -330,6 +330,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      */
     private volatile SegmentInfos pendingCommit;            // set when a commit is pending (after prepareCommit() & before commit())
     private volatile long pendingSeqNo;
+
+    /**
+     * 记录待提交的变化数   是某个时刻changeCount的值
+     */
     private volatile long pendingCommitChangeCount;
 
     /**
@@ -1301,6 +1305,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * if there's an exc so the IndexWriter is always closed.  This is called
      * from {@link #close} when {@link IndexWriterConfig#commitOnClose} is
      * {@code true}.
+     * 调用close时 触发
      */
     private void shutdown() throws IOException {
         if (pendingCommit != null) {
@@ -1314,9 +1319,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     infoStream.message("IW", "now flush at close");
                 }
 
+                // 将解析的所有数据刷盘
                 flush(true, true);
+                // 等待merge线程处理完数据
                 waitForMerges();
+                // 此时才进行提交动作 基于最新的 segment 生成 segment_N 文件
                 commitInternal(config.getMergePolicy());
+                // 这里主要就是为了设置成close 并关闭相关的类 因为数据在前面已经保存了
                 rollbackInternal(); // ie close, since we just committed
             } catch (Throwable t) {
                 // Be certain to close the index on any exception
@@ -1370,7 +1379,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         while (true) {
             if (closed == false) {
                 if (closing == false) {
-                    // We get to close
+                    // We get to close  代表抢占成功 返回true
                     closing = true;
                     return true;
                 } else if (waitForClose == false) {
@@ -1379,9 +1388,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     // Another thread is presently trying to close;
                     // wait until it finishes one way (closes
                     // successfully) or another (fails to close)
+                    // 等待其他线程关闭完成
                     doWait();
                 }
             } else {
+                // 代表被其他线程抢先关闭了
                 return false;
             }
         }
@@ -2491,6 +2502,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
         // Ensure that only one thread actually gets to do the
         // closing, and make sure no commit is also in progress:
+        // 阻塞直到本对象被标记成 close   返回true 代表当前线程抢占成功  允许执行接下来的操作
         if (shouldClose(true)) {
             rollbackInternal();
         }
@@ -2506,12 +2518,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 回滚之前的操作
+     * @throws IOException
+     */
     private void rollbackInternalNoCommit() throws IOException {
         if (infoStream.isEnabled("IW")) {
             infoStream.message("IW", "rollback");
         }
 
         try {
+            // 强制终止正在执行的 merge
             synchronized (this) {
                 // must be synced otherwise register merge might throw and exception if stopMerges
                 // changes concurrently, abortMerges is synced as well
@@ -2525,17 +2542,22 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             // Must pre-close in case it increments changeCount so that we can then
             // set it to false before calling rollbackInternal
+            // 阻塞等待所有 MergeThread 执行完成  (这些线程检测到stopMerges 会提早结束)
             mergeScheduler.close();
 
             docWriter.close(); // mark it as closed first to prevent subsequent indexing actions/flushes
             assert !Thread.holdsLock(this) : "IndexWriter lock should never be hold when aborting";
+            // 终止此时所有的写入动作 并丢弃数据   (包括 deleteQueue采集到的delete/update数据)
             docWriter.abort(); // don't sync on IW here
+            // 在 docWriter.abort() 中不是已经调用过该方法了吗???
             docWriter.flushControl.waitForFlush(); // wait for all concurrently running flushes
+            // 将新生成的 segment 发布到segmentInfos中 那么这样的话 之前 prepareCommit生成的 pending_segment 相当于是作废了
             publishFlushedSegments(true); // empty the flush ticket queue otherwise we might not have cleaned up all resources
             eventQueue.close();
             synchronized (this) {
 
                 if (pendingCommit != null) {
+                    // 删除之前创建的 pending_segment文件
                     pendingCommit.rollbackCommit(directory);
                     try {
                         deleter.decRef(pendingCommit);
@@ -2548,6 +2570,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // Keep the same segmentInfos instance but replace all
                 // of its SegmentInfo instances so IFD below will remove
                 // any segments we flushed since the last commit:
+                // 回到上次提交的状态  在初始化该对象时就会加载上次提交的状态
                 segmentInfos.rollbackSegmentInfos(rollbackSegments);
                 int rollbackMaxDoc = segmentInfos.totalMaxDoc();
                 // now we need to adjust this back to the rolled back SI but don't set it to the absolute value
@@ -2564,12 +2587,16 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // these methods throw ACE:
                 if (tragedy.get() == null) {
                     deleter.checkpoint(segmentInfos, false);
+                    // 删除 segment_N 文件
                     deleter.refresh();
+                    // 减少此时维护的所有索引文件引用计数 可能导致所有文件的删除
                     deleter.close();
                 }
 
+                // 更新上次的changCount值
                 lastCommitChangeCount = changeCount.get();
                 // Don't bother saving any changes in our segmentInfos
+                // 将所有 SegmentReader对象关闭
                 readerPool.close();
                 // Must set closed while inside same sync block where we call deleter.refresh, else concurrent threads may try to sneak a flush in,
                 // after we leave this sync block and before we enter the sync block in the finally clause below that sets closed:
@@ -2764,6 +2791,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      *
      * <p>It is guaranteed that any merges started prior to calling this method
      * will have completed once this method completes.</p>
+     * 阻塞当前线程 直到merge完成
      */
     void waitForMerges() throws IOException {
 
@@ -2778,6 +2806,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 infoStream.message("IW", "waitForMerges");
             }
 
+            // 只要还有待执行的merge任务 就阻塞线程
             while (pendingMerges.size() > 0 || runningMerges.size() > 0) {
                 doWait();
             }
@@ -3417,6 +3446,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         ensureOpen();
         pendingSeqNo = prepareCommitInternal();
         // we must do this outside of the commitLock else we can deadlock:
+        // 如果需要合并的话 还会将segment数据合并
+        // TODO merge成功后之前参与merge的segment 不是都被移除了吗 那之前生成的pending_segment 还有过期数据啊
         if (maybeMerge.getAndSet(false)) {
             maybeMerge(config.getMergePolicy(), MergeTrigger.FULL_FLUSH, UNBOUNDED_MAX_MERGE_SEGMENTS);
         }
@@ -3503,15 +3534,20 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             // if we flushed anything.
                             flushCount.incrementAndGet();
                         }
+                        // 阻塞线程直到所有ticket都被处理
                         publishFlushedSegments(true);
                         // cannot pass triggerMerges=true here else it can lead to deadlock:
+                        // 处理此时囤积的所有 update 对象
                         processEvents(false);
 
                         flushSuccess = true;
 
+                        // 获取此时所有待处理update 并阻塞等待完成  (因为有些update对象可能会被其他线程抢占)
                         applyAllDeletesAndUpdates();
                         synchronized (this) {
+                            // 将delete的变化  update的变化 持久化到磁盘上
                             writeReaderPool(true);
+                            // 代表在这个过程中 segment确实发生了变化
                             if (changeCount.get() != lastCommitChangeCount) {
                                 // There are changes to commit, so we will write a new segments_N in startCommit.
                                 // The act of committing is itself an NRT-visible change (an NRT reader that was
@@ -3521,11 +3557,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                                 segmentInfos.changed();
                             }
 
+                            // 该属性是由用户设置的
                             if (commitUserData != null) {
                                 Map<String, String> userData = new HashMap<>();
                                 for (Map.Entry<String, String> ent : commitUserData) {
                                     userData.put(ent.getKey(), ent.getValue());
                                 }
+                                // 将用户信息设置到 segmentInfos中
                                 segmentInfos.setUserData(userData, false);
                             }
 
@@ -3536,6 +3574,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             // sneak into the commit point:
                             toCommit = segmentInfos.clone();
 
+                            // 每次segment的信息发生变化 就会修改该值
                             pendingCommitChangeCount = changeCount.get();
 
                             // This protects the segmentInfos we are now going
@@ -3543,6 +3582,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             // we are trying to sync all referenced files, a
                             // merge completes which would otherwise have
                             // removed the files we are now syncing.
+                            // 获取此时所有segment下的文件名  但是不包含 segment_N 文件  看来segment_N 文件应该就是描述了某次 IndexWriter下所有活跃段的信息
                             filesToCommit = toCommit.files(false);
                             deleter.incRef(filesToCommit);
                         }
@@ -3555,6 +3595,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         }
                         assert Thread.holdsLock(fullFlushLock);
                         // Done: finish the full flush!
+                        // 在 fullFlush完成后执行的后置函数
                         docWriter.finishFullFlush(flushSuccess);
                         doAfterFlush();
                     }
@@ -3567,6 +3608,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             }
 
             try {
+                // 代表有perThread 对象的数据刷盘
                 if (anyChanges) {
                     maybeMerge.set(true);
                 }
@@ -3708,6 +3750,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * of the last operation in the commit.  All sequence numbers &lt;= this value
      * will be reflected in the commit, and all others will not.
      * @see #prepareCommit
+     * 在 prepareCommit后调用   也可以直接调用
      */
     @Override
     public final long commit() throws IOException {
@@ -3725,6 +3768,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * new segment during {@link #commit}, or a concurrent
      * merged finished, this method may return true right
      * after you had just called {@link #commit}.
+     * 检测此时是否有未提交的数据  每次segmentInfos 发生变化时 changeCount都会增加 代表此时信息与之前不一致
      */
     public final boolean hasUncommittedChanges() {
         return changeCount.get() != lastCommitChangeCount || hasChangesInRam();
@@ -3737,6 +3781,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         return docWriter.anyChanges() || bufferedUpdatesStream.any();
     }
 
+    /**
+     * 在提交数据前 应该尽可能的将segment进行合并
+     * @param mergePolicy
+     * @return
+     * @throws IOException
+     */
     private long commitInternal(MergePolicy mergePolicy) throws IOException {
 
         if (infoStream.isEnabled("IW")) {
@@ -3756,6 +3806,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 if (infoStream.isEnabled("IW")) {
                     infoStream.message("IW", "commit: now prepare");
                 }
+                // 在这里会进行预提交  主要是进行 fullFlush 以及处理所有 update/delete信息 和生成一个 pending_segment 索引文件
                 seqNo = prepareCommitInternal();
             } else {
                 if (infoStream.isEnabled("IW")) {
@@ -3764,10 +3815,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 seqNo = pendingSeqNo;
             }
 
+            // 代表本次处理流程完成
             finishCommit();
         }
 
         // we must do this outside of the commitLock else we can deadlock:
+        // TODO 为什么每次都最后执行merge ??? 这样会导致之前一些segment无效啊
         if (maybeMerge.getAndSet(false)) {
             maybeMerge(mergePolicy, MergeTrigger.FULL_FLUSH, UNBOUNDED_MAX_MERGE_SEGMENTS);
         }
@@ -3775,6 +3828,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         return seqNo;
     }
 
+    /**
+     *
+     * @throws IOException
+     */
     @SuppressWarnings("try")
     private void finishCommit() throws IOException {
 
@@ -3790,6 +3847,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 if (pendingCommit != null) {
+                    // 找到本次要提交的索引文件
                     final Collection<String> commitFiles = this.filesToCommit;
                     try (Closeable finalizer = () -> deleter.decRef(commitFiles)) {
 
@@ -3797,6 +3855,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             infoStream.message("IW", "commit: pendingCommit != null");
                         }
 
+                        // 将 pending_segment_N 重命名为 segment_N
                         committedSegmentsFileName = pendingCommit.finishCommit(directory);
 
                         // we committed, if anything goes wrong after this, we are screwed and it's a tragedy:
@@ -3808,12 +3867,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
                         // NOTE: don't use this.checkpoint() here, because
                         // we do not want to increment changeCount:
+                        // 仅保留最新的一次提交点 并将之前的数据清除
                         deleter.checkpoint(pendingCommit, true);
 
                         // Carry over generation to our master SegmentInfos:
                         segmentInfos.updateGeneration(pendingCommit);
 
                         lastCommitChangeCount = pendingCommitChangeCount;
+                        // 更新回滚时恢复的  segmentInfos
                         rollbackSegments = pendingCommit.createBackupSegmentInfos();
 
                     } finally {
@@ -4436,6 +4497,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
                     // 主要的merge 逻辑
                     mergeMiddle(merge, mergePolicy);
+                    // 触发后置钩子
                     mergeSuccess(merge);
                     success = true;
                 } catch (Throwable t) {
@@ -4444,12 +4506,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             } finally {
                 synchronized (this) {
 
+                    // 从merge的相关容器中移除merge对象 同时唤醒等待merge的线程
                     mergeFinish(merge);
 
                     if (success == false) {
                         if (infoStream.isEnabled("IW")) {
                             infoStream.message("IW", "hit exception during merge");
                         }
+                        // TODO maxNumSegments 什么时候不是-1
                     } else if (!merge.isAborted() && (merge.maxNumSegments != UNBOUNDED_MAX_MERGE_SEGMENTS || (!closed && !closing))) {
                         // This merge (and, generally, any change to the
                         // segments) may now enable new merges, so we call
@@ -4726,7 +4790,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
         // forceMerge, addIndexes or waitForMerges may be waiting
         // on merges to finish.
-        // 看来本线程之前在等待什么东西
+        // 与waitForMerge相互作用 外部通过调用 waitForMerges 等待merge完成 而在这里进行唤醒
         notifyAll();
 
         // It's possible we are called twice, eg if there was an
@@ -5082,7 +5146,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
             }
 
-            // 提交合并结果
+            // 检测merge过程中的 delete/update 并设置到 merge后的segment上 之后将segment发布
             if (!commitMerge(merge, mergeState)) {
                 // commitMerge will return false if this merge was
                 // aborted
@@ -5203,6 +5267,9 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * if it wasn't already.  If that succeeds, then we
      * prepare a new segments_N file but do not fully commit
      * it.
+     *
+     * 为生成 segment_N 做准备
+     * @param toSync 参与生成segment_N 的数据    实际上就是  IndexWriter.segmentInfos 的副本
      */
     private void startCommit(final SegmentInfos toSync) throws IOException {
 
@@ -5221,10 +5288,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             synchronized (this) {
 
+                // 上次提交时对应的变化次数 不可能比当前变化次数大
                 if (lastCommitChangeCount > changeCount.get()) {
                     throw new IllegalStateException("lastCommitChangeCount=" + lastCommitChangeCount + ",changeCount=" + changeCount);
                 }
 
+                // 这种情况是可能的  也就是本次没有任何数据变化
                 if (pendingCommitChangeCount == lastCommitChangeCount) {
                     if (infoStream.isEnabled("IW")) {
                         infoStream.message("IW", "  skip startCommit(): no changes pending");
@@ -5261,6 +5330,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     // Exception here means nothing is prepared
                     // (this method unwinds everything it did on
                     // an exception)
+                    // 主要就是将 segmentInfos下所有的 segment信息写入到一个 pending_segments 索引文件中
                     toSync.prepareCommit(directory);
                     if (infoStream.isEnabled("IW")) {
                         infoStream.message("IW", "startCommit: wrote pending segments file \"" + IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", toSync.getGeneration()) + "\"");
@@ -5275,13 +5345,16 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 boolean success = false;
                 final Collection<String> filesToSync;
                 try {
+                    // 获取此时所有segment下的索引文件 不包含 segment_N 文件  segment_N 是上次commit时生成的描述该indexWriter下活跃segment信息的文件
                     filesToSync = toSync.files(false);
+                    // 之前的write 受限于操作系统 可能并没有完全将数据写入到磁盘 可能只是写入到页缓存  sync 底层调用了 fileChannel.force 确保数据完全刷入到磁盘
                     directory.sync(filesToSync);
                     success = true;
                 } finally {
                     if (!success) {
                         pendingCommitSet = false;
                         pendingCommit = null;
+                        // 失败时 进行回滚
                         toSync.rollbackCommit(directory);
                     }
                 }
@@ -5378,6 +5451,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 如果此时已经出现了异常 进行回滚
+     * @throws IOException
+     */
     private void maybeCloseOnTragicEvent() throws IOException {
         // We cannot hold IW's lock here else it can lead to deadlock:
         assert Thread.holdsLock(this) == false;
@@ -6041,8 +6118,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             } finally {
                 // Matches the incRef we did above, but we must do the decRef after closing segment states else
                 // IFD can't delete still-open files
-                // 之前为了避免索引文件被意外删除 所以增加了引用计数 现在处理完毕了  减少对应的值  如果此时引用计数为0了 索引文件就会被删除
-                // 原本每个索引文件首次被使用时都为1 在delete前又会+1 推测在merge时 之前的所有文件计数会-1 这里delete完后 又-1 发现正好归0 就直接删除了
                 deleter.decRef(delFiles);
             }
 

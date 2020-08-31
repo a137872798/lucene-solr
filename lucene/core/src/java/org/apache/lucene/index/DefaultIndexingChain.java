@@ -440,6 +440,7 @@ final class DefaultIndexingChain extends DocConsumer {
             // 删除临时文件并关闭句柄  (关闭失败时抛出异常)
             storedFieldsConsumer.abort();
         } finally {
+            // 将此时解析doc 并存储在fieldHash的数据全部释放
             Arrays.fill(fieldHash, null);
         }
     }

@@ -407,6 +407,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
+     * 当某个perThread 被禁止时触发
      * @param perThread
      */
     synchronized void doOnAbort(DocumentsWriterPerThread perThread) {
@@ -776,7 +777,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 终止所有待刷盘的对象    一般是因为刷盘失败
+     * 终止所有待刷盘的对象
      */
     synchronized void abortPendingFlushes() {
         try {
@@ -798,6 +799,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
             // 这些被阻塞的对象 推测是检测到当前处在 fullFlush中 所以延迟刷盘  这里会将这些待处理任务一起清除
             for (DocumentsWriterPerThread blockedFlush : blockedFlushes) {
                 try {
+                    // 先将对象添加到 pendingWrite队列中  在doAfterFlush中 又会将对象从 pendingWriter中移除
                     addFlushingDWPT(blockedFlush); // add the blockedFlushes for correct accounting in doAfterFlush
                     documentsWriter.subtractFlushedNumDocs(blockedFlush.getNumDocsInRAM());
                     blockedFlush.abort();
