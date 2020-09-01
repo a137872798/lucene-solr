@@ -206,7 +206,7 @@ final class ReaderPool implements Closeable {
   synchronized boolean release(ReadersAndUpdates rld, boolean assertInfoLive) throws IOException {
     boolean changed = false;
     // Matches incRef in get:
-    // 正常情况下该对象被创建时 默认引用计数就是1 又会额外增加1 那么在release时 正常情况是回到 1
+    // 正常情况下该对象被创建时 默认引用计数就是1
     rld.decRef();
 
     if (rld.refCount() == 0) {

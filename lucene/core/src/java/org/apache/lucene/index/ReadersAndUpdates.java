@@ -55,7 +55,7 @@ final class ReadersAndUpdates {
     final SegmentCommitInfo info;
 
     // Tracks how many consumers are using this instance:
-    // 记录该对象的引用计数  默认 是1  当首次被 创建还会通过 incRef增加1
+    // 记录该对象的引用计数  默认 是1
     private final AtomicInteger refCount = new AtomicInteger(1);
 
     // Set once (null, and then maybe set, and never set again):
@@ -255,20 +255,20 @@ final class ReadersAndUpdates {
      * done (ie do not call close()).
      */
     public synchronized SegmentReader getReadOnlyClone(IOContext context) throws IOException {
-        // 这个模板代表仅仅需要reader对象 而不希望它此时有引用计数
+        // 首先reader对象初始化时 引用计数就自带1 在getReader 中回调用 IncRef() 变成2 这里又变回1
         if (reader == null) {
             getReader(context).decRef();
             assert reader != null;
         }
         // force new liveDocs
         Bits liveDocs = pendingDeletes.getLiveDocs();
-        // 代表并不是所有doc 都存活 否则liveDoc对象在 pendingDelete中不会被创建
+        // 返回一个实时查询的 reader对象
         if (liveDocs != null) {
             return new SegmentReader(info, reader, liveDocs, pendingDeletes.getHardLiveDocs(), pendingDeletes.numDocs(), true);
         } else {
             // liveDocs == null and reader != null. That can only be if there are no deletes
-            // 代表所有doc都未删除
             assert reader.getLiveDocs() == null;
+            // 如果reader对象不是以副本形式返回的话 就需要增加引用计数    1代表reader对象处于可用状态 并且最低值就是1 低于该值该对象会被销毁
             reader.incRef();
             return reader;
         }

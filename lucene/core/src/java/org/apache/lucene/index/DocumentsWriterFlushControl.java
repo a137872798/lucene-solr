@@ -261,9 +261,11 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         assert Thread.holdsLock(this);
         // 从下面的逻辑可以推断 当一个perThread 将要刷盘前 会将自身从 pool中移除 避免被使用者再次获取 并写入doc
 
-        // 代表此时正处理fullFlush的状态
+        // 该对象可以在 fullFlush前从pool中被拿出 或者fullFlush过程中从freeList中取出 并执行解析doc的工作
+
+        // 代表此时正处理fullFlush的状态  如果该线程需要处理 就会加入到 block队列 如果不满足刷盘条件是会回到freeList的 之后解锁后 被执行fullFlush的线程获取到 并强制标记成刷盘状态
         if (fullFlush) {
-            // 此时就无法直接转移到待刷盘队列了 选择先加入到一个block队列  当fullFlush完成时 将block的元素再转移到 待刷盘队列
+            // lucene单独开设了一个block队列 就是处理在执行fullFlush前(过程中)被取出解析doc 并在执行fullFlush期间 需要被重新检测到的对象  又或者新创建的perThread 立即执行刷盘 也会被挡在这个队列中
             if (perThread.isFlushPending()) {
                 // 将 perThread转移到一个 block容器中 同时从pool中移除该线程
                 checkoutAndBlock(perThread);
@@ -648,10 +650,15 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
         // 存储本次参与fullFlush的所有线程
         final List<DocumentsWriterPerThread> fullFlushBuffer = new ArrayList<>();
-        // 获取同一时期的线程 做到本次刷盘与之后的写入 解耦
+        // 获取同一时期的线程 做到本次刷盘与之后的doc的解析 解耦
         // 返回此时还未刷盘的所有 PerThread
-        // 在 filterAndLock 方法中 会通过 lock 阻塞获取某个线程 如果此时该线程正在被其他人使用 那么会等待索引生成完毕  那些线程在发现此时已经进入了 fullFlush状态 就会将自己设置到 blockFlush队列中
-        // 在下面会从blockFlush中将线程取出来 并执行任务  如果刚好未检测到 fullFlush标识 那么就会直到刷盘完成
+        /**
+         * 实际上此时存在4种perThread
+         * 1. 此时没有被使用直接进入刷盘状态的perThread
+         * 2. 此时正在被使用并在解析doc完成后检测到自身需要做刷盘处理的 此时发现处于fullFlush状态，会加入到block队列
+         * 3. 此时正在被使用并在解析doc完成后没有满足刷盘条件回到freeList的，会在解锁后被检测到，强制更新成刷盘状态
+         * 4. 之后创建的perThread 因为deleteQueue发生了变化 所以不参与本次的fullFlush
+         */
         for (final DocumentsWriterPerThread next : perThreadPool.filterAndLock(dwpt -> dwpt.deleteQueue == flushingQueue)) {
             try {
                 assert next.deleteQueue == flushingQueue
@@ -686,7 +693,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
                     assert checkout;
                 }
             } finally {
-                // 因为此时已经从pool中移除了 不会被其他线程访问到 所以可以解锁
+                // 此时允许其他线程获取该对象 不过获取到该对象的线程一般都会检测该对象是否还在pool 中 如果不在的话 不需要重复处理了
                 next.unlock();
             }
         }
@@ -695,7 +702,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
              * pending and moved to blocked are moved over to the flushQueue. There is
              * a chance that this happens since we marking DWPT for full flush without
              * blocking indexing.*/
-            // TODO 找到一些因为特殊原因在刷盘过程中被阻塞的perThread对象 并重新加入到 刷盘队列中
+            // 将block队列中的任务转移到待刷盘队列  注意此时新生成的perThread 立即触发 flush 也会被挡在block中  且因为deleteQueue不一样 不会被取出
             pruneBlockedQueue(flushingQueue);
             assert assertBlockedFlushes(documentsWriter.deleteQueue);
             // 将之前设置为刷盘中的 perThread 都加入到 flushQueue 中  这样这些 PerThread 就同时在 flushQueue 和 flushWriting 队列中了   在调用 doFlush时 就是循环从  flushQueue中获取perThread 并执行刷盘操作
@@ -743,7 +750,6 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         assert flushingWriters.isEmpty();
         try {
             // 将之前因为某些原因被阻塞的 perThread 对象   重新加入到 待刷盘队列中
-            // TODO 推测由于此时处于 fullFlush 状态  所以之后准备flush的perThread 对象都会被阻塞
             if (!blockedFlushes.isEmpty()) {
                 assert assertBlockedFlushes(documentsWriter.deleteQueue);
                 pruneBlockedQueue(documentsWriter.deleteQueue);

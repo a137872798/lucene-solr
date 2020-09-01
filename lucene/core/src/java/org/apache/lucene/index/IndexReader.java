@@ -133,6 +133,9 @@ public abstract class IndexReader implements Closeable {
     void onClose(CacheKey key) throws IOException;
   }
 
+  /**
+   * 该reader 此时挂载在哪个 父reader下    每个reader可以挂载在多个CompositeReader下
+   */
   private final Set<IndexReader> parentReaders = 
       Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<IndexReader,Boolean>()));
   
