@@ -105,7 +105,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
    */
   private synchronized DocumentsWriterPerThread newWriter() throws IOException {
     assert takenWriterPermits >= 0;
-    // 只要此时创建新的writer 还处于上锁状态 就只能等待
+    // 只要此时创建新的writer 还处于上锁状态 就只能等待   该标识是用于 fullFLush并发控制的 可以先忽略
     while (takenWriterPermits > 0) {
       // we can't create new DWPTs while not all permits are available
       try {

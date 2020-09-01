@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -635,6 +634,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     };
 
+    /**
+     * 生成基于索引查询数据的 reader 对象
+     * @return
+     * @throws IOException
+     */
     DirectoryReader getReader() throws IOException {
         return getReader(true, false);
     }
@@ -693,8 +697,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * @return IndexReader that covers entire index plus all
      * changes made so far by this IndexWriter instance
      * @throws IOException If there is a low-level I/O error
-     *                     返回一个近乎准实时的读取目录的对象
+     *
      * @lucene.experimental
+     * 获取近实时搜索对象   一般情况下必须等待所有数据处理完成 比如commit 后才开始查询数据
+     * 而近实时搜索对象意味着不需要等待commit  数据的变更很快就可见
      */
     DirectoryReader getReader(boolean applyAllDeletes, boolean writeAllDeletes) throws IOException {
         ensureOpen();
@@ -1536,6 +1542,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * @throws CorruptIndexException if the index is corrupt
      * @throws IOException           if there is a low-level IO error
      * @lucene.experimental
+     * 批量添加一组 doc
      */
     public long addDocuments(Iterable<? extends Iterable<? extends IndexableField>> docs) throws IOException {
         return updateDocuments((DocumentsWriterDeleteQueue.Node<?>) null, docs);
@@ -1554,6 +1561,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * @throws CorruptIndexException if the index is corrupt
      * @throws IOException           if there is a low-level IO error
      * @lucene.experimental
+     * 在插入doc的同时 写入delNode 这样包含该term的所有doc都会被删除  作用范围为所有segment
      */
     public long updateDocuments(Term delTerm, Iterable<? extends Iterable<? extends IndexableField>> docs) throws IOException {
         return updateDocuments(delTerm == null ? null : DocumentsWriterDeleteQueue.newNode(delTerm), docs);
@@ -1642,11 +1650,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * to delete documents indexed after opening the NRT
      * reader you must use {@link #deleteDocuments(Term...)}).
      * <p>
-     * 尝试删除某个docId 对应的doc
+     *     尝试直接通过docId 去删除doc
      */
     public synchronized long tryDeleteDocument(IndexReader readerIn, int docID) throws IOException {
         // NOTE: DON'T use docID inside the closure
         return tryModifyDocument(readerIn, docID, (leafDocId, rld) -> {
+            // 这里的删除逻辑比较简单 直接将 pendingDelete中目标doc 标记成删除
             if (rld.delete(leafDocId)) {
                 if (isFullyDeleted(rld)) {
                     dropDeletedSegment(rld.info);
@@ -1681,10 +1690,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      */
     public synchronized long tryUpdateDocValue(IndexReader readerIn, int docID, Field... fields) throws IOException {
         // NOTE: DON'T use docID inside the closure
+        // 将field 信息转换成一组 DVupdate对象    在直接指定了docId的场景实际上 term就是无用的信息了  本身term + field 就是用于定位一组doc的
         final DocValuesUpdate[] dvUpdates = buildDocValuesUpdate(null, fields);
         return tryModifyDocument(readerIn, docID, (leafDocId, rld) -> {
             long nextGen = bufferedUpdatesStream.getNextGen();
             try {
+                // 将本次更新数据按照 fieldName 进行划分   DocValuesFieldUpdates 存储了一组 doc 以及对应的field.value
                 Map<String, DocValuesFieldUpdates> fieldUpdatesMap = new HashMap<>();
                 for (DocValuesUpdate update : dvUpdates) {
                     DocValuesFieldUpdates docValuesFieldUpdates = fieldUpdatesMap.computeIfAbsent(update.field, k -> {
@@ -1699,6 +1710,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     });
                     if (update.hasValue()) {
                         switch (update.type) {
+                            // 实际上 leafDocId 就是 docID  这里只会增加一条针对目标doc的更新记录
                             case NUMERIC:
                                 docValuesFieldUpdates.add(leafDocId, ((NumericDocValuesUpdate) update).getValue());
                                 break;
@@ -1709,10 +1721,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                                 throw new AssertionError("type: " + update.type + " is not supported");
                         }
                     } else {
+                        // 就是添加一条 某个doc hasValue == false的记录
                         docValuesFieldUpdates.reset(leafDocId);
                     }
                 }
                 for (DocValuesFieldUpdates updates : fieldUpdatesMap.values()) {
+                    // 固化更新数据 并设置到 readersAndUpdates中
                     updates.finish();
                     rld.addDVUpdate(updates);
                 }
@@ -1730,6 +1744,14 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         void run(int docId, ReadersAndUpdates readersAndUpdates) throws IOException;
     }
 
+    /**
+     * 通过指定reader对象 和 docId 将目标segment的doc标记成删除
+     * @param readerIn
+     * @param docID
+     * @param toApply  删除的逻辑实现
+     * @return
+     * @throws IOException
+     */
     private synchronized long tryModifyDocument(IndexReader readerIn, int docID, DocModifier toApply) throws IOException {
         final LeafReader reader;
         if (readerIn instanceof LeafReader) {
@@ -1737,9 +1759,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             reader = (LeafReader) readerIn;
         } else {
             // Composite reader: lookup sub-reader and re-base docID:
+            // 如果reader组成了一个树结构 通过docId 快速定位到目标reader
             List<LeafReaderContext> leaves = readerIn.leaves();
             int subIndex = ReaderUtil.subIndex(docID, leaves);
             reader = leaves.get(subIndex).reader();
+            // 计算相对docId
             docID -= leaves.get(subIndex).docBase;
             assert docID >= 0;
             assert docID < reader.maxDoc();
@@ -1756,6 +1780,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // seriously wrong w/ the index, so it should be a minor
         // cost:
 
+        // 必须确保该segment 处于被IndexWriter维护的状态
         if (segmentInfos.indexOf(info) != -1) {
             ReadersAndUpdates rld = getPooledInstance(info, false);
             if (rld != null) {
@@ -1808,10 +1833,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * for this operation
      * @throws CorruptIndexException if the index is corrupt
      * @throws IOException           if there is a low-level IO error
+     *
      */
     public long deleteDocuments(Term... terms) throws IOException {
         ensureOpen();
         try {
+            // 就是将所有term 包装成 termNode 并设置到 deleteQueue中  在 flushPolicy中会检测此时 deleteQueue占用的内存是否过高 是的话会生成一个ticket 并暴露到IndexWriter中
+            // 在maybeProcessEvents 中就会处理之前设置的 ticket 将term命中的doc在 pendingDelete的位图中标记为false
             return maybeProcessEvents(docWriter.deleteTerms(terms));
         } catch (VirtualMachineError tragedy) {
             tragicEvent(tragedy, "deleteDocuments(Term..)");
@@ -1997,10 +2025,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 根据field信息 转换成一组 docValueUpdate对象
+     * @param term
+     * @param updates
+     * @return
+     */
     private DocValuesUpdate[] buildDocValuesUpdate(Term term, Field[] updates) {
         DocValuesUpdate[] dvUpdates = new DocValuesUpdate[updates.length];
         for (int i = 0; i < updates.length; i++) {
             final Field f = updates[i];
+            // 获取该field对应数值类型
             final DocValuesType dvType = f.fieldType().docValuesType();
             if (dvType == null) {
                 throw new NullPointerException("DocValuesType must not be null (field: \"" + f.name() + "\")");
@@ -2008,12 +2043,16 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (dvType == DocValuesType.NONE) {
                 throw new IllegalArgumentException("can only update NUMERIC or BINARY fields! field=" + f.name());
             }
+
+            // 本次使用的field 必须 name 和dvType都命中
             if (globalFieldNumberMap.contains(f.name(), dvType) == false) {
                 // if this field doesn't exists we try to add it. if it exists and the DV type doesn't match we
                 // get a consistent error message as if you try to do that during an indexing operation.
+                // 在这个方法中 如果field 原来的 DV type类型 不是 NONE 则会抛出异常  相当于就是一种检测机制
                 globalFieldNumberMap.addOrGet(f.name(), -1, IndexOptions.NONE, dvType, 0, 0, 0, f.name().equals(config.softDeletesField));
                 assert globalFieldNumberMap.contains(f.name(), dvType);
             }
+            // 涉及到排序相关 field 不允许被更新
             if (config.getIndexSortFields().contains(f.name())) {
                 throw new IllegalArgumentException("cannot update docvalues field involved in the index sort, field=" + f.name() + ", sort=" + config.getIndexSort());
             }

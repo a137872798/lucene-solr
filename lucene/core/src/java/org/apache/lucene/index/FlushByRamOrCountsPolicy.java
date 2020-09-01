@@ -53,18 +53,19 @@ package org.apache.lucene.index;
  * pending iff the global active RAM consumption is {@code >=} the configured max RAM
  * buffer.
  * 当前  FlushPolicy 只有这一个实现类
+ * FlushByRamOrCountsPolicy 的含义就是根据此时占用的内存量或者doc数量决定将perThread标记成待刷盘的策略
  */
 class FlushByRamOrCountsPolicy extends FlushPolicy {
 
     /**
-     * 代表 通过 DocumentsWriter 对象 触发了 delete 方法
+     * 代表此时内存中的某些doc数据需要被删除
      *
      * @param control
      * @param perThread
      */
     @Override
     public void onDelete(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
-        // 此时待删除的doc占用大量内存时
+        // 此时 deleteQueue中维护了太多数据 会设置一个需要处理 deleteQueue数据的标识
         if ((flushOnRAM() && control.getDeleteBytesUsed() > 1024 * 1024 * indexWriterConfig.getRAMBufferSizeMB())) {
             // 设置 flushDeletes 标识
             control.setApplyAllDeletes();
@@ -75,29 +76,31 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
     }
 
     /**
-     * 代表此时有某些doc生成的索引信息 写入到内存中了
+     * 代表此时解析了新的doc数据
      *
      * @param control
      * @param perThread
      */
     @Override
     public void onInsert(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
-        // flushOnDocCount() 代表当内存中的doc超过一定量值时 会推荐触发刷盘
+        // 总计2个维度 都必须先确保开启了自动刷盘   第一个维度是perThread本身占用的bytes数超过了阈值 代表此时暂存在内存中的数据过多 需要标记成刷盘
+        // 第二个维度是整个flushControl管理的所有 perThread总和超过了阈值  此时会将占用内存最大的perThread 标记成待刷盘
+
         if (flushOnDocCount()
                 && perThread.getNumDocsInRAM() >= indexWriterConfig
                 .getMaxBufferedDocs()) {
             // Flush this state by num docs   将 perThread标记成待刷盘状态
             control.setFlushPending(perThread);
-            // 这个应该就是判断此时占用的内存是否超过一定值  超过的话自动进行刷盘状态
         } else if (flushOnRAM()) {// flush by RAM
             // 将 MB 转换成 byte
             final long limit = (long) (indexWriterConfig.getRAMBufferSizeMB() * 1024.d * 1024.d);
+            //  control.getDeleteBytesUsed() 对应的是deleteQueue占用的bytes数
             final long totalRam = control.activeBytes() + control.getDeleteBytesUsed();
             if (totalRam >= limit) {
                 if (infoStream.isEnabled("FP")) {
                     infoStream.message("FP", "trigger flush: activeBytes=" + control.activeBytes() + " deleteBytes=" + control.getDeleteBytesUsed() + " vs limit=" + limit);
                 }
-                // 由于此时内存中数据过多导致的刷盘
+                // 将占用内存最大的perThread 对象标记成待刷盘
                 markLargestWriterPending(control, perThread);
             }
         }
@@ -106,7 +109,7 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
     /**
      * Marks the most ram consuming active {@link DocumentsWriterPerThread} flush
      * pending
-     * 由于此时占用的内存比较多 从而触发的刷盘
+     * 找到占用内存最多的perThread对象 并标记成待刷盘
      */
     protected void markLargestWriterPending(DocumentsWriterFlushControl control,
                                             DocumentsWriterPerThread perThread) {
@@ -120,6 +123,7 @@ class FlushByRamOrCountsPolicy extends FlushPolicy {
      * Returns <code>true</code> if this {@link FlushPolicy} flushes on
      * {@link IndexWriterConfig#getMaxBufferedDocs()}, otherwise
      * <code>false</code>.
+     * indexWriterConfig.getMaxBufferedDocs() 不为-1时 就代表perThread内的doc占用bytes数超过该值时 触发刷盘
      */
     protected boolean flushOnDocCount() {
         return indexWriterConfig.getMaxBufferedDocs() != IndexWriterConfig.DISABLE_AUTO_FLUSH;

@@ -128,7 +128,7 @@ public class LiveIndexWriterConfig {
   protected Set<String> indexSortFields = Collections.emptySet();
 
   /** if an indexing thread should check for pending flushes on update in order to help out on a full flush*/
-  // 代表尝试改动索引前 要先检测是否有待flush的线程
+  // 在解析新的doc时 是否要求此时所有待刷盘任务完成
   protected volatile boolean checkPendingFlushOnUpdate = true;
 
   /** soft deletes field */

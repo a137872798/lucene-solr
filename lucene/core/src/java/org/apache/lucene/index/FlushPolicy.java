@@ -43,6 +43,8 @@ import org.apache.lucene.util.InfoStream;
  * @see DocumentsWriterFlushControl
  * @see DocumentsWriterPerThread
  * @see IndexWriterConfig#setFlushPolicy(FlushPolicy)
+ *
+ * 刷盘策略 当解析doc成功后 会根据这个策略决定是否刷盘等
  */
 abstract class FlushPolicy {
 
@@ -72,7 +74,7 @@ abstract class FlushPolicy {
    * Note: This method is called  synchronized on the given
    * {@link DocumentsWriterFlushControl} and it is guaranteed that the calling
    * thread holds the lock on the given {@link DocumentsWriterPerThread}
-   * 代表某次updateDocument 中 既插入了新的doc 也删除了部分doc 
+   * 在某次调用 updateDocument时 携带了 DocValueUpdateNode  此时需要更新内存中的数据
    */
   public void onUpdate(DocumentsWriterFlushControl control, DocumentsWriterPerThread perThread) {
     onInsert(control, perThread);

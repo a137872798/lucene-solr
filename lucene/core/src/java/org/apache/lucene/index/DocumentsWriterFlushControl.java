@@ -66,7 +66,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     private volatile int numPending = 0;
     private int numDocsSinceStalled = 0; // only with assert
     /**
-     * 代表在本次刷盘中 需要执行一些删除操作
+     * 代表需要处理 deleteQueue中的数据
      */
     private final AtomicBoolean flushDeletes = new AtomicBoolean(false);
     private boolean fullFlush = false;
@@ -98,7 +98,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     private final DocumentsWriterPerThreadPool perThreadPool;
 
     /**
-     * 实际上刷盘动作如何执行 等还是依托于 flushPolicy
+     * 什么时候进行刷盘 由刷盘策略决定
      */
     private final FlushPolicy flushPolicy;
     private boolean closed = false;
@@ -140,7 +140,6 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
 
     /**
      * 解析doc 意味着会有大量暂存在内存中
-     * 在没有开启自动刷盘的情况下  最多只允许占用一部分内存  直到手动触发刷盘 才允许继续解析doc
      *
      * @return
      */
@@ -218,28 +217,26 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 在某个 perThread 执行完 updateDocument 后触发  (此时只是在内存结构中生成了便于存储到索引中的数据格式)
+     * 这个方法在解析完doc时触发  注意此时还没有涉及到 flush的逻辑
      *
      * @param perThread 处理本次写入的 perThread对象
-     * @param isUpdate  本次更新是否携带了   Node  (node代表删除某些doc 或者更新doc的信息)   如果node的类型是 DocValuesUpdatesNode 该值也是false
+     * @param isUpdate  本次携带了node信息 且是关于delete操作的 此时该标识为true
      * @return
      */
     synchronized DocumentsWriterPerThread doAfterDocument(DocumentsWriterPerThread perThread, boolean isUpdate) {
         try {
-            // 更新此时 activeBytes/flushBytes
+            // 更新此时 activeBytes/flushBytes   一般情况下就是更新activeBytes
             commitPerThreadBytes(perThread);
-            // 此时线程还未处于刷盘阶段才进行下面的处理  也就是如果已经在刷盘中了 必然已经将该更新的都更新掉了
+            // 确保此时 perThread 没有处在待刷盘阶段   下面的逻辑是通过flushPolicy决定是否要将perThread标记成待刷盘
             if (!perThread.isFlushPending()) {
-                // 如果此时发生了更新操作 那么会删除一些doc
+                // 有数据需要删除
                 if (isUpdate) {
-                    // 实际上就是连续触发 OnInsert 和OnDelete
-                    // 在lucene的默认实现中 FlushPolicy 会在当前线程待写入的doc过多 或者此时总的内存占用过大时 将当前线程/待写入doc最多的线程标记成待刷盘状态
-                    // 在onDelete中 如果发现此时待删除的数据过多 就会设置flushDeletes为true
                     flushPolicy.onUpdate(this, perThread);
                 } else {
                     // 只有插入操作
                     flushPolicy.onInsert(this, perThread);
                 }
+                // 除了自动刷盘外  在这里还有一个 hardMaxBytesPerDWPT 属性 要求某个perThread超过该值时 也会标记成待刷盘
                 if (!perThread.isFlushPending() && perThread.bytesUsed() > hardMaxBytesPerDWPT) {
                     // Safety check to prevent a single DWPT exceeding its RAM limit. This
                     // is super important since we can not address more than 2048 MB per DWPT
@@ -255,6 +252,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
+     * 该方法可以理解为将 perThread对象拣选到合适的地方
      * @param perThread
      * @param markPending 是否需要标记成 待刷盘
      * @return
@@ -263,12 +261,13 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         assert Thread.holdsLock(this);
         // 从下面的逻辑可以推断 当一个perThread 将要刷盘前 会将自身从 pool中移除 避免被使用者再次获取 并写入doc
 
-        // 此时是否处于一个全刷盘的状态 此时会创建一个新的deleteQueue 并将同一时期的所有perThread的数据刷盘
+        // 代表此时正处理fullFlush的状态
         if (fullFlush) {
+            // 此时就无法直接转移到待刷盘队列了 选择先加入到一个block队列  当fullFlush完成时 将block的元素再转移到 待刷盘队列
             if (perThread.isFlushPending()) {
                 // 将 perThread转移到一个 block容器中 同时从pool中移除该线程
                 checkoutAndBlock(perThread);
-                // TODO
+                // 同时获取一条待刷盘的线程
                 return nextPendingFlush();
             }
         } else {
@@ -339,7 +338,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     private boolean updateStallState() {
 
         assert Thread.holdsLock(this);
-        // 获取 强制刷盘的上限   当此时内存中占用的bytes数超过该值时 就保持 stall 状态
+        // 如果此时内存中的数据超过该值 标记成暂停状态
         final long limit = stallLimitBytes();
         /*
          * we block indexing threads if net byte grows due to slow flushes
@@ -348,7 +347,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
          * that we don't stall/block if an ongoing or pending flush can
          * not free up enough memory to release the stall lock.
          * 首先 (activeBytes + flushBytes) <= limit  是没有达到内存上限 必然可以继续解析doc 并往内存中写入数据
-         * 当 activeBytes < limit 时 代表有部分内存已经处于即将要写入磁盘的状态了 那么此时一种增加解析doc的速度方式 就是激进的认为这些数据会很快的刷盘成功 这样就不会阻止新的doc 解析 (stall为true 会导致尝试解析doc的线程被阻塞1秒)
+         * TODO  activeBytes < limit 这段啥意思
          */
         final boolean stall = (activeBytes + flushBytes) > limit &&
                 activeBytes < limit &&
@@ -439,6 +438,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         assert perThread.isHeldByCurrentThread();
         assert perThread.isFlushPending() : "can not block non-pending threadstate";
         assert fullFlush : "can not block if fullFlush == false";
+        // 某个perThread 被标记成 flushPending 时 会增加numPending  但是此时要是处于fullFlush时 就要将该值还原  同时将本次待拣选的 perThread先暂存到 block队列中
         numPending--;
         blockedFlushes.add(perThread);
         // 从 pool中释放 perThread
@@ -592,8 +592,7 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
         while (closed == false) {
             // 这里先尝试从空闲队列中重用 perThread 如果 无法重用就创建一个新的perThread 对象
             final DocumentsWriterPerThread perThread = perThreadPool.getAndLock();
-            // 可以看到 从freeList 获取到的 perThread 可能是已经过期的  此时docWriter关联的deleteQueue可能已经替换过了
-            // 那么忽略这个线程 因为它的 更新/删除动作无法被 queue采集
+            // deleteQueue 发生变化 代表之前的perThread处于fullFlush状态 此时不应该操作它
             if (perThread.deleteQueue == documentsWriter.deleteQueue) {
                 // simply return the DWPT even in a flush all case since we already hold the lock and the DWPT is not stale
                 // since it has the current delete queue associated with it. This means we have established a happens-before
@@ -863,7 +862,8 @@ final class DocumentsWriterFlushControl implements Accountable, Closeable {
     }
 
     /**
-     * 这里遍历所有的线程 找到待刷盘doc最多的 perThread
+     * 这里遍历所有的线程 找到待刷盘doc最多的 perThread      该方法的调用时机是首先开启了自动刷盘 然后每次解析新的doc后
+     * 由于内存中增加了数据 flushPolicy会根据此时数据是否超过了 flushControl的控制范围而选择一条待刷盘数据最多的perThread对象 标记成待刷盘
      *
      * @return
      */
