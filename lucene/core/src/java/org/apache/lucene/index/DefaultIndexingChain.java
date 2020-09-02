@@ -1184,7 +1184,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 }
             }
 
-            // 代表已经被处理过 TODO 这里设置了一个 gap 啥意思???   在 StandardTokenizer中 这2个方法的返回值都是固定的
+            // 这里感觉像是在做矫正   但是标准分词器返回的都是默认值
             if (analyzed) {
                 invertState.position += docState.analyzer.getPositionIncrementGap(fieldInfo.name);
                 invertState.offset += docState.analyzer.getOffsetGap(fieldInfo.name);

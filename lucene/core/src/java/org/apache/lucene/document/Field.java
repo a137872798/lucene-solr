@@ -663,8 +663,8 @@ public class Field implements IndexableField {
 
     /**
      * Specifies whether and how a field should be stored.
+     * 是否需要将field.value 本身存储到索引文件中
      */
-    // 描述是否需要存储 域信息
     public static enum Store {
 
         /**

@@ -77,7 +77,6 @@ public final class SegmentReader extends CodecReader {
     /**
      * True if we are holding RAM only liveDocs or DV updates, i.e. the SegmentCommitInfo delGen doesn't match our liveDocs.
      */
-    // 如果为true 代表 liveDoc 和update信息一直存储在内存中 而没有刷盘
     final boolean isNRT;
 
     final DocValuesProducer docValuesProducer;

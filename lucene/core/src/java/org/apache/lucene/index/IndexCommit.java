@@ -42,7 +42,6 @@ import org.apache.lucene.store.Directory;
 
 // TODO: this is now a poor name, because this class also represents a
 // point-in-time view from an NRT reader
-// 是不是代表某次提交啊 然后每次提交会关联一组索引文件
 public abstract class IndexCommit implements Comparable<IndexCommit> {
 
   /**

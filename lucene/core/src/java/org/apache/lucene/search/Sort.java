@@ -96,7 +96,7 @@ import java.util.Arrays;
  * <p>Created: Feb 12, 2004 10:53:57 AM
  *
  * @since   lucene 1.4
- * 描述查询出来的doc结果 按照什么规则进行排序
+ * 在解析doc时 会按照指定的顺序 提前为doc排序
  */
 public class Sort {
 

@@ -44,6 +44,7 @@ import org.apache.lucene.util.BytesRef;
  * 
  * <p>
  * Each value can be at most 32766 bytes long.
+ * 按照field.value (BytesRef) 排序
  * */
 
 public class SortedSetDocValuesField extends Field {

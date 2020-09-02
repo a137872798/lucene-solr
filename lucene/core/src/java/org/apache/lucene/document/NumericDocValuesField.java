@@ -39,8 +39,8 @@ import org.apache.lucene.search.Query;
  * <p>
  * If you also need to store the value, you should add a
  * separate {@link StoredField} instance.
+ * 要求 field.value 必须是long型
  * */
-// 代表数字类型的  field
 public class NumericDocValuesField extends Field {
 
   /**

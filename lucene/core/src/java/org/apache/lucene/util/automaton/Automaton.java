@@ -52,7 +52,7 @@ import org.apache.lucene.util.Sorter;
  *  adjacent labels going to the same dest are combined).
  *
  * @lucene.experimental */
-// 该对象只是相当于一个存储状态机的容器  内部定义了一系列的映射规则
+// 实现正则 模糊查询的核心类  先忽略
 public class Automaton implements Accountable {
 
   /** Where we next write to the int[] states; this increments by 2 for

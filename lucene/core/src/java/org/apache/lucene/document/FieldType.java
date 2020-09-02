@@ -33,7 +33,7 @@ import org.apache.lucene.index.PointValues;
 public class FieldType implements IndexableFieldType  {
 
   /**
-   * 是否需要被排序
+   * 是否需要被存储
    */
   private boolean stored;
   /**

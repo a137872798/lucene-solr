@@ -91,7 +91,7 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
 public class IndexSearcher {
 
   /**
-   * 针对 BooleanQuery 组合的最大查询条件数量
+   * 组合条件数量  某些query类的查询条件是可以组合的
    */
   static int maxClauseCount = 1024;
   private static QueryCache DEFAULT_QUERY_CACHE;
@@ -131,7 +131,7 @@ public class IndexSearcher {
   // Used internally for load balancing threads executing for the query
   private final SliceExecutor sliceExecutor;
 
-  // the default Similarity
+  // the default Similarity   打分器对象 获得的doc结果集会按照该对象计算分数
   private static final Similarity defaultSimilarity = new BM25Similarity();
 
   private QueryCache queryCache = DEFAULT_QUERY_CACHE;

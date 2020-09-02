@@ -5538,6 +5538,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 检测 当前维护的 SegmentInfos 与 传入的参数是否一致
+     * @param infos
+     * @return
+     */
     synchronized boolean nrtIsCurrent(SegmentInfos infos) {
         ensureOpen();
         boolean isCurrent = infos.getVersion() == segmentInfos.getVersion()
