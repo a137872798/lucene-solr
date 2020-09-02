@@ -183,7 +183,7 @@ final class DocumentsWriterPerThreadPool implements Iterable<DocumentsWriterPerT
         } else {
           // somebody else has taken this DWPT out of the pool.
           // unlock and let it go
-          // TODO 某些线程可能在写完后 就从 dwpt中移除了 推测是因为这些线程在写入索引结束后 因为满足刷盘条件而自动刷盘了  所以不需要被 fullFlush处理
+          // 如果已经从pool中移除 就代表已经被其他线程取出 并准备刷盘了（或者已经刷盘完成了） 有可能是进入到 待刷盘队列 也可能进入 block 队列   无论如何不需要重复处理
           perThread.unlock();
         }
       }

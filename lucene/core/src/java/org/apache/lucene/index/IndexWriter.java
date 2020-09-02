@@ -698,6 +698,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * changes made so far by this IndexWriter instance
      * @throws IOException If there is a low-level I/O error
      *
+     * @param applyAllDeletes 是否要等待所有的update/delete处理完
+     * @param writeAllDeletes 是否要将 update/delete处理后的数据持久化
      * @lucene.experimental
      * 获取近实时搜索对象   一般情况下必须等待所有数据处理完成 比如commit 后才开始查询数据
      * 而近实时搜索对象意味着不需要等待commit  数据的变更很快就可见
@@ -736,7 +738,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             synchronized (fullFlushLock) {
                 try {
                     // TODO: should we somehow make the seqNo available in the returned NRT reader?
-                    // 返回负数 代表数据成功刷盘
+                    // 触发 fullFlush
                     anyChanges = docWriter.flushAllThreads() < 0;
                     if (anyChanges == false) {
                         // prevent double increment since docWriter#doFlush increments the flushcount
@@ -744,12 +746,11 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         // 当没有任何数据写入时 也要增加刷盘次数
                         flushCount.incrementAndGet();
                     }
-                    // 如果本次刷盘中产生了新的段 那么 初始化新段的reader 对象  并且如果有未处理的 delete/update数据 那么进行处理
                     publishFlushedSegments(true);
-                    // 上面有关 delete/update 的操作实际上只是追加到任务队列中  这里才唤醒任务线程  并且这里是异步的呀 update/delete可以异步化？？？之后的处理不依赖这里的结果？？？
                     processEvents(false);
 
-                    // 这里会阻塞线程 直到所有 update/delete任务完成
+                    // 这里会阻塞线程 直到所有 update/delete任务完成  因为某些任务可能被其他线程抢占了   注意一般来讲只是到最后一个刷盘的perThread采集到的update/delete数据
+                    // 后面的数据很可能还未处理 暂时也不需要处理 只有当deleteQueue囤积的bytes数达到一定值时 才会处理
                     if (applyAllDeletes) {
                         applyAllDeletesAndUpdates();
                     }
@@ -768,7 +769,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                         // reader; in theory we could instead do similar retry logic,
                         // just like we do when loading segments_N
 
-                        // 将每个segment 对应的reader对象整合成这个基于目录的读取对象 每个reader在内部构成一个树结构
+                        // 此时打开NRT 读取对象
                         r = StandardDirectoryReader.open(this, segmentInfos, applyAllDeletes, writeAllDeletes);
                         if (infoStream.isEnabled("IW")) {
                             infoStream.message("IW", "return reader version=" + r.getVersion() + " reader=" + r);
@@ -779,6 +780,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     // Done: finish the full flush!
                     assert Thread.holdsLock(fullFlushLock);
                     docWriter.finishFullFlush(success);
+                    // 之前可能因为fullFlush 而被暂时搁置的  AllDelete请求将会在这里被处理
                     if (success) {
                         processEvents(false);
                         doAfterFlush();
