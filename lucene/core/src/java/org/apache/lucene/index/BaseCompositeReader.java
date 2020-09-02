@@ -54,7 +54,7 @@ public abstract class BaseCompositeReader<R extends IndexReader> extends Composi
    */
   private final R[] subReaders;
   /**
-   * 每个元素对应 每个子reader的读取的首个 docNo 并且最后一个元素 代表maxDoc
+   * 每个元素对应 每个子reader的读取的首个 docNo 并且最后一个元素 代表maxDoc  比reader数量多1
    */
   private final int[] starts;       // 1st docno for each reader
   /**
@@ -88,7 +88,6 @@ public abstract class BaseCompositeReader<R extends IndexReader> extends Composi
     for (int i = 0; i < subReaders.length; i++) {
       starts[i] = (int) maxDoc;
       final IndexReader r = subReaders[i];
-      // 难道每个段对应的文档是递增的吗
       maxDoc += r.maxDoc();      // compute maxDocs
       // 将所有子reader对象 关联到 当前reader对象上
       r.registerParentReader(this);
@@ -170,6 +169,7 @@ public abstract class BaseCompositeReader<R extends IndexReader> extends Composi
   @Override
   public final void document(int docID, StoredFieldVisitor visitor) throws IOException {
     ensureOpen();
+    // 定位到子reader的下标
     final int i = readerIndex(docID);                          // find subreader num
     subReaders[i].document(docID - starts[i], visitor);    // dispatch to subreader
   }

@@ -35,13 +35,16 @@ import org.apache.lucene.index.StoredFieldVisitor;
  *  document.
  *
  * @lucene.experimental */
-// storedFieldVisitor 代表将field 存到doc上
 
 public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
   /**
-   * 存储传入的 field
+   * 读取出来的field 最终被还原到这个doc 上
    */
   private final Document doc = new Document();
+
+  /**
+   * 该容器相当于定义了 仅仅会处理哪些field  不包含在内的不会被处理 如果该容器未设置则会处理所有field
+   */
   private final Set<String> fieldsToAdd;
 
   /** 
@@ -65,8 +68,9 @@ public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
     this.fieldsToAdd = null;
   }
 
+  // 下面的方法是当解析 storedField信息时 发现需要处理field信息就将field.value 还原到doc中
+
   /**
-   * 添加一个二进制形式的field
    * @param fieldInfo
    * @param value newly allocated byte array with the binary contents.
    * @throws IOException
@@ -84,7 +88,7 @@ public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
    */
   @Override
   public void stringField(FieldInfo fieldInfo, String value) throws IOException {
-    // 从fieldInfo 中剥离某些属性 转移到 fieldType上
+    // 将fieldInfo信息上携带的 type也还原到 StoredField上
     final FieldType ft = new FieldType(TextField.TYPE_STORED);
     ft.setStoreTermVectors(fieldInfo.hasVectors());
     ft.setOmitNorms(fieldInfo.omitsNorms());
@@ -112,8 +116,15 @@ public class DocumentStoredFieldVisitor extends StoredFieldVisitor {
     doc.add(new StoredField(fieldInfo.name, value));
   }
 
+  /**
+   * 是否需要处理该field信息
+   * @param fieldInfo
+   * @return
+   * @throws IOException
+   */
   @Override
   public Status needsField(FieldInfo fieldInfo) throws IOException {
+    // 当该对象还没有维护任何field信息 或者已经存在该field信息时  返回yes
     return fieldsToAdd == null || fieldsToAdd.contains(fieldInfo.name) ? Status.YES : Status.NO;
   }
 

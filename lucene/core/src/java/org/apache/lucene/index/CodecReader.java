@@ -88,7 +88,9 @@ public abstract class CodecReader extends LeafReader implements Accountable {
    */
   @Override
   public final void document(int docID, StoredFieldVisitor visitor) throws IOException {
+    // 确保传入的doc 不超过 maxDoc
     checkBounds(docID);
+    // 首先通过 StoredFields 查找域信息
     getFieldsReader().visitDocument(docID, visitor);
   }
 

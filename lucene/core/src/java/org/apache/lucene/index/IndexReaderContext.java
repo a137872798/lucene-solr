@@ -43,6 +43,13 @@ public abstract class IndexReaderContext {
   // identity object, even after the index reader has been closed
   final Object identity = new Object();
 
+
+  /**
+   * composite 还可以作为其他 composite的子节点
+   * @param parent
+   * @param ordInParent
+   * @param docBaseInParent
+   */
   IndexReaderContext(CompositeReaderContext parent, int ordInParent, int docBaseInParent) {
     // 要求上下文 必须是 Composite或者 Leaf  不支持用户自定义的context
     if (!(this instanceof CompositeReaderContext || this instanceof LeafReaderContext))

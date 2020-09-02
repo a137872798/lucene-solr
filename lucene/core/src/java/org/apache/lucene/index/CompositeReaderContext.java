@@ -24,16 +24,14 @@ import java.util.List;
 
 /**
  * {@link IndexReaderContext} for {@link CompositeReader} instance.
- * 内部包含了一组上下文对象
+ * 作为一个组合对象 组合了子对象的上下文
  */
 public final class CompositeReaderContext extends IndexReaderContext {
   /**
-   * 内部组合的一组上下文对象
+   * leaves 内的context 实际上就是children 转换过去的 只是他们的类型不一样
    */
   private final List<IndexReaderContext> children;
-  /**
-   * 叶子节点
-   */
+
   private final List<LeafReaderContext> leaves;
   /**
    * 该对象代表内部维护了一组reader
@@ -65,9 +63,9 @@ public final class CompositeReaderContext extends IndexReaderContext {
    * 每个节点上挂了一组 leaf节点 同时每个composite下还有一组composite节点(child)
    * @param parent 作为该对象的父节点
    * @param reader reader会被包装成本对象
-   * @param ordInParent
+   * @param ordInParent  在子节点的顺序
    * @param docbaseInParent
-   * @param children
+   * @param children  对应子节点
    * @param leaves
    */
   private CompositeReaderContext(CompositeReaderContext parent, CompositeReader reader,
@@ -97,7 +95,11 @@ public final class CompositeReaderContext extends IndexReaderContext {
   public CompositeReader reader() {
     return reader;
   }
-  
+
+
+  /**
+   * 组合Context的构建对象
+   */
   private static final class Builder {
     private final CompositeReader reader;
     private final List<LeafReaderContext> leaves = new ArrayList<>();
@@ -110,9 +112,16 @@ public final class CompositeReaderContext extends IndexReaderContext {
     public CompositeReaderContext build() {
       return (CompositeReaderContext) build(null, reader, 0, 0);
     }
-    
+
+    /**
+     *
+     * @param parent  默认情况 父节点为null
+     * @param reader
+     * @param ord
+     * @param docBase
+     * @return
+     */
     private IndexReaderContext build(CompositeReaderContext parent, IndexReader reader, int ord, int docBase) {
-      // 如果传入的是一个叶子reader
       if (reader instanceof LeafReader) {
         final LeafReader ar = (LeafReader) reader;
         final LeafReaderContext atomic = new LeafReaderContext(parent, ar, ord, docBase, leaves.size(), leafDocBase);
@@ -121,6 +130,7 @@ public final class CompositeReaderContext extends IndexReaderContext {
         return atomic;
       } else {
         final CompositeReader cr = (CompositeReader) reader;
+        // 获取所有下级子reader  比如标准读取对象 就是组合了一组  SegmentReader
         final List<? extends IndexReader> sequentialSubReaders = cr.getSequentialSubReaders();
         final List<IndexReaderContext> children = Arrays.asList(new IndexReaderContext[sequentialSubReaders.size()]);
         final CompositeReaderContext newParent;
@@ -132,6 +142,7 @@ public final class CompositeReaderContext extends IndexReaderContext {
         int newDocBase = 0;
         for (int i = 0, c = sequentialSubReaders.size(); i < c; i++) {
           final IndexReader r = sequentialSubReaders.get(i);
+          // 每个leaf 节点 将当前节点作为父节点   将下标作为 i  doc的累加值作为 docBase
           children.set(i, build(newParent, r, i, newDocBase));
           newDocBase += r.maxDoc();
         }

@@ -22,8 +22,9 @@ import org.apache.lucene.util.BytesRef;
 
 /** A field whose value is stored so that {@link
  *  IndexSearcher#doc} and {@link IndexReader#document IndexReader.document()} will
- *  return the field and its value. */
-// 该字段被标注成 已经排序过
+ *  return the field and its value.
+ *  在不指定 FieldType的情况下 默认会使用一个标记 stored为true 的fieldType  代表field信息需要存储到 StoredField索引文件中
+ */
 public class StoredField extends Field {
 
   /**

@@ -162,11 +162,10 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
     this.minimumNumberShouldMatch = minimumNumberShouldMatch;
     this.clauses = Collections.unmodifiableList(Arrays.asList(clauses));
     clauseSets = new EnumMap<>(Occur.class);
-    // duplicates matter for SHOULD and MUST
-    // Multiset 的特性就是重复key 会记录一个次数
+    // duplicates matter for SHOULD and MUST      这2种重复添加时 会累加
     clauseSets.put(Occur.SHOULD, new Multiset<>());
     clauseSets.put(Occur.MUST, new Multiset<>());
-    // but not for FILTER and MUST_NOT
+    // but not for FILTER and MUST_NOT            这2种重复添加时 会覆盖
     clauseSets.put(Occur.FILTER, new HashSet<>());
     clauseSets.put(Occur.MUST_NOT, new HashSet<>());
     // 将clause 分派到所属的数组中
@@ -268,7 +267,8 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
   }
 
   /**
-   * 从下面的实现来看 该方法像是为Query瘦身
+   * 原本用于查询的 query本身可能不够清晰 比如 BooleanQuery传入时 无法识别查询条件是什么 在这里就要将BooleanQuery 拆解成内部详细的query对象
+   * 当返回原本的对象时 调用方则会退出rewrite
    * @param reader
    * @return
    * @throws IOException
@@ -284,20 +284,21 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
     if (clauses.size() == 1) {
       BooleanClause c = clauses.get(0);
       Query query = c.getQuery();
-      // 代表至少要匹配一个
+      // 如果使用的 Occur是 Should 且数量满足时 允许被返回
       if (minimumNumberShouldMatch == 1 && c.getOccur() == Occur.SHOULD) {
         return query;
-        // 如果没有要求匹配的数量
+      // 代表不对 should做数量限制
       } else if (minimumNumberShouldMatch == 0) {
         switch (c.getOccur()) {
-          // 当没有指定 should数量时  如果是 Should 或者 must 直接返回
+          // 这时 should 和must 是一样的
           case SHOULD:
           case MUST:
             return query;
-          // TODO 下面的情况还没有理解
+          // 返回一个得分始终为0的对象
           case FILTER:
             // no scoring clauses, so return a score of 0
             return new BoostQuery(new ConstantScoreQuery(query), 0);
+          // 仅有一个Query 且是  MUST_NOT时 无法定位要查询的内容  （只声明不能查到什么时是无法返回内容的）
           case MUST_NOT:
             // no positive clauses
             // 该对象代表无法匹配到任何 doc
@@ -309,13 +310,14 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
     }
 
     // recursively rewrite
+    // 相当于这里的目地是将所有 clause重写一次 只要有一个重写成功就认为该BooleanQuery本身重写成功   之后调用方还会不断的调用rewrite 直到无法再重写为止
     {
-      // 这里打算重写所有Clause 并将新返回的Query 重新构建BooleanQuery
       BooleanQuery.Builder builder = new BooleanQuery.Builder();
       builder.setMinimumNumberShouldMatch(getMinimumNumberShouldMatch());
       boolean actuallyRewritten = false;
       for (BooleanClause clause : this) {
         Query query = clause.getQuery();
+        // 将每个 子 Query对象都进行重写
         Query rewritten = query.rewrite(reader);
         if (rewritten != query) {
           // rewrite clause
@@ -326,25 +328,26 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
           builder.add(clause);
         }
       }
-      // 代表有  query被重写
+      // 只要有一个query重写成功了 就返回新的 BooleanQuery
       if (actuallyRewritten) {
         return builder.build();
       }
     }
 
     // remove duplicate FILTER and MUST_NOT clauses
+    // 此时内部的clauses本身 无法再重写了  就开始检测是否有重复的查询条件 并进行剔除
     {
       int clauseCount = 0;
       for (Collection<Query> queries : clauseSets.values()) {
         clauseCount += queries.size();
       }
-      // size 不等的时候实际上就是 FILTER 和 MUST_NOT 被去重了
+      // 数值不等的时候意味着重复插入了  NOT_MUST 和 FILTER
       if (clauseCount != clauses.size()) {
         // since clauseSets implicitly deduplicates FILTER and MUST_NOT
         // clauses, this means there were duplicates
         BooleanQuery.Builder rewritten = new BooleanQuery.Builder();
         rewritten.setMinimumNumberShouldMatch(minimumNumberShouldMatch);
-        // 使用去重后的结果重新生成一次  BooleanQuery
+        // 生成一个 不包含重复 NOT_MUST 和 FILTER 的 BooleanQuery
         for (Map.Entry<Occur, Collection<Query>> entry : clauseSets.entrySet()) {
           final Occur occur = entry.getKey();
           for (Query query : entry.getValue()) {
@@ -356,7 +359,7 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
     }
 
     // Check whether some clauses are both required and excluded
-    // 找到所有  MUST_NOT 的query 对象
+    // TODO
     final Collection<Query> mustNotClauses = clauseSets.get(Occur.MUST_NOT);
     if (!mustNotClauses.isEmpty()) {
       final Predicate<Query> p = clauseSets.get(Occur.MUST)::contains;

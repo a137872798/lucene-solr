@@ -33,6 +33,10 @@ class SliceExecutor {
     this.executor = executor;
   }
 
+  /**
+   * 该线程池允许批量提交任务
+   * @param tasks
+   */
   public void invokeAll(Collection<? extends Runnable> tasks) {
 
     if (tasks == null) {
@@ -45,6 +49,7 @@ class SliceExecutor {
 
     int i = 0;
 
+    // 批量执行任务 同时最后一个任务会由本线程执行
     for (Runnable task : tasks) {
       boolean shouldExecuteOnCallerThread = false;
 
@@ -65,6 +70,7 @@ class SliceExecutor {
       throw new IllegalArgumentException("Input is null");
     }
 
+    // 其他任务都交给线程池  只有最后一个任务 是由当前线程执行的
     if (!shouldExecuteOnCallerThread) {
       try {
         executor.execute(task);

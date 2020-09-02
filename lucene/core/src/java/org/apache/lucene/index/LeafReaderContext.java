@@ -43,7 +43,12 @@ public final class LeafReaderContext extends IndexReaderContext {
   
   /**
    * Creates a new {@link LeafReaderContext}
-   * @param parent 声明本上下文的父节点
+   * @param parent 该节点挂载在哪个组合对象下
+   * @param reader 该reader对象自身
+   * @param ord 在所有子节点的顺序  从0开始
+   * @param docBase 从0开始 记录之前所有leafReader的文档总数
+   * @param leafOrd 左边有几个叶子节点  应该就是跟ord 一样的
+   * @param leafDocBase  该叶子节点的doc从多少开始  应该跟 docBase是一样的
    */    
   LeafReaderContext(CompositeReaderContext parent, LeafReader reader,
                     int ord, int docBase, int leafOrd, int leafDocBase) {
@@ -51,6 +56,7 @@ public final class LeafReaderContext extends IndexReaderContext {
     this.ord = leafOrd;
     this.docBase = leafDocBase;
     this.reader = reader;
+    // 如果使用一个 LeafReader直接初始化 LeafReaderContext  那么 leaves 就是自己
     this.leaves = isTopLevel ? Collections.singletonList(this) : null;
   }
 

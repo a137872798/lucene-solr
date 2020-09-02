@@ -382,7 +382,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
   /**
    * A serialized document, you need to decode its input in order to get an actual
    * {@link Document}.
-   * 单个 doc对象
+   * 记录某个 document下的数据
    */
   static class SerializedDocument {
 
@@ -393,7 +393,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     final int length;
 
     // the number of stored fields
-    // 记录这个doc内部有多少 具备排序能力的 field
+    // 内部有多少设置了 stored为true的 field  (设置为false的field不会被写入到该索引文件)
     final int numStoredFields;
 
     private SerializedDocument(DataInput in, int length, int numStoredFields) {
@@ -640,7 +640,7 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
    */
   SerializedDocument document(int docID) throws IOException {
     if (state.contains(docID) == false) {
-      // 定位到某个 doc的偏移量
+      // 定位到某个 doc的偏移量    indexReader内部使用了二分查找
       fieldsStream.seek(indexReader.getStartPointer(docID));
       // 读取fieldsStream内部的数据 填充内部字段
       state.reset(docID);
@@ -649,14 +649,24 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
     return state.document(docID);
   }
 
+  /**
+   * 尝试查找某个doc 对应的field 信息    在解析doc时 只有遇到field.stored 为true时 才会将信息写入到索引文件中    即使处理的所有field.stored 都是false
+   * 也只是没有写入field信息 基本的文件头等还是存在  索引文件还是存在
+   * @param docID
+   * @param visitor
+   * @throws IOException
+   */
   @Override
   public void visitDocument(int docID, StoredFieldVisitor visitor)
       throws IOException {
 
+    // 获取该doc 对应的各种数据信息
     final SerializedDocument doc = document(docID);
 
+    // 遍历该doc 下 设置了 stored为true的 field
     for (int fieldIDX = 0; fieldIDX < doc.numStoredFields; fieldIDX++) {
       final long infoAndBits = doc.in.readVLong();
+      // 记录的是 fieldNum  通过fieldNum 查找到fieldInfo信息
       final int fieldNumber = (int) (infoAndBits >>> TYPE_BITS);
       final FieldInfo fieldInfo = fieldInfos.fieldInfo(fieldNumber);
 
@@ -665,9 +675,11 @@ public final class CompressingStoredFieldsReader extends StoredFieldsReader {
 
       switch(visitor.needsField(fieldInfo)) {
         case YES:
+          // 使用visitor 处理field.value
           readField(doc.in, visitor, fieldInfo, bits);
           break;
         case NO:
+          // 当此时是最后一个field时 退出循环 否则切换到下一个field
           if (fieldIDX == doc.numStoredFields - 1) {// don't skipField on last field value; treat like STOP
             return;
           }

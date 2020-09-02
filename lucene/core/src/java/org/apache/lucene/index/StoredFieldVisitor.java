@@ -77,7 +77,8 @@ public abstract class StoredFieldVisitor {
    * Before a field is processed, this method is invoked so that
    * subclasses can return a {@link Status} representing whether
    * they need that particular field or not, or to stop processing
-   * entirely.
+   * entirely
+   * 是否需要处理该field .
    */
   public abstract Status needsField(FieldInfo fieldInfo) throws IOException;
   

@@ -101,12 +101,11 @@ public class LRUQueryCache implements QueryCache, Accountable {
   private final Predicate<LeafReaderContext> leavesToCache;
   // maps queries that are contained in the cache to a singleton so that this
   // cache does not store several copies of the same query
-  // 应该是一个多对1的映射
   private final Map<Query, Query> uniqueQueries;
   // The contract between this set and the per-leaf caches is that per-leaf caches
   // are only allowed to store sub-sets of the queries that are contained in
   // mostRecentlyUsedQueries. This is why write operations are performed under a lock
-  // 记录最近使用的缓存
+  // 记录最近使用的 query 就是 uniqueQueries 的keySet
   private final Set<Query> mostRecentlyUsedQueries;
   /**
    * LeafCache 内部存储了一组命中的 docId
@@ -133,7 +132,8 @@ public class LRUQueryCache implements QueryCache, Accountable {
    *
    * Also, clauses whose cost is {@code skipCacheFactor} times more than the cost of the top-level query
    * will not be cached in order to not slow down queries too much.
-   * 通过指定缓存 尺寸和 允许使用的最大内存来创建缓存对象
+   * @param maxSize 最多允许缓存多少query的结果
+   * @param maxRamBytesUsed  最多允许缓存数据占用多少bytes
    */
   public LRUQueryCache(int maxSize, long maxRamBytesUsed,
                        Predicate<LeafReaderContext> leavesToCache, float skipCacheFactor) {
@@ -146,7 +146,6 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
     this.skipCacheFactor = skipCacheFactor;
 
-    // 该对象的key 就是 mostRecently
     uniqueQueries = new LinkedHashMap<>(16, 0.75f, true);
     mostRecentlyUsedQueries = uniqueQueries.keySet();
     // 基于线性探测法创建的 map
@@ -174,7 +173,14 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
   // pkg-private for testing
   static class MinSegmentSizePredicate implements Predicate<LeafReaderContext> {
+
+    /**
+     * 描述segment的最小大小
+     */
     private final int minSize;
+    /**
+     * 描述一个比率信息
+     */
     private final float minSizeRatio;
 
     MinSegmentSizePredicate(int minSize, float minSizeRatio) {

@@ -28,6 +28,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 class QueueSizeBasedExecutor extends SliceExecutor {
   private static final double LIMITING_FACTOR = 1.5;
 
+  /**
+   * 当执行了 Executor是 ThreadPoolExecutor 时 会创建QueueSizeBasedExecutor
+   */
   private final ThreadPoolExecutor threadPoolExecutor;
 
   public QueueSizeBasedExecutor(ThreadPoolExecutor threadPoolExecutor) {
@@ -35,11 +38,16 @@ class QueueSizeBasedExecutor extends SliceExecutor {
     this.threadPoolExecutor = threadPoolExecutor;
   }
 
+  /**
+   * 覆盖了父类的方法
+   * @param tasks
+   */
   @Override
   public void invokeAll(Collection<? extends Runnable> tasks) {
     int i = 0;
 
     for (Runnable task : tasks) {
+      // 同样将最后一个任务交由本线程处理
       boolean shouldExecuteOnCallerThread = false;
 
       // Execute last task on caller thread
@@ -47,6 +55,7 @@ class QueueSizeBasedExecutor extends SliceExecutor {
         shouldExecuteOnCallerThread = true;
       }
 
+      // 因为可能会使用 无界队列 这里就将超过最大值的任务交由当前线程执行
       if (threadPoolExecutor.getQueue().size() >=
           (threadPoolExecutor.getMaximumPoolSize() * LIMITING_FACTOR)) {
         shouldExecuteOnCallerThread = true;

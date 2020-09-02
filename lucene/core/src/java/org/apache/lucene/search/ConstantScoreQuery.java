@@ -28,6 +28,7 @@ import org.apache.lucene.util.Bits;
  * A query that wraps another query and simply returns a constant score equal to
  * 1 for every document that matches the query.
  * It therefore simply strips of all scores and always returns 1.
+ * 该对象返回的
  */
 public final class ConstantScoreQuery extends Query {
   private final Query query;

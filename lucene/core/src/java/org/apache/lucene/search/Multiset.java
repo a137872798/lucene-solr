@@ -28,7 +28,7 @@ import java.util.Map;
  * each unique element has as many occurrences in both multisets.
  * Iteration order is not specified.
  * @lucene.internal
- * 该set 允许元素去重 （也就是不再具备set的自动去重功能）
+ * 该set 允许元素重复 （也就是不再具备set的自动去重功能）
  */
 final class Multiset<T> extends AbstractCollection<T> {
 

@@ -91,12 +91,20 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
 public class IndexSearcher {
 
   /**
-   * 组合条件数量  某些query类的查询条件是可以组合的
+   * 组合条件数量  某些query类的查询条件是可以组合的  这个是组合数量的上限
    */
   static int maxClauseCount = 1024;
+
+  /**
+   * 结果缓存对象
+   */
   private static QueryCache DEFAULT_QUERY_CACHE;
+  /**
+   * 该对象负责判断 某个query 是否具备缓存的条件
+   */
   private static QueryCachingPolicy DEFAULT_CACHING_POLICY = new UsageTrackingQueryCachingPolicy();
   static {
+    // 最多仅允许缓存100个query的结果
     final int maxCachedQueries = 1000;
     // min of 32MB or 5% of the heap size
     final long maxRamBytesUsed = Math.min(1L << 25, Runtime.getRuntime().maxMemory() / 20);
@@ -183,7 +191,10 @@ public class IndexSearcher {
   /** The Similarity implementation used by this searcher. */
   private Similarity similarity = defaultSimilarity;
 
-  /** Creates a searcher searching the provided index. */
+  /**
+   * Creates a searcher searching the provided index.
+   * @param r 该对象基于一个读取索引文件的reader对象初始化  可能是一个组合对象 也可能只是针对单个段的读取对象
+   * */
   public IndexSearcher(IndexReader r) {
     this(r, null);
   }
@@ -214,12 +225,19 @@ public class IndexSearcher {
    * @see IndexReaderContext
    * @see IndexReader#getContext()
    * @lucene.experimental
+   * @param context  该reader相关的上下文
+   * @param executor 支持并发查询    (机械硬盘的话 并发读取也没有优势啊 必须要固态硬盘)
    */
   public IndexSearcher(IndexReaderContext context, Executor executor) {
     this(context, executor, getSliceExecutionControlPlane(executor));
   }
 
-  // Package private for testing
+  /**
+   *
+   * @param context
+   * @param executor
+   * @param sliceExecutor  通过包装线程池对象生成的  线程池分片  会将部分任务交由线程池执行 部分任务由本线程完成
+   */
   IndexSearcher(IndexReaderContext context, Executor executor, SliceExecutor sliceExecutor) {
     assert context.isTopLevel: "IndexSearcher's ReaderContext must be topLevel for reader" + context.reader();
     assert (sliceExecutor == null) == (executor==null);
@@ -228,7 +246,9 @@ public class IndexSearcher {
     this.executor = executor;
     this.sliceExecutor = sliceExecutor;
     this.readerContext = context;
+    // 如果是 compositeReader 那么 leaves 就是叶子节点  如果是 LeafReader 那么leaves 就是自身
     leafContexts = context.leaves();
+    // 如果设置了线程池  代表可以并行执行 leafReader的查询功能  这里就创建了一组对应的 LeafSlice
     this.leafSlices = executor == null ? null : slices(leafContexts);
   }
 
@@ -238,6 +258,7 @@ public class IndexSearcher {
    * @see IndexReaderContext
    * @see IndexReader#getContext()
    * @lucene.experimental
+   * 支持直接通过上下文对象进行初始化
    */
   public IndexSearcher(IndexReaderContext context) {
     this(context, null);
@@ -311,6 +332,7 @@ public class IndexSearcher {
    * Expert: Creates an array of leaf slices each holding a subset of the given leaves.
    * Each {@link LeafSlice} is executed in a single thread. By default, segments with more than
    * MAX_DOCS_PER_SLICE will get their own thread
+   * 为一组叶子节点创建分片
    */
   protected LeafSlice[] slices(List<LeafReaderContext> leaves) {
     return slices(leaves, MAX_DOCS_PER_SLICE, MAX_SEGMENTS_PER_SLICE);
@@ -318,6 +340,8 @@ public class IndexSearcher {
 
   /**
    * Static method to segregate LeafReaderContexts amongst multiple slices
+   * @param maxDocsPerSlice  每个分片最多只能存储这么多doc
+   * @param maxSegmentsPerSlice 每个分片最多允许的 segment数量   也就是slice 与 segment 并不是一一对应的
    */
   public static LeafSlice[] slices (List<LeafReaderContext> leaves, int maxDocsPerSlice,
                                     int maxSegmentsPerSlice) {
@@ -325,9 +349,11 @@ public class IndexSearcher {
     List<LeafReaderContext> sortedLeaves = new ArrayList<>(leaves);
 
     // Sort by maxDoc, descending:
+    // 按照doc 数量 倒序排列
     Collections.sort(sortedLeaves,
         Collections.reverseOrder(Comparator.comparingInt(l -> l.reader().maxDoc())));
 
+    // 第一层就是按照slice 划分的  第二层就是按照 segment(reader) 划分的
     final List<List<LeafReaderContext>> groupedLeaves = new ArrayList<>();
     long docSum = 0;
     List<LeafReaderContext> group = null;
@@ -336,6 +362,7 @@ public class IndexSearcher {
         assert group == null;
         groupedLeaves.add(Collections.singletonList(ctx));
       } else {
+        // 只要group没有被置空 就代表之前还没有达到 maxDocsPerSlice 的限制
         if (group == null) {
           group = new ArrayList<>();
           group.add(ctx);
@@ -345,6 +372,7 @@ public class IndexSearcher {
           group.add(ctx);
         }
 
+        // 达到限制时 重置相关引用
         docSum += ctx.reader().maxDoc();
         if (group.size() >= maxSegmentsPerSlice || docSum > maxDocsPerSlice) {
           group = null;
@@ -355,6 +383,7 @@ public class IndexSearcher {
 
     LeafSlice[] slices = new LeafSlice[groupedLeaves.size()];
     int upto = 0;
+    // 将以segment为维度划分的list 进行合并
     for (List<LeafReaderContext> currentLeaf : groupedLeaves) {
       slices[upto] = new LeafSlice(currentLeaf);
       ++upto;
@@ -370,7 +399,10 @@ public class IndexSearcher {
 
   /** 
    * Sugar for <code>.getIndexReader().document(docID)</code> 
-   * @see IndexReader#document(int) 
+   * @see IndexReader#document(int)
+   * 通过指定docId 查询对应的文档   这个docId 是一个 全局性的id 比如reader是CompositeReader 那么就要先通过docId 定位到具体的leafReader 之后再读取
+   * 注意这里是明确直到了 docId 是多少后再去查询  并且只能读取到 stored为true的 field   (从索引文件中将他们还原出来 并填写到一个doc中)
+   * 但是lucene的精髓肯定还是按照 query来查找
    */
   public Document doc(int docID) throws IOException {
     return reader.document(docID);
@@ -378,7 +410,8 @@ public class IndexSearcher {
 
   /** 
    * Sugar for <code>.getIndexReader().document(docID, fieldVisitor)</code>
-   * @see IndexReader#document(int, StoredFieldVisitor) 
+   * @see IndexReader#document(int, StoredFieldVisitor)
+   * 通过外部直接指定visitor读取field 并生成doc  用户需要自己调用 visitor.document 得到还原的doc
    */
   public void doc(int docID, StoredFieldVisitor fieldVisitor) throws IOException {
     reader.document(docID, fieldVisitor);
@@ -386,7 +419,8 @@ public class IndexSearcher {
 
   /** 
    * Sugar for <code>.getIndexReader().document(docID, fieldsToLoad)</code>
-   * @see IndexReader#document(int, Set) 
+   * @see IndexReader#document(int, Set)
+   * @param fieldsToLoad  代表只允许加载这些field信息  其余信息即使存储在doc中 且 stored为true 也不会被处理
    */
   public Document doc(int docID, Set<String> fieldsToLoad) throws IOException {
     return reader.document(docID, fieldsToLoad);
@@ -408,8 +442,10 @@ public class IndexSearcher {
 
   /**
    * Count how many documents match the given query.
+   * 返回query命中的doc 总数
    */
   public int count(Query query) throws IOException {
+    // 在处理query前需要进行重写
     query = rewrite(query);
     while (true) {
       // remove wrappers that don't matter for counts
@@ -754,9 +790,11 @@ public class IndexSearcher {
   /** Expert: called to re-write queries into primitive queries.
    * @throws TooManyClauses If a query would exceed
    *         {@link IndexSearcher#getMaxClauseCount()} clauses.
+   *         在使用query前需要进行重写
    */
   public Query rewrite(Query original) throws IOException {
     Query query = original;
+    // 每次rewrite返回的新对象又可以重写出新的对象  当rewriter返回自身时  代表已经无法继续重写了
     for (Query rewrittenQuery = query.rewrite(reader); rewrittenQuery != query;
          rewrittenQuery = query.rewrite(reader)) {
       query = rewrittenQuery;
@@ -871,6 +909,7 @@ public class IndexSearcher {
    * executed within a single thread.
    * 
    * @lucene.experimental
+   * 每个分片对象都包含一组reader
    */
   public static class LeafSlice {
 
@@ -880,6 +919,7 @@ public class IndexSearcher {
     public final LeafReaderContext[] leaves;
     
     public LeafSlice(List<LeafReaderContext> leavesList) {
+      // 恢复从小到大的顺序
       Collections.sort(leavesList, Comparator.comparingInt(l -> l.docBase));
       this.leaves = leavesList.toArray(new LeafReaderContext[0]);
     }
@@ -955,8 +995,10 @@ public class IndexSearcher {
 
   /**
    * Return the SliceExecutionControlPlane instance to be used for this IndexSearcher instance
+   * 线程池还有分片的概念???
    */
   private static SliceExecutor getSliceExecutionControlPlane(Executor executor) {
+    // 如果传入的线程池为 null 则不需要处理
     if (executor == null) {
       return null;
     }
@@ -965,6 +1007,7 @@ public class IndexSearcher {
       return new QueueSizeBasedExecutor((ThreadPoolExecutor) executor);
     }
 
+    // 默认情况下 返回一个 线程池分片
     return new SliceExecutor(executor);
   }
 }

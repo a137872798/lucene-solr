@@ -49,7 +49,6 @@ public abstract class LeafReader extends IndexReader {
 
   /**
    * 每个reader对象会绑定一个context
-   * 使用单个reader 进行初始化的时候 每个context会认为自己是top节点
    */
   private final LeafReaderContext readerContext = new LeafReaderContext(this);
 

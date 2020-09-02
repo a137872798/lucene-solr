@@ -35,7 +35,7 @@ public final class BoostQuery extends Query {
 
   private final Query query;
   /**
-   * 权重值 相关
+   * 跟 打分相关的
    */
   private final float boost;
 
@@ -86,20 +86,24 @@ public final class BoostQuery extends Query {
   public Query rewrite(IndexReader reader) throws IOException {
     final Query rewritten = query.rewrite(reader);
 
+    // 如果权重是1 相当于该对象不影响权重 这层包装就是多余的 直接返回重写后的对象就好
     if (boost == 1f) {
       return rewritten;
     }
 
+    // 如果返回的也是一个权重对象 那么将权重相乘
     if (rewritten.getClass() == BoostQuery.class) {
       BoostQuery in = (BoostQuery) rewritten;
       return new BoostQuery(in.query, boost * in.boost);
     }
 
+    // 如果权重是0 就要将生成的对象包装成权重为0的对象
     if (boost == 0f && rewritten.getClass() != ConstantScoreQuery.class) {
       // so that we pass needScores=false
       return new BoostQuery(new ConstantScoreQuery(rewritten), 0f);
     }
 
+    // 其余权重值 就包装成BoostQuery
     if (query != rewritten) {
       return new BoostQuery(rewritten, boost);
     }

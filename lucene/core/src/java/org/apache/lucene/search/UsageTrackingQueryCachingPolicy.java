@@ -27,7 +27,6 @@ import org.apache.lucene.util.FrequencyTrackingRingBuffer;
  *
  * @lucene.experimental
  * 目前 查询缓存策略只有这一种实现
- * 该对象内部通过一个 FrequencyTrackingRingBuffer 记录查询次数  并且对外提供查询的api
  */
 public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
 
