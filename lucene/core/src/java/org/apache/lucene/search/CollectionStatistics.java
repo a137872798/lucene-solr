@@ -45,12 +45,30 @@ import org.apache.lucene.index.Terms;       // javadocs
  * Be careful when performing calculations on these values because they are represented
  * as 64-bit integer values, you may need to cast to {@code double} for your use.
  * @lucene.experimental
+ * 以field为的单位记录了一些相关信息     统计维度跟 生成该对象的reader有关 如果是compositeReader 那么数据就是所有leafReader的总和(多个segment的总和)
+ * 如果是 leafReader 那么数据就是单个 segment的总和
  */
 public class CollectionStatistics {
+
+  /**
+   * 该统计对象是针对哪个 field的
+   */
   private final String field;
+  /**
+   * 总计存在多少doc
+   */
   private final long maxDoc;
+  /**
+   * 该field总计出现在多少doc下
+   */
   private final long docCount;
+  /**
+   * 该field 下所有term在所有出现过的doc频率总和
+   */
   private final long sumTotalTermFreq;
+  /**
+   * 该field下所有term出现的doc数量总数 也就是不会去重
+   */
   private final long sumDocFreq;
   
   /**

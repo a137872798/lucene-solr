@@ -139,7 +139,7 @@ public abstract class BaseCompositeReader<R extends IndexReader> extends Composi
     // than once on the sub readers, since they likely cache numDocs() anyway,
     // hence the opaque read.
     // http://gee.cs.oswego.edu/dl/html/j9mm.html#opaquesec.
-    // 就当获取当前值吧
+    // 先从缓存中获取
     int numDocs = this.numDocs.getOpaque();
     if (numDocs == -1) {
       numDocs = 0;

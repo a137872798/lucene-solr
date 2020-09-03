@@ -47,9 +47,18 @@ import org.apache.lucene.util.BytesRef;
  */
 // TODO: actually add missing cross-checks to guarantee TermStatistics is in bounds of CollectionStatistics,
 // otherwise many similarity functions will implode.
+// 描述有关term的信息
 public class TermStatistics {
+
+  /**
+   * 该term的内容
+   */
   private final BytesRef term;
+  /**
+   * 该term出现在多少doc中
+   */
   private final long docFreq;
+
   private final long totalTermFreq;
   
   /**

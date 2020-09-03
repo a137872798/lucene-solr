@@ -445,7 +445,7 @@ public class IndexSearcher {
    * 返回query命中的doc 总数
    */
   public int count(Query query) throws IOException {
-    // 在处理query前需要进行重写
+    // 在处理query前需要进行重写  该方法内部同时还会对 query的 clause数量做检测 如果超过maxClauseCount  则会抛出异常
     query = rewrite(query);
     while (true) {
       // remove wrappers that don't matter for counts
@@ -458,10 +458,13 @@ public class IndexSearcher {
 
     // some counts can be computed in constant time
     if (query instanceof MatchAllDocsQuery) {
+      // 如果所有doc 都满足条件 那么根据当前 reader的情况返回doc数量 如果是 LeafReader 返回单个segment的docNum 如果是 CompositeReader 返回的就是所有关联segment的docNum总和
       return reader.numDocs();
+      // 如果此时 doc 还全部存活
     } else if (query instanceof TermQuery && reader.hasDeletions() == false) {
       Term term = ((TermQuery) query).getTerm();
       int count = 0;
+      // 在每个 leafReader中 都按照term查询docFreq 并进行累加    docFreq 是在 解析doc时计算的
       for (LeafReaderContext leaf : reader.leaves()) {
         count += leaf.reader().docFreq(term);
       }
@@ -469,13 +472,26 @@ public class IndexSearcher {
     }
 
     // general case: create a collector and count matches
+    // 在查询时应该还要考虑已经非存活的doc 不能被查询出来
+    // CollectorManager 负责创建 collector 以及将多个collector的数据进行整合
     final CollectorManager<TotalHitCountCollector, Integer> collectorManager = new CollectorManager<TotalHitCountCollector, Integer>() {
 
+      /**
+       * TotalHitCountCollector 在查询到doc时 会累加 命中的数量
+       * @return
+       * @throws IOException
+       */
       @Override
       public TotalHitCountCollector newCollector() throws IOException {
         return new TotalHitCountCollector();
       }
 
+      /**
+       * 将每个子 Collector获得的结果进行累加
+       * @param collectors
+       * @return
+       * @throws IOException
+       */
       @Override
       public Integer reduce(Collection<TotalHitCountCollector> collectors) throws IOException {
         int total = 0;
@@ -564,7 +580,9 @@ public class IndexSearcher {
    */
   public void search(Query query, Collector results)
     throws IOException {
+    // 在查询前先确保query 已经无法被重写
     query = rewrite(query);
+    // 从存储数据的 leafReader对应的上下文中读取数据  注意这里还传入了一个 weight对象   weight中携带了 scorer对象 (通过统计field信息和term信息 进行打分)
     search(leafContexts, createWeight(query, results.scoreMode(), 1), results);
   }
 
@@ -690,8 +708,10 @@ public class IndexSearcher {
   * on the configured {@link #leafSlices}.
   * @see CollectorManager
   * @lucene.experimental
+  * 该对象的核心方法  根据 query对象查询命中的doc 同时将结果交由collectorManager 处理
   */
   public <C extends Collector, T> T search(Query query, CollectorManager<C, T> collectorManager) throws IOException {
+    // 代表单线程执行  因为数据都是从 IO系统中拉取后缓存在内存中的 所以可以通过提高并行度来提高性能
     if (executor == null || leafSlices.length <= 1) {
       final C collector = collectorManager.newCollector();
       search(query, collector);
@@ -759,6 +779,7 @@ public class IndexSearcher {
    *          to receive hits
    * @throws TooManyClauses If a query would exceed
    *         {@link IndexSearcher#getMaxClauseCount()} clauses.
+   *         查询结果并使用 collector处理
    */
   protected void search(List<LeafReaderContext> leaves, Weight weight, Collector collector)
       throws IOException {
@@ -769,12 +790,14 @@ public class IndexSearcher {
     for (LeafReaderContext ctx : leaves) { // search each subreader
       final LeafCollector leafCollector;
       try {
+        // 根据context 重置内部相关信息    一般会与 doSetNextReader 产生联动
         leafCollector = collector.getLeafCollector(ctx);
       } catch (CollectionTerminatedException e) {
         // there is no doc of interest in this reader context
         // continue with the following leaf
         continue;
       }
+      // 看来每个reader对象都会对应一个 打分的结果
       BulkScorer scorer = weight.bulkScorer(ctx);
       if (scorer != null) {
         try {
@@ -799,6 +822,8 @@ public class IndexSearcher {
          rewrittenQuery = query.rewrite(reader)) {
       query = rewrittenQuery;
     }
+    // 针对直接使用docId 进行查询 的visitor 是 StoredFieldVisitor  会直接从索引文件中寻找 field.value 并且仅能还原 field.stored为true的 field到doc上
+    // 针对query使用的visitor是 QueryVisitor
     query.visit(getNumClausesCheckVisitor());
     return query;
   }
@@ -807,6 +832,7 @@ public class IndexSearcher {
    * number of clauses that a query and its children cumulatively
    * have and validates that the total number does not exceed
    * the specified limit
+   * 该visitor 对象 实际上并没有从索引文件中读取数据的能力 仅仅具备对clause做限制的功能  比如在 rewrite中 最终返回的是一个BooleanQuery对象 它的各种query都会触发 queryVisitor的 consumerTerms  方法 如果条件数过多 则会抛出异常
    */
   private static QueryVisitor getNumClausesCheckVisitor() {
     return new QueryVisitor() {
@@ -819,6 +845,11 @@ public class IndexSearcher {
         return this;
       }
 
+      // query.visitor 被触发时 可能通过以下三种方式实现功能   该对象就是专门为组合对象下 query数量做限制
+
+      /**
+       * @param query the query
+       */
       @Override
       public void visitLeaf(Query query) {
         if (numClauses > maxClauseCount) {
@@ -827,6 +858,11 @@ public class IndexSearcher {
         ++numClauses;
       }
 
+      /**
+       *
+       * @param query  the leaf query   定义了查询条件的对象
+       * @param terms  the terms the query will match on    该查询对象以什么term作为查询条件
+       */
       @Override
       public void consumeTerms(Query query, Term... terms) {
         if (numClauses > maxClauseCount) {
@@ -885,6 +921,10 @@ public class IndexSearcher {
    * Creates a {@link Weight} for the given query, potentially adding caching
    * if possible and configured.
    * @lucene.experimental
+   * @param query 本次使用的查询条件
+   * @param scoreMode 使用的打分模式
+   * @param boost 打分的相关参数
+   * 创建权重对象
    */
   public Weight createWeight(Query query, ScoreMode scoreMode, float boost) throws IOException {
     final QueryCache queryCache = this.queryCache;
@@ -941,6 +981,7 @@ public class IndexSearcher {
    * @return A {@link TermStatistics} (never null).
    *
    * @lucene.experimental
+   * 生成某个 term的统计信息  这里只是简单做一个包装 因为相关信息已经从参数中获取了
    */
   public TermStatistics termStatistics(Term term, int docFreq, long totalTermFreq) throws IOException {
     // This constructor will throw an exception if docFreq <= 0.
@@ -954,6 +995,7 @@ public class IndexSearcher {
    * This can be overridden for example, to return a field's statistics
    * across a distributed collection.
    * @lucene.experimental
+   * 基于 field 生成一个统计对象
    */
   public CollectionStatistics collectionStatistics(String field) throws IOException {
     assert field != null;
@@ -965,7 +1007,9 @@ public class IndexSearcher {
       if (terms == null) {
         continue;
       }
+      // 代表该field出现的doc总数  虽然 计算是通过该field下所有term所在的doc总数 (已根据docId去重)  但是这些term都是以field为单位进行管理的 所以可以确保不会读取到field不存在的doc
       docCount += terms.getDocCount();
+      // 下面2个参数 分别记录了 该field下所有term 出现的doc总数和 以及在doc中出现的频率次数总和
       sumTotalTermFreq += terms.getSumTotalTermFreq();
       sumDocFreq += terms.getSumDocFreq();
     }

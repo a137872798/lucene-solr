@@ -28,7 +28,7 @@ import org.apache.lucene.util.automaton.ByteRunAutomaton;
  * Allows recursion through a query tree
  *
  * @see Query#visit(QueryVisitor)
- * 允许递归查询树   也就是 Query对象以一种特殊的结构使用
+ * visitor的作用就是去索引文件中抽取相关信息
  */
 public abstract class QueryVisitor {
 
@@ -64,6 +64,8 @@ public abstract class QueryVisitor {
    *
    * Implement this to avoid collecting terms from heavy queries such as {@link TermInSetQuery}
    * that are not running on fields of interest
+   * 在进行查询前 先要确保 query相关的field 能否支持被该对象处理  比如 TermQuery 中 Term.field
+   * 默认情况允许处理所有的field
    */
   public boolean acceptField(String field) {
     return true;

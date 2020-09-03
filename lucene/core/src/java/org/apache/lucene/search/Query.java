@@ -79,7 +79,6 @@ public abstract class Query {
   /**
    * Recurse through the query tree, visiting any child queries
    * @param visitor a QueryVisitor to be called by each query in the tree
-   *                Query对象本身会构成某种树结构  visitor 具备递归读取树的能力
    */
   public abstract void visit(QueryVisitor visitor);
 

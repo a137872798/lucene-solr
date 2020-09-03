@@ -24,6 +24,7 @@ public enum ScoreMode {
   
   /**
    * Produced scorers will allow visiting all matches and get their score.
+   * 允许所有匹配的结果参与打分
    */
   COMPLETE {
     @Override
@@ -46,6 +47,7 @@ public enum ScoreMode {
   /**
    * Produced scorers will optionally allow skipping over non-competitive
    * hits using the {@link Scorer#setMinCompetitiveScore(float)} API.
+   * 仅有部分结果参与打分
    */
   TOP_SCORES {
     @Override

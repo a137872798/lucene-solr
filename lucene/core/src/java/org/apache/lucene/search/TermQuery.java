@@ -34,25 +34,43 @@ import org.apache.lucene.search.similarities.Similarity;
 /**
  * A Query that matches documents containing a term. This may be combined with
  * other terms with a {@link BooleanQuery}.
- * 指定词 并找到包含该词的文档
+ * 查询包含该term的所有 query
  */
 public class TermQuery extends Query {
 
-  /**
-   * 该查询对象定位了索引中的哪个词
-   */
+
   private final Term term;
   private final TermStates perReaderTermState;
 
+  /**
+   *  TermQuery 生成的 权重对象
+   */
   final class TermWeight extends Weight {
+
+    /**
+     * 打分的算法对象
+     */
     private final Similarity similarity;
+    /**
+     * 包含打分的API  如果某个term没有存储freq信息 那么不需要创建该对象
+     */
     private final Similarity.SimScorer simScorer;
     private final TermStates termStates;
     private final ScoreMode scoreMode;
 
+
+    /**
+     *
+     * @param searcher  该对象是通过 哪个searcher 创建的
+     * @param scoreMode   使用的打分模式
+     * @param boost      影响到得分的一个权重值
+     * @param termStates   存储该term的 posting信息
+     * @throws IOException
+     */
     public TermWeight(IndexSearcher searcher, ScoreMode scoreMode,
         float boost, TermStates termStates) throws IOException {
       super(TermQuery.this);
+      // 如果需要打分 那么必须要生成 state信息 否则无法计算分数
       if (scoreMode.needsScores() && termStates == null) {
         throw new IllegalStateException("termStates are required when scores are needed");
       }
@@ -63,14 +81,18 @@ public class TermQuery extends Query {
       final CollectionStatistics collectionStats;
       final TermStatistics termStats;
       if (scoreMode.needsScores()) {
+        // 采集该field 下所有的信息
         collectionStats = searcher.collectionStatistics(term.field());
+        // 生成有关term的统计对象   当field没有记录freq信息时 该值好像是-1   那么此时就不会生成 termStats
         termStats = termStates.docFreq() > 0 ? searcher.termStatistics(term, termStates.docFreq(), termStates.totalTermFreq()) : null;
       } else {
         // we do not need the actual stats, use fake stats with docFreq=maxDoc=ttf=1
+        // 当不需要计算分数时 生成一个虚拟结果
         collectionStats = new CollectionStatistics(term.field(), 1, 1, 1, 1);
         termStats = new TermStatistics(term.bytes(), 1, 1);
       }
-     
+
+      // 当没有生成 term的统计信息时 不需要创建 simScorer
       if (termStats == null) {
         this.simScorer = null; // term doesn't exist in any segment, we won't use similarity at all
       } else {
@@ -101,14 +123,27 @@ public class TermQuery extends Query {
       return "weight(" + TermQuery.this + ")";
     }
 
+    /**
+     * 根据 reader上下文信息 生成打分对象
+     * @param context
+     *          the {@link org.apache.lucene.index.LeafReaderContext} for which to return the {@link Scorer}.
+     *
+     * @return
+     * @throws IOException
+     */
     @Override
     public Scorer scorer(LeafReaderContext context) throws IOException {
       assert termStates == null || termStates.wasBuiltFor(ReaderUtil.getTopLevelContext(context)) : "The top-reader used to create Weight is not the same as the current reader's top-reader (" + ReaderUtil.getTopLevelContext(context);;
+
+      // 获取该  Term在该reader下的信息  (需要同时命中 term.field 和 term)
       final TermsEnum termsEnum = getTermsEnum(context);
       if (termsEnum == null) {
         return null;
       }
+      // 将标准因子 与 核心的打分对象 simScorer 包装到一起
       LeafSimScorer scorer = new LeafSimScorer(simScorer, context.reader(), term.field(), scoreMode.needsScores());
+
+      // 如果仅top数据参与打分
       if (scoreMode == ScoreMode.TOP_SCORES) {
         return new TermScorer(this, termsEnum.impacts(PostingsEnum.FREQS), scorer);
       } else {
@@ -129,6 +164,8 @@ public class TermQuery extends Query {
       assert termStates != null;
       assert termStates.wasBuiltFor(ReaderUtil.getTopLevelContext(context)) :
           "The top-reader used to create Weight is not the same as the current reader's top-reader (" + ReaderUtil.getTopLevelContext(context);
+
+      // 获取该context下该term的 posting信息
       final TermState state = termStates.get(context);
       if (state == null) { // term is not present in that reader
         assert termNotInReader(context.reader(), term) : "no termstate found but term exists in reader term=" + term;
@@ -189,24 +226,43 @@ public class TermQuery extends Query {
     return term;
   }
 
+  /**
+   * 创建权重对象
+   * @param searcher
+   * @param scoreMode     How the produced scorers will be consumed.
+   * @param boost         The boost that is propagated by the parent queries.
+   * @return
+   * @throws IOException
+   */
   @Override
   public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
+    // 获取IndexSearcher 的顶层 context  (如果初始化时使用的 reader就是 LeafReader 那么顶层上下文就是该LeafReader 对应的上下文)
     final IndexReaderContext context = searcher.getTopReaderContext();
     final TermStates termState;
+    // perReaderTermState 负责为每个reader 构建一个 termState对象
     if (perReaderTermState == null
         || perReaderTermState.wasBuiltFor(context) == false) {
+      // 为该context 创建 termState
       termState = TermStates.build(context, term, scoreMode.needsScores());
     } else {
       // PRTS was pre-build for this IS
+      // 可以在构建 QueryTerm时 提前设置 perReaderTermState
       termState = this.perReaderTermState;
     }
 
+    // 看来权重对象就是用来打分的
     return new TermWeight(searcher, scoreMode, boost, termState);
   }
 
+  /**
+   * 只看该对象的实现  因为大体流程都是一样的 其他的query等使用的时候再看
+   * @param visitor a QueryVisitor to be called by each query in the tree
+   */
   @Override
   public void visit(QueryVisitor visitor) {
+    // 首先要检测 该visitor 是否允许处理该field  就跟 StoredFieldVisitor一样 只能处理被允许的field
     if (visitor.acceptField(term.field())) {
+      // visitor 直接有处理term的接口吗  那么任何查询看来在重写后最终都会转换成针对term的查询
       visitor.consumeTerms(this, term);
     }
   }

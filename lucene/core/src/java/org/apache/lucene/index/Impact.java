@@ -30,7 +30,7 @@ public final class Impact {
 
   /**
    * Norm factor of the document.
-   * 规范因子
+   * 标准因子
    */
   public long norm;
 

@@ -181,6 +181,13 @@ public class BM25Similarity extends Similarity {
     return Explanation.match((float) idf, "idf, sum of:", details);
   }
 
+  /**
+   * 生成用于打分的对象  具体打分逻辑就不看了 反正也看不懂
+   * @param boost a multiplicative factor to apply to the produces scores
+   * @param collectionStats collection-level statistics, such as the number of tokens in the collection.
+   * @param termStats term-level statistics, such as the document frequency of a term across the collection.
+   * @return
+   */
   @Override
   public final SimScorer scorer(float boost, CollectionStatistics collectionStats, TermStatistics... termStats) {
     Explanation idf = termStats.length == 1 ? idfExplain(collectionStats, termStats[0]) : idfExplain(collectionStats, termStats);

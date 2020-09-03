@@ -27,6 +27,7 @@ import org.apache.lucene.util.BytesRef;
  * {@link ImpactsEnum} that doesn't index impacts but implements the API in a
  * legal way. This is typically used for short postings that do not need
  * skipping.
+ * 无法利用跳跃表查询数据
  */
 public final class SlowImpactsEnum extends ImpactsEnum {
 
@@ -51,6 +52,9 @@ public final class SlowImpactsEnum extends ImpactsEnum {
 
   };
 
+  /**
+   * 利用该对象获取 posting信息
+   */
   private final PostingsEnum delegate;
 
   /** Wrap the given {@link PostingsEnum}. */

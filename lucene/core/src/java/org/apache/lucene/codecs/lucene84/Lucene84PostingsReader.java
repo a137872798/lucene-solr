@@ -266,7 +266,6 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
   }
 
   /**
-   * 获取遍历目标term的迭代器
    * @param fieldInfo  该term所属的field
    * @param termState  该term相关的元数据
    * @param reuse     尝试复用对象
@@ -306,8 +305,17 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     }
   }
 
+  /**
+   * 基于 state的信息 还原 获取impact信息的对象
+   * @param fieldInfo
+   * @param state
+   * @param flags
+   * @return
+   * @throws IOException
+   */
   @Override
   public ImpactsEnum impacts(FieldInfo fieldInfo, BlockTermState state, int flags) throws IOException {
+    // 应该是利用跳跃表查询数据 但是数据量小于一个block 就无法利用跳跃表快速查询了
     if (state.docFreq <= BLOCK_SIZE) {
       // no skip data
       return new SlowImpactsEnum(postings(fieldInfo, state, null, flags));
@@ -317,6 +325,7 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     final boolean indexHasOffsets = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;
     final boolean indexHasPayloads = fieldInfo.hasPayloads();
 
+    // 利用跳跃表查询数据
     if (indexHasPositions == false || PostingsEnum.featureRequested(flags, PostingsEnum.POSITIONS) == false) {
       return new BlockImpactsDocsEnum(fieldInfo, (IntBlockTermState) state);
     }
@@ -1112,6 +1121,9 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     }
   }
 
+  /**
+   * 利用跳跃表快速定位数据
+   */
   final class BlockImpactsDocsEnum extends ImpactsEnum {
 
     final ForUtil forUtil = new ForUtil();

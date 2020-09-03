@@ -40,6 +40,10 @@ public final class TermStates {
 
   // Important: do NOT keep hard references to index readers
   private final Object topReaderContextIdentity;
+
+  /**
+   * 对应有效reader的数量
+   */
   private final TermState[] states;
   private final Term term;  // null if stats are to be used
   private int docFreq;
@@ -47,6 +51,11 @@ public final class TermStates {
 
   //public static boolean DEBUG = BlockTreeTermsWriter.DEBUG;
 
+  /**
+   *
+   * @param term  当需要统计相关信息时 就会传入有效term  否则传入null 代表不需要统计该term的相关信息  (打分用)
+   * @param context  在哪个上下文的范围下查询term  比如 context对应的reader 是一个 CompositeReader 那么就是从所有子reader读取数据
+   */
   private TermStates(Term term, IndexReaderContext context) {
     assert context != null && context.isTopLevel;
     topReaderContextIdentity = context.identity;
@@ -98,25 +107,39 @@ public final class TermStates {
    * @param needsStats if {@code true} then all leaf contexts will be visited up-front to
    *                   collect term statistics.  Otherwise, the {@link TermState} objects
    *                   will be built only when requested
+   *                   代表需要统计相关数据 主要是打分时使用
+   * @param context  本次reader对象的上下文对象
+   * @param term 本次查询使用的term
    */
   public static TermStates build(IndexReaderContext context, Term term, boolean needsStats)
       throws IOException {
     assert context != null && context.isTopLevel;
     final TermStates perReaderTermState = new TermStates(needsStats ? null : term, context);
     if (needsStats) {
+      // 此时需要采集 term的有效信息
       for (final LeafReaderContext ctx : context.leaves()) {
         //if (DEBUG) System.out.println("  r=" + leaves[i].reader);
         TermsEnum termsEnum = loadTermsEnum(ctx, term);
         if (termsEnum != null) {
+          // 还原该term的positing信息
           final TermState termState = termsEnum.termState();
           //if (DEBUG) System.out.println("    found");
+          // 将信息回填到 state[]中
           perReaderTermState.register(termState, ctx.ord, termsEnum.docFreq(), termsEnum.totalTermFreq());
         }
       }
     }
+    // 当不需要统计term的任何相关信息时 直接返回  或者指定的term 没有查找到数据时
     return perReaderTermState;
   }
 
+  /**
+   * 从索引文件中定位到该term
+   * @param ctx
+   * @param term
+   * @return
+   * @throws IOException
+   */
   private static TermsEnum loadTermsEnum(LeafReaderContext ctx, Term term) throws IOException {
     final Terms terms = ctx.reader().terms(term.field());
     if (terms != null) {
@@ -162,6 +185,7 @@ public final class TermStates {
   }
 
   /** Expert: Accumulate term statistics. */
+  // 累加term在所有reader中的总 docFreq/totalTermFreq
   public void accumulateStatistics(final int docFreq, final long totalTermFreq) {
     assert docFreq >= 0;
     assert totalTermFreq >= 0;

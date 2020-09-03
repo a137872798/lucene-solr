@@ -93,7 +93,6 @@ public abstract class LeafReader extends IndexReader {
     if (terms == null) {
       return 0;
     }
-    //
     final TermsEnum termsEnum = terms.iterator();
     // 精准匹配内容后 返回出现的频率
     if (termsEnum.seekExact(term.bytes())) {

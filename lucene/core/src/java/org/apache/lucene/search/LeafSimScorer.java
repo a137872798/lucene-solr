@@ -28,11 +28,22 @@ import org.apache.lucene.search.similarities.Similarity.SimScorer;
  */
 public final class LeafSimScorer {
 
+  /**
+   * 打分对象
+   */
   private final SimScorer scorer;
+  /**
+   * 获取标准因子的对象
+   * 标准因子是每当解析某个doc 时 出现了某个field 此时根据存储的term信息 使用 similarity 进行处理生成标准因子 并存储
+   */
   private final NumericDocValues norms;
 
   /**
    * Sole constructor: Score documents of {@code reader} with {@code scorer}.
+   * @param scorer 用于打分的对象
+   * @param reader 本次读取数据的reader对象
+   * @param field 本次读取的field
+   * @param needsScores 是否需要打分
    */
   public LeafSimScorer(SimScorer scorer, LeafReader reader, String field, boolean needsScores) throws IOException {
     this.scorer = Objects.requireNonNull(scorer);

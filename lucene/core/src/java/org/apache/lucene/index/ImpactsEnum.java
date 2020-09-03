@@ -20,7 +20,6 @@ package org.apache.lucene.index;
  * Extension of {@link PostingsEnum} which also provides information about
  * upcoming impacts.
  * @lucene.experimental
- * 影响因素迭代器   在一个 termsEnum中 可以同时衍生出 PostingEnum 和 ImpactsEnum  同时用于描述点迭代器 以及影响因素迭代器
  */
 public abstract class ImpactsEnum extends PostingsEnum implements ImpactsSource {
 

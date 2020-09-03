@@ -30,11 +30,19 @@ public class TotalHitCountCollector extends SimpleCollector {
     return totalHits;
   }
 
+  /**
+   * 每当命中某个doc 时  增加查询命中总数
+   * @param doc
+   */
   @Override
   public void collect(int doc) {
     totalHits++;
   }
 
+  /**
+   * 该对象查询出来的结果不需要打分
+   * @return
+   */
   @Override
   public ScoreMode scoreMode() {
     return ScoreMode.COMPLETE_NO_SCORES;

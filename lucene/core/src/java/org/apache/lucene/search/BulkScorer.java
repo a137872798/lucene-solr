@@ -27,7 +27,6 @@ import org.apache.lucene.util.Bits;
  *  across a range of documents need to override this.
  *  Otherwise, a default implementation is wrapped around
  *  the {@link Scorer} returned by {@link Weight#scorer}. */
-// 该对象负责对一个范围内的文档进行打分
 
 public abstract class BulkScorer {
 

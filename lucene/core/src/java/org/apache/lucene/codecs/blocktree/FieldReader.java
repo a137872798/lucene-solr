@@ -103,6 +103,8 @@ public final class FieldReader extends Terms implements Accountable {
     if (indexIn != null) {
       final IndexInput clone = indexIn.clone();
       // 从目标位置开始读取数据 还原 FST结构
+      // 这里通过 clone 生成了一个 NIOFSIndexInput 对象 该对象的特性是 每次读取一块数据 并缓存在内存中  由于FST 本身占用内存少 一次性就可以读取尽可能多的索引数据  就减少了基于索引查询数据时 访问IO的次数 这才是lucene高性能的秘密
+      // 数据库在读取数据时 每次访问 B+树 都必须基于文件IO  所以这里是它的性能瓶颈      可能因为FST是基于数组的 所以块数据可以奏效  而树结构分配的内存是跳跃的 就无法提前加载到内存了
       clone.seek(indexStartFP);
       index = new FST<>(clone, ByteSequenceOutputs.getSingleton(), new OffHeapFSTStore());
       /*

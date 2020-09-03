@@ -62,6 +62,7 @@ import org.apache.lucene.index.LeafReaderContext;
  * </ul>
  *
  * @lucene.experimental
+ * Collector的作用相当于就是从查询到的doc上抽取某些信息 生成用户需要的结果
  */
 public interface Collector {
 
@@ -70,7 +71,6 @@ public interface Collector {
    *
    * @param context
    *          next atomic reader context
-   *          返回一个采集文档的对象  在树形结构中 叶子应该就是doc吧
    */
   LeafCollector getLeafCollector(LeafReaderContext context) throws IOException;
   

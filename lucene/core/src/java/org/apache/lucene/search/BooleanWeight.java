@@ -43,7 +43,7 @@ final class BooleanWeight extends Weight {
   final BooleanQuery query;
 
   /**
-   * 包装类 用于包装 BooleanClause.Query 创建的权重对象
+   * 包装类 存储 BooleanClause 以及对应的weight
    */
   private static class WeightedBooleanClause {
     final BooleanClause clause;

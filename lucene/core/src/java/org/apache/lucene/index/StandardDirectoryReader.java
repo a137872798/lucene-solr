@@ -35,8 +35,9 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.IOUtils;
 
-/** Default implementation of {@link DirectoryReader}. */
-// 默认实现
+/** Default implementation of {@link DirectoryReader}.
+ * 该对象具备NRT 能力
+ * */
 public final class StandardDirectoryReader extends DirectoryReader {
 
   /**
@@ -50,8 +51,16 @@ public final class StandardDirectoryReader extends DirectoryReader {
   private final boolean applyAllDeletes;
   private final boolean writeAllDeletes;
 
-  /** called only from static open() methods */
-  // 该对象内部维护了一组reader 对象  并且该对象本身具备近实时查询的能力 同时该对象作为所有子reader的父对象
+  /**
+   *
+   * @param directory  本次打开的目录
+   * @param readers   本次涉及到的所有 reader对象  每个reader  对应一个 segment
+   * @param writer    这些segment是由哪个 IndexWriter生成的
+   * @param sis       涉及到的segment
+   * @param applyAllDeletes    在生成该对象时是否已经将eventQueue中的任务执行完了
+   * @param writeAllDeletes    将最新的信息写入到索引文件了
+   * @throws IOException
+   */
   StandardDirectoryReader(Directory directory, LeafReader[] readers, IndexWriter writer,
                           SegmentInfos sis, boolean applyAllDeletes, boolean writeAllDeletes) throws IOException {
     super(directory, readers);
@@ -107,8 +116,8 @@ public final class StandardDirectoryReader extends DirectoryReader {
    * 因为是手动指定 segmentInfos的 所以如果此时 segmentInfos 包含了最新的索引文件 就可以获取到未commit 但是flush的数据
    * @param writer
    * @param infos  本次涉及到的所有段 信息
-   * @param applyAllDeletes
-   * @param writeAllDeletes
+   * @param applyAllDeletes  是否已等待任务队列中所有的 delete/update处理完
+   * @param writeAllDeletes   是否已将最新信息写入到索引文件 (DocValue  liveDoc ..)
    * @return
    * @throws IOException
    */
@@ -118,9 +127,11 @@ public final class StandardDirectoryReader extends DirectoryReader {
     // no need to process segments in reverse order
     final int numSegments = infos.size();
 
+    // 存储还有效的reader
     final List<SegmentReader> readers = new ArrayList<>(numSegments);
     final Directory dir = writer.getDirectory();
 
+    // 先读取 segment_N 文件
     final SegmentInfos segmentInfos = infos.clone();
     int infosUpto = 0;
     try {
@@ -131,12 +142,14 @@ public final class StandardDirectoryReader extends DirectoryReader {
         // IndexWriter's segmentInfos:
         final SegmentCommitInfo info = infos.info(i);
         assert info.info.dir == dir;
-        // 创建的 rld对象内 包含了 segmentReader 对象
+        // 该对象维护了该segment下所有索引文件对应的 reader对象
+        // 在调用该方法前 已经将 readerPool 开启池化功能了 这样当引用计数减为1时不会释放reader
+
         final ReadersAndUpdates rld = writer.getPooledInstance(info, true);
         try {
           // 抽取reader 对象
           final SegmentReader reader = rld.getReadOnlyClone(IOContext.READ);
-          // 当确保reader 下还存在 doc  或者 即使所有doc都被删除还是保留segment 那么将reader 添加到容器中
+          // 代表reader 还存在 就加入到 readers中
           if (reader.numDocs() > 0 || writer.getConfig().mergePolicy.keepFullyDeletedSegment(() -> reader)) {
             // Steal the ref:
             readers.add(reader);
@@ -147,10 +160,12 @@ public final class StandardDirectoryReader extends DirectoryReader {
             segmentInfos.remove(infosUpto);
           }
         } finally {
+          // 对应 getPooledInstance(info, true)   因为该方法只要create传入 true 就会增加引用计数
           writer.release(rld);
         }
       }
 
+      // 为这些段下每个 索引文件增加引用计数
       writer.incRefDeleter(segmentInfos);
 
       // 将readers 整合成 StandardDirectoryReader 后返回

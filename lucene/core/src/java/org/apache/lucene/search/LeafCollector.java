@@ -67,7 +67,6 @@ import java.io.IOException;
  * of hits would skip it.</p>
  *
  * @lucene.experimental
- * 代表某个叶的数据集   lucene 应该是将数据以多个页的形式存储 而本身的索引结构是树状的
  */
 public interface LeafCollector {
 
@@ -76,7 +75,6 @@ public interface LeafCollector {
    * that need the score of the current document (passed-in to
    * {@link #collect(int)}), should save the passed-in Scorer and call
    * scorer.score() when needed.
-   * 为当前的叶数据打分
    */
   void setScorer(Scorable scorer) throws IOException;
   
@@ -92,7 +90,7 @@ public interface LeafCollector {
    * implementations of this method should not call {@link IndexSearcher#doc(int)} or
    * {@link org.apache.lucene.index.IndexReader#document(int)} on every hit.
    * Doing so can slow searches by an order of magnitude or more.
-   * 代表某个doc在查询过程中被命中了
+   * 每当查询到某个doc时 需要做采集工作
    */
   void collect(int doc) throws IOException;
 
