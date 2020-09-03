@@ -34,9 +34,11 @@ final class TermScorer extends Scorer {
 
   /**
    * Construct a {@link TermScorer} that will iterate all documents.
+   * 该对象将会针对 所有 doc 进行打分
    */
   TermScorer(Weight weight, PostingsEnum postingsEnum, LeafSimScorer docScorer) {
     super(weight);
+    // 这种情况下 doc迭代器就是 PostingsEnum
     iterator = this.postingsEnum = postingsEnum;
     impactsEnum = new SlowImpactsEnum(postingsEnum);
     impactsDisi = new ImpactsDISI(impactsEnum, impactsEnum, docScorer.getSimScorer());
@@ -46,15 +48,23 @@ final class TermScorer extends Scorer {
   /**
    * Construct a {@link TermScorer} that will use impacts to skip blocks of
    * non-competitive documents.
+   * @param weight 创建该对象的权重对象
+   * @param impactsEnum  具备遍历标准因子功能的迭代器
+   * @param docScorer  打分对象
    */
   TermScorer(Weight weight, ImpactsEnum impactsEnum, LeafSimScorer docScorer) {
     super(weight);
     postingsEnum = this.impactsEnum = impactsEnum;
+    // 将 ImpactsEnum 包装后生成 doc迭代器
     impactsDisi = new ImpactsDISI(impactsEnum, impactsEnum, docScorer.getSimScorer());
     iterator = impactsDisi;
     this.docScorer = docScorer;
   }
 
+  /**
+   * 此时读取的docId
+   * @return
+   */
   @Override
   public int docID() {
     return postingsEnum.docID();

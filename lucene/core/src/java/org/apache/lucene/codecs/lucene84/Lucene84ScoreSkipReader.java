@@ -28,6 +28,9 @@ import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 
+/**
+ * 该对象可以从跳跃表结构读取数据
+ */
 final class Lucene84ScoreSkipReader extends Lucene84SkipReader {
 
   private final byte[][] impactData;
@@ -37,6 +40,15 @@ final class Lucene84ScoreSkipReader extends Lucene84SkipReader {
   private int numLevels = 1;
   private final MutableImpactList[] perLevelImpacts;
 
+  /**
+   *
+   * @param skipStream  对应 .doc文件
+   * @param maxSkipLevels  最大跳跃级别
+   *                       是否存储3种信息的标识
+   * @param hasPos
+   * @param hasOffsets
+   * @param hasPayloads
+   */
   public Lucene84ScoreSkipReader(IndexInput skipStream, int maxSkipLevels,
       boolean hasPos, boolean hasOffsets, boolean hasPayloads) {
     super(skipStream, maxSkipLevels, hasPos, hasOffsets, hasPayloads);
@@ -137,6 +149,7 @@ final class Lucene84ScoreSkipReader extends Lucene84SkipReader {
     reuse.length = length;
     return reuse;
   }
+
 
   static class MutableImpactList extends AbstractList<Impact> implements RandomAccess {
     int length = 1;

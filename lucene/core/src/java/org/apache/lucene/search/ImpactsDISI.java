@@ -41,9 +41,9 @@ public final class ImpactsDISI extends DocIdSetIterator {
 
   /**
    * Sole constructor.
-   * @param in            wrapped iterator
-   * @param impactsSource source of impacts
-   * @param scorer        scorer
+   * @param in            wrapped iterator  该对象用于迭代doc
+   * @param impactsSource source of impacts  该对象用于提供标准因子
+   * @param scorer        scorer    该对象用于打分
    */
   public ImpactsDISI(DocIdSetIterator in, ImpactsSource impactsSource, SimScorer scorer) {
     this.in = in;

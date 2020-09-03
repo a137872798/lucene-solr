@@ -56,7 +56,7 @@ public abstract class MultiLevelSkipListReader implements Closeable {
   private int docCount;
 
   /** skipStream for each level. */
-  // 在 writer中 每层会对应一个 output 对象
+  // 在 writer中 每层会对应一个 output 对象  这里则相反 每层对应一个输入流
   private IndexInput[] skipStream;
 
   /** The start pointer of each skip level. */

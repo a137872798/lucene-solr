@@ -27,7 +27,7 @@ import org.apache.lucene.util.BytesRef;
  * {@link ImpactsEnum} that doesn't index impacts but implements the API in a
  * legal way. This is typically used for short postings that do not need
  * skipping.
- * 无法利用跳跃表查询数据
+ * 每当 doc数量达到 一个 Block大小时 才会将 Impacts 存储到 跳跃表中 如果某个term的doc数量不足一个block 那么不会存储impacts信息 所以针对该情况总是返回一个固定的impacts对象
  */
 public final class SlowImpactsEnum extends ImpactsEnum {
 

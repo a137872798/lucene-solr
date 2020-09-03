@@ -48,7 +48,7 @@ import org.apache.lucene.store.IndexInput;
  * isn't exhausted yet, and try to load a non-existed skip point
  *
  * Therefore, we'll trim df before passing it to the interface. see trim(int)
- *
+ * 用于读取跳跃表的数据
  */
 class Lucene84SkipReader extends MultiLevelSkipListReader {
   private long docPointer[];
@@ -63,6 +63,14 @@ class Lucene84SkipReader extends MultiLevelSkipListReader {
   private long lastDocPointer;
   private int lastPosBufferUpto;
 
+  /**
+   * 存储输入的输入流 以及存储了几种维度的数据
+   * @param skipStream
+   * @param maxSkipLevels
+   * @param hasPos
+   * @param hasOffsets
+   * @param hasPayloads
+   */
   public Lucene84SkipReader(
       IndexInput skipStream, int maxSkipLevels,
       boolean hasPos, boolean hasOffsets, boolean hasPayloads) {
@@ -99,6 +107,16 @@ class Lucene84SkipReader extends MultiLevelSkipListReader {
     return df % ForUtil.BLOCK_SIZE == 0? df - 1: df;
   }
 
+  /**
+   * 使用相关参数初始化跳跃表
+   * @param skipPointer  跳跃表的起始偏移量
+   *                     下面是3种文件对应的起始偏移量
+   * @param docBasePointer
+   * @param posBasePointer
+   * @param payBasePointer
+   * @param df  docFreq
+   * @throws IOException
+   */
   public void init(long skipPointer, long docBasePointer, long posBasePointer, long payBasePointer, int df) throws IOException {
     super.init(skipPointer, trim(df));
     lastDocPointer = docBasePointer;

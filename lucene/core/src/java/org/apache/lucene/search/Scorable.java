@@ -35,7 +35,6 @@ public abstract class Scorable {
 
   /**
    * Returns the doc ID that is currently being scored.
-   * 该分数是针对哪篇 doc
    */
   public abstract int docID();
 

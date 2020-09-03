@@ -147,6 +147,7 @@ public class TermQuery extends Query {
       if (scoreMode == ScoreMode.TOP_SCORES) {
         return new TermScorer(this, termsEnum.impacts(PostingsEnum.FREQS), scorer);
       } else {
+        // 这种情况下 内部会使用一个总是返回固定标准因子的迭代器对象
         return new TermScorer(this, termsEnum.postings(null, scoreMode.needsScores() ? PostingsEnum.FREQS : PostingsEnum.NONE), scorer);
       }
     }

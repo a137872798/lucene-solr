@@ -791,6 +791,7 @@ public class IndexSearcher {
       final LeafCollector leafCollector;
       try {
         // 根据context 重置内部相关信息    一般会与 doSetNextReader 产生联动
+        // 默认情况下总是返回自身
         leafCollector = collector.getLeafCollector(ctx);
       } catch (CollectionTerminatedException e) {
         // there is no doc of interest in this reader context
@@ -798,9 +799,12 @@ public class IndexSearcher {
         continue;
       }
       // 看来每个reader对象都会对应一个 打分的结果
+      // BulkScorer 代表针对大块数据进行打分 实际上它只是定义了一个模板  (也就是迭代符合条件的doc 并交由 collector进行处理)
+      // 针对 TotalHitCountCollector 的情况就是 每个docId 都会增加一个hitCount
       BulkScorer scorer = weight.bulkScorer(ctx);
       if (scorer != null) {
         try {
+          // 为每个 segment挨个生成 scorer对象 并挨个进行打分  结果交由 基于ctx生成的 leafCollector处理
           scorer.score(leafCollector, ctx.reader().getLiveDocs());
         } catch (CollectionTerminatedException e) {
           // collection was terminated prematurely
@@ -1039,7 +1043,6 @@ public class IndexSearcher {
 
   /**
    * Return the SliceExecutionControlPlane instance to be used for this IndexSearcher instance
-   * 线程池还有分片的概念???
    */
   private static SliceExecutor getSliceExecutionControlPlane(Executor executor) {
     // 如果传入的线程池为 null 则不需要处理

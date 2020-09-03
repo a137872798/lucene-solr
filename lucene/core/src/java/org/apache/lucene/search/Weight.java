@@ -182,10 +182,24 @@ public abstract class Weight implements SegmentCacheable {
   }
 
   /** Just wraps a Scorer and performs top scoring using it.
-   *  @lucene.internal */
+   *  @lucene.internal
+   *  该对象仅是一个包装对象
+   *  BulkScorer 的含义就是可以一次性为 一批doc进行打分
+   *  */
   protected static class DefaultBulkScorer extends BulkScorer {
+
+    /**
+     * 打分对象
+     */
     private final Scorer scorer;
+    /**
+     * 可迭代所有相关的doc
+     */
     private final DocIdSetIterator iterator;
+
+    /**
+     * 大多数 Scorer无法生成 二阶段时迭代器
+     */
     private final TwoPhaseIterator twoPhase;
 
     /** Sole constructor. */
@@ -203,21 +217,39 @@ public abstract class Weight implements SegmentCacheable {
       return iterator.cost();
     }
 
+    /**
+     * 此时 scorer 中已经包含了 reader的信息
+     * @param  collector The collector to which all matching documents are passed.   该对象负责处理查询出来的结果
+     * @param acceptDocs {@link Bits} that represents the allowed documents to match, or
+     *                   {@code null} if they are all allowed to match.    查询出来的doc 必须同时满足该条件
+     * @param  min Score starting at, including, this document
+     * @param  max Score up to, but not including, this doc   当docId达到该值时终止处理  不包含该值 一般就是 DOC_NO_MORE
+     * @return
+     * @throws IOException
+     */
     @Override
     public int score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
+      // 为收集器设置此时的打分对象
       collector.setScorer(scorer);
+      // 因为查询出来的结果有多个 所以需要打分的概念 用来定义匹配度
+      // 还未开始读取任何数据时 docId() 返回-1
       if (scorer.docID() == -1 && min == 0 && max == DocIdSetIterator.NO_MORE_DOCS) {
+        // 开始为所有doc 进行打分
         scoreAll(collector, iterator, twoPhase, acceptDocs);
+        // 因为在上面已经迭代完所有的doc了  所以返回 NO_MORE_DOCS
         return DocIdSetIterator.NO_MORE_DOCS;
       } else {
+        // 这里代表 doc的读取有限制   比如 max 不是NO_MORE_DOCS  或者 min不是0
         int doc = scorer.docID();
         if (doc < min) {
           if (twoPhase == null) {
+            // 将迭代器定位到指定的doc    在这里会利用跳跃表加速doc的查询
             doc = iterator.advance(min);
           } else {
             doc = twoPhase.approximation().advance(min);
           }
         }
+        // 从当前doc开始迭代 直到 max
         return scoreRange(collector, iterator, twoPhase, acceptDocs, doc, max);
       }
     }
@@ -225,7 +257,9 @@ public abstract class Weight implements SegmentCacheable {
     /** Specialized method to bulk-score a range of hits; we
      *  separate this from {@link #scoreAll} to help out
      *  hotspot.
-     *  See <a href="https://issues.apache.org/jira/browse/LUCENE-5487">LUCENE-5487</a> */
+     *  See <a href="https://issues.apache.org/jira/browse/LUCENE-5487">LUCENE-5487</a>
+     *  迭代一个范围的 doc
+     *  */
     static int scoreRange(LeafCollector collector, DocIdSetIterator iterator, TwoPhaseIterator twoPhase,
         Bits acceptDocs, int currentDoc, int end) throws IOException {
       if (twoPhase == null) {
@@ -236,6 +270,7 @@ public abstract class Weight implements SegmentCacheable {
           currentDoc = iterator.nextDoc();
         }
         return currentDoc;
+      // TODO 等用到了再看下面的逻辑
       } else {
         final DocIdSetIterator approximation = twoPhase.approximation();
         while (currentDoc < end) {
@@ -251,15 +286,20 @@ public abstract class Weight implements SegmentCacheable {
     /** Specialized method to bulk-score all hits; we
      *  separate this from {@link #scoreRange} to help out
      *  hotspot.
-     *  See <a href="https://issues.apache.org/jira/browse/LUCENE-5487">LUCENE-5487</a> */
+     *  See <a href="https://issues.apache.org/jira/browse/LUCENE-5487">LUCENE-5487</a>
+     *  为所有doc 进行打分
+     *  */
     static void scoreAll(LeafCollector collector, DocIdSetIterator iterator, TwoPhaseIterator twoPhase, Bits acceptDocs) throws IOException {
       if (twoPhase == null) {
+        // 不断的遍历 doc 同时必须要被 liveDoc标记为存活  所以在lucene中 通过 termNode QueryNode 删除的doc可以不被清理就是这个原因  同时在merge过程中
+        // 这些doc就会被彻底丢弃
         for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
           if (acceptDocs == null || acceptDocs.get(doc)) {
             collector.collect(doc);
           }
         }
       } else {
+        // TODO 这个就不看了 如果使用到了再看
         // The scorer has an approximation, so run the approximation first, then check acceptDocs, then confirm
         final DocIdSetIterator approximation = twoPhase.approximation();
         for (int doc = approximation.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = approximation.nextDoc()) {

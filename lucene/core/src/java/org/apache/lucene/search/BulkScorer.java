@@ -32,8 +32,10 @@ public abstract class BulkScorer {
 
   /** Scores and collects all matching documents.
    * @param collector The collector to which all matching documents are passed.
+   *                                匹配成功的doc会交由该对象处理
    * @param acceptDocs {@link Bits} that represents the allowed documents to match, or
    *                   {@code null} if they are all allowed to match.
+   *                               代表此时还存活的doc  如果查询出不存在的doc是不需要处理的
    */
   public void score(LeafCollector collector, Bits acceptDocs) throws IOException {
     final int next = score(collector, acceptDocs, 0, DocIdSetIterator.NO_MORE_DOCS);

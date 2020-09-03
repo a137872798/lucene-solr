@@ -315,12 +315,13 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
    */
   @Override
   public ImpactsEnum impacts(FieldInfo fieldInfo, BlockTermState state, int flags) throws IOException {
-    // 应该是利用跳跃表查询数据 但是数据量小于一个block 就无法利用跳跃表快速查询了
+    // 在对应writer中可以看到 当doc数量不足一个block时 累加的impact 根本就没有存储 该数据直接被放弃了 所以使用 SlowImpactsEnum 每次都返回固定的 impacts
     if (state.docFreq <= BLOCK_SIZE) {
       // no skip data
       return new SlowImpactsEnum(postings(fieldInfo, state, null, flags));
     }
 
+    // 此时使用一个可以按块读取 impacts的对象
     final boolean indexHasPositions = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
     final boolean indexHasOffsets = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;
     final boolean indexHasPayloads = fieldInfo.hasPayloads();
@@ -330,6 +331,7 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
       return new BlockImpactsDocsEnum(fieldInfo, (IntBlockTermState) state);
     }
 
+    // 如果包含了  位置信息
     if (indexHasPositions &&
         PostingsEnum.featureRequested(flags, PostingsEnum.POSITIONS) &&
         (indexHasOffsets == false || PostingsEnum.featureRequested(flags, PostingsEnum.OFFSETS) == false) &&
@@ -337,6 +339,7 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
       return new BlockImpactsPostingsEnum(fieldInfo, (IntBlockTermState) state);
     }
 
+    // 代表包含了其他信息
     return new BlockImpactsEverythingEnum(fieldInfo, (IntBlockTermState) state, flags);
   }
 
@@ -573,6 +576,12 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
       return doc;
     }
 
+    /**
+     * 定位到某个doc 的位置   如果是不断的调用 nextDoc 直到读取到目标doc 会比较耗时   这里就借助了跳跃表快速定位到目标doc
+     * @param target
+     * @return
+     * @throws IOException
+     */
     @Override
     public int advance(int target) throws IOException {
       // current skip docID < docIDs generated from current buffer <= next skip docID
@@ -1154,6 +1163,12 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
     // always true when we don't have freqBuffer (indexHasFreq=false) or don't need freqBuffer (needsFreq=false)
     private boolean isFreqsRead;
 
+    /**
+     *
+     * @param fieldInfo  该term关联的 field信息
+     * @param termState  内部存储了 term的各种信息 已经存储term 3个索引文件的对应偏移量
+     * @throws IOException
+     */
     public BlockImpactsDocsEnum(FieldInfo fieldInfo, IntBlockTermState termState) throws IOException {
       indexHasFreqs = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
       final boolean indexHasPositions = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
@@ -1170,11 +1185,13 @@ public final class Lucene84PostingsReader extends PostingsReaderBase {
       blockUpto = 0;
       docBufferUpto = BLOCK_SIZE;
 
+      // 该对象可以读取跳跃表的数据
       skipper = new Lucene84ScoreSkipReader(docIn.clone(),
           MAX_SKIP_LEVELS,
           indexHasPositions,
           indexHasOffsets,
           indexHasPayloads);
+      // 使用相关参数 初始化跳跃表
       skipper.init(termState.docStartFP+termState.skipOffset, termState.docStartFP, termState.posStartFP, termState.payStartFP, docFreq);
 
       // We set the last element of docBuffer to NO_MORE_DOCS, it helps save conditionals in advance()
