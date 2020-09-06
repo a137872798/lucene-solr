@@ -46,7 +46,6 @@ public abstract class Scorable {
    * This method may only be called from collectors that use
    * {@link ScoreMode#TOP_SCORES}, and successive calls may only set increasing
    * values of {@code minScore}.
-   * 设置最小竞争力的 分数 ???
    */
   public void setMinCompetitiveScore(float minScore) throws IOException {
     // no-op by default

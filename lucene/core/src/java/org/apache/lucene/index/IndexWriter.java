@@ -1373,6 +1373,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      */
     @Override
     public void close() throws IOException {
+        // 如果还有 prepareCommit的数据未处理 直接调用shutdown会报错 必须调用rollback 进行处理
         if (config.getCommitOnClose()) {
             shutdown();
         } else {
@@ -2592,15 +2593,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             docWriter.abort(); // don't sync on IW here
             // 在 docWriter.abort() 中不是已经调用过该方法了吗???
             docWriter.flushControl.waitForFlush(); // wait for all concurrently running flushes
-            // 将新生成的 segment 发布到segmentInfos中 那么这样的话 之前 prepareCommit生成的 pending_segment 相当于是作废了
             publishFlushedSegments(true); // empty the flush ticket queue otherwise we might not have cleaned up all resources
             eventQueue.close();
             synchronized (this) {
 
+                // 代表之前发起过 prepareCommit 那么尝试将相关索引文件删除   因为调用close也会触发 rollback 所以无法确定之前是否有prepareCommit过数据
+                // 如果是正常提交的数据就不会被删除
                 if (pendingCommit != null) {
                     // 删除之前创建的 pending_segment文件
                     pendingCommit.rollbackCommit(directory);
                     try {
+                        // 尝试删除在 prepareCommit期间 fullFlush创建的 索引文件 如果正在使用中 就不会被删除
                         deleter.decRef(pendingCommit);
                     } finally {
                         pendingCommit = null;
@@ -2628,7 +2631,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // these methods throw ACE:
                 if (tragedy.get() == null) {
                     deleter.checkpoint(segmentInfos, false);
-                    // 删除 segment_N 文件
+                    //
                     deleter.refresh();
                     // 减少此时维护的所有索引文件引用计数 可能导致所有文件的删除
                     deleter.close();
@@ -3861,7 +3864,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
 
         // we must do this outside of the commitLock else we can deadlock:
-        // TODO 为什么每次都最后执行merge ??? 这样会导致之前一些segment无效啊
         if (maybeMerge.getAndSet(false)) {
             maybeMerge(mergePolicy, MergeTrigger.FULL_FLUSH, UNBOUNDED_MAX_MERGE_SEGMENTS);
         }

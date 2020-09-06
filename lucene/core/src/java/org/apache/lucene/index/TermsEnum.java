@@ -128,7 +128,6 @@ public abstract class TermsEnum implements BytesRefIterator {
   /** Returns the number of documents containing the current
    *  term.  Do not call this when the enum is unpositioned.
    *  {@link SeekStatus#END}.*/
-  // 返回当前文档中该term出现的次数
   public abstract int docFreq() throws IOException;
 
   /** Returns the total number of occurrences of this term
@@ -136,7 +135,6 @@ public abstract class TermsEnum implements BytesRefIterator {
    *  doc that has this term). Note that, like
    *  other term measures, this measure does not take
    *  deleted documents into account. */
-  // 计算下面所有词 出现的频率总和
   public abstract long totalTermFreq() throws IOException;
 
   /** Get {@link PostingsEnum} for the current term.  Do not

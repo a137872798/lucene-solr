@@ -52,6 +52,7 @@ public abstract class FieldValueHitQueue<T extends FieldValueHitQueue.Entry> ext
   /**
    * An implementation of {@link FieldValueHitQueue} which is optimized in case
    * there is just one comparator.
+   * 查询结果使用一个field 进行排序
    */
   private static final class OneComparatorFieldValueHitQueue<T extends FieldValueHitQueue.Entry> extends FieldValueHitQueue<T> {
     
@@ -92,6 +93,7 @@ public abstract class FieldValueHitQueue<T extends FieldValueHitQueue.Entry> ext
   /**
    * An implementation of {@link FieldValueHitQueue} which is optimized in case
    * there is more than one comparator.
+   * 代表使用了多个 SortField 每个对象都有自己的排序规则
    */
   private static final class MultiComparatorsFieldValueHitQueue<T extends FieldValueHitQueue.Entry> extends FieldValueHitQueue<T> {
 
@@ -119,8 +121,13 @@ public abstract class FieldValueHitQueue<T extends FieldValueHitQueue.Entry> ext
     }
     
   }
-  
-  // prevent instantiation and extension.
+
+  /**
+   *  prevent instantiation and extension.
+   *  每个 sort对象对应一个comparator
+   * @param fields
+   * @param size
+   */
   private FieldValueHitQueue(SortField[] fields, int size) {
     super(size);
     // When we get here, fields.length is guaranteed to be > 0, therefore no
@@ -137,6 +144,7 @@ public abstract class FieldValueHitQueue<T extends FieldValueHitQueue.Entry> ext
       SortField field = fields[i];
 
       reverseMul[i] = field.reverse ? -1 : 1;
+      // 获取同一field下 排序规则
       comparators[i] = field.getComparator(size, i);
     }
   }
@@ -159,6 +167,7 @@ public abstract class FieldValueHitQueue<T extends FieldValueHitQueue.Entry> ext
       throw new IllegalArgumentException("Sort must contain at least one field");
     }
 
+    // 创建仅基于一个 field进行排序的对象
     if (fields.length == 1) {
       return new OneComparatorFieldValueHitQueue<>(fields, size);
     } else {

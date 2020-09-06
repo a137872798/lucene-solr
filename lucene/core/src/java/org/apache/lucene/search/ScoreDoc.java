@@ -18,7 +18,7 @@ package org.apache.lucene.search;
 
 
 /** Holds one hit in {@link TopDocs}. */
-// 记录 IndexSearcher 的搜索结果  score代表结果文档的得分  doc是文档的id   文档信息还需要通过doc获取
+// 记录 IndexSearcher 的搜索结果  score代表结果文档的得分  doc是文档的id
 
 public class ScoreDoc {
 

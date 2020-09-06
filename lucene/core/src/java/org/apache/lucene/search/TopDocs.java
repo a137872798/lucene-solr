@@ -24,10 +24,16 @@ import org.apache.lucene.util.PriorityQueue;
  * IndexSearcher#search(Query,int)}. */
 public class TopDocs {
 
-  /** The total number of hits for the query. */
+  /**
+   * The total number of hits for the query.
+   * 描述一个查询结果的数量    内部包含 value 代表数量  以及一个 关系信息  代表相同 或者 >=
+   * */
   public TotalHits totalHits;
 
-  /** The top hits for the query. */
+  /**
+   * The top hits for the query.
+   * 存储一组命中的doc 信息  同时还包含了每个doc的得分
+   * */
   public ScoreDoc[] scoreDocs;
 
   /** Internal comparator with shardIndex */
@@ -48,6 +54,7 @@ public class TopDocs {
   // Refers to one hit:
   private final static class ShardRef {
     // Which shard (index into shardHits[]):
+    // 对应 TopN[] 的下标
     final int shardIndex;
 
     // Which hit within the shard:
@@ -85,10 +92,23 @@ public class TopDocs {
 
   // Specialized MergeSortQueue that just merges by
   // relevance score, descending:
+  // 该对象继承自优先队列  ShardRef 仅维护一个 Doc[]的下标  数据体放在子类
   private static class ScoreMergeSortQueue extends PriorityQueue<ShardRef> {
+
+    /**
+     * 从多个reader下读取的待排序的 TopN数组
+     */
     final ScoreDoc[][] shardHits;
+    /**
+     * 排序函数
+     */
     final Comparator<ScoreDoc> tieBreakerComparator;
 
+    /**
+     *
+     * @param shardHits
+     * @param tieBreakerComparator
+     */
     public ScoreMergeSortQueue(TopDocs[] shardHits, Comparator<ScoreDoc> tieBreakerComparator) {
       super(shardHits.length);
       this.shardHits = new ScoreDoc[shardHits.length][];
@@ -102,6 +122,7 @@ public class TopDocs {
     @Override
     public boolean lessThan(ShardRef first, ShardRef second) {
       assert first != second;
+      // 第一维用于定义此时在处理哪组 TopN  第二维定义此时处理到第几个数据
       ScoreDoc firstScoreDoc = shardHits[first.shardIndex][first.hitIndex];
       ScoreDoc secondScoreDoc = shardHits[second.shardIndex][second.hitIndex];
       if (firstScoreDoc.score < secondScoreDoc.score) {
@@ -196,6 +217,9 @@ public class TopDocs {
    * or all have them as -1 (signifying that all hits belong to same searcher)
    *
    * @lucene.experimental
+   * @param start 扫描起始点
+   * @param topN 该数组下所有的候选数据 会合并成一个TopN
+   * @param shardHits  待合并的数据
    */
   public static TopDocs merge(int start, int topN, TopDocs[] shardHits) {
     return mergeAux(null, start, topN, shardHits, DEFAULT_TIE_BREAKER);
@@ -254,20 +278,27 @@ public class TopDocs {
     return (TopFieldDocs) mergeAux(sort, start, topN, shardHits, tieBreaker);
   }
 
-  /** Auxiliary method used by the {@link #merge} impls. A sort value of null
-   *  is used to indicate that docs should be sorted by score. */
+  /**
+   * Auxiliary method used by the {@link #merge} impls. A sort value of null
+   *  is used to indicate that docs should be sorted by score.
+   * 将 shardHits的数据合并成一个 TopN
+   * */
   private static TopDocs mergeAux(Sort sort, int start, int size, TopDocs[] shardHits,
                                   Comparator<ScoreDoc> tieBreaker) {
 
     final PriorityQueue<ShardRef> queue;
     if (sort == null) {
       queue = new ScoreMergeSortQueue(shardHits, tieBreaker);
+      // TODO
     } else {
       queue = new MergeSortQueue(sort, shardHits, tieBreaker);
     }
 
+    // 这里开始将数据填充到优先队列中
+    // 累计查询到多少记录
     long totalHitCount = 0;
     TotalHits.Relation totalHitsRelation = TotalHits.Relation.EQUAL_TO;
+    // 记录有效数据总数
     int availHitCount = 0;
     for(int shardIDX=0;shardIDX<shardHits.length;shardIDX++) {
       final TopDocs shard = shardHits[shardIDX];
@@ -276,27 +307,34 @@ public class TopDocs {
       totalHitCount += shard.totalHits.value;
       // If any hit count is a lower bound then the merged
       // total hit count is a lower bound as well
+      // 只要存在一个 >= 的关系 就更新关系属性
       if (shard.totalHits.relation == TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO) {
         totalHitsRelation = TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO;
       }
+      // 将 数据包裹后设置到优先队列
       if (shard.scoreDocs != null && shard.scoreDocs.length > 0) {
         availHitCount += shard.scoreDocs.length;
         queue.add(new ShardRef(shardIDX));
       }
     }
 
+    // 该对象负责存储最终结果
     final ScoreDoc[] hits;
     boolean unsetShardIndex = false;
+    // 如果本次数据总数 还没有到起始下标 返回空数据
     if (availHitCount <= start) {
       hits = new ScoreDoc[0];
     } else {
+      // 用于存储临时数据
       hits = new ScoreDoc[Math.min(size, availHitCount - start)];
       int requestedResultWindow = start + size;
       int numIterOnHits = Math.min(availHitCount, requestedResultWindow);
       int hitUpto = 0;
+      // 开始挨个从优先队列中弹出数据 并构建最终结果
       while (hitUpto < numIterOnHits) {
         assert queue.size() > 0;
         ShardRef ref = queue.top();
+        // 获取此时的top 数据
         final ScoreDoc hit = shardHits[ref.shardIndex].scoreDocs[ref.hitIndex++];
 
         // Irrespective of whether we use shard indices for tie breaking or not, we check for consistent
@@ -307,24 +345,29 @@ public class TopDocs {
           }
         }
 
+        // -1 代表未设置 shardIndex 数据无效
         unsetShardIndex |= hit.shardIndex == -1;
-          
+
+        // 将有效结果存储在最终容器中
         if (hitUpto >= start) {
           hits[hitUpto - start] = hit;
         }
 
         hitUpto++;
 
+        // 代表还有剩余数据 更新堆结构
         if (ref.hitIndex < shardHits[ref.shardIndex].scoreDocs.length) {
           // Not done with this these TopDocs yet:
           queue.updateTop();
         } else {
+          // 当前ref 已经没有数据了 将该对象弹出
           queue.pop();
         }
       }
     }
 
     TotalHits totalHits = new TotalHits(totalHitCount, totalHitsRelation);
+    // 结果没有按照field 排序 直接返回就好
     if (sort == null) {
       return new TopDocs(totalHits, hits);
     } else {

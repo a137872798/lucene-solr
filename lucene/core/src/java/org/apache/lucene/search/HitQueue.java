@@ -19,6 +19,9 @@ package org.apache.lucene.search;
 
 import org.apache.lucene.util.PriorityQueue;
 
+/**
+ * 基于文档得分的优先队列
+ */
 final class HitQueue extends PriorityQueue<ScoreDoc> {
 
   /**
@@ -57,7 +60,7 @@ final class HitQueue extends PriorityQueue<ScoreDoc> {
    * @param size
    *          the requested size of this queue.
    * @param prePopulate
-   *          specifies whether to pre-populate the queue with sentinel values.
+   *          specifies whether to pre-populate the queue with sentinel values.    是否要使用哨兵数据进行预填充
    */
   HitQueue(int size, boolean prePopulate) {
     super(size, () -> {
@@ -72,8 +75,15 @@ final class HitQueue extends PriorityQueue<ScoreDoc> {
     });
   }
 
+  /**
+   * 该对象的功能要求是  基于最小堆  同时得分必须大于最小分数 才有加入到优先队列的意义  当分数相同时  优先选择doc小的
+   * @param hitA
+   * @param hitB
+   * @return
+   */
   @Override
   protected final boolean lessThan(ScoreDoc hitA, ScoreDoc hitB) {
+    // doc大的反而认为小些  就不容易进入进入基于最小堆的 优先队列  也就符合分数相同时 优先选择doc小的要求
     if (hitA.score == hitB.score)
       return hitA.doc > hitB.doc; 
     else

@@ -43,6 +43,7 @@ public final class TermStates {
 
   /**
    * 对应有效reader的数量
+   * 存储了 该term从每个reader下获取的统计信息 只有到 needsStats 为 true 时 才会设置
    */
   private final TermState[] states;
   private final Term term;  // null if stats are to be used
@@ -53,7 +54,7 @@ public final class TermStates {
 
   /**
    *
-   * @param term  当需要统计相关信息时 就会传入有效term  否则传入null 代表不需要统计该term的相关信息  (打分用)
+   * @param term  当需要统计相关信息时 传入 null
    * @param context  在哪个上下文的范围下查询term  比如 context对应的reader 是一个 CompositeReader 那么就是从所有子reader读取数据
    */
   private TermStates(Term term, IndexReaderContext context) {

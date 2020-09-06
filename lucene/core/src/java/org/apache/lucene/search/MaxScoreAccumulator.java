@@ -22,12 +22,14 @@ import java.util.concurrent.atomic.LongAccumulator;
 
 /**
  * Maintains the maximum score and its corresponding document id concurrently
+ * 用于在多线程中累加数据的  LongAccumulator 本身是基于快照的实现 所以在高并发场景性能也比较高 但是数据并不是绝对准确的
  */
 final class MaxScoreAccumulator {
   // we use 2^10-1 to check the remainder with a bitwise operation
   static final int DEFAULT_INTERVAL = 0x3ff;
 
   // scores are always positive
+  // 该累加器的累加规则是 仅保留最大值
   final LongAccumulator acc = new LongAccumulator(Long::max, Long.MIN_VALUE);
 
   // non-final and visible for tests

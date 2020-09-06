@@ -18,6 +18,9 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 
+/**
+ * 该对象负责将多个比较函数整合在一起
+ */
 final class MultiLeafFieldComparator implements LeafFieldComparator {
 
   private final LeafFieldComparator[] comparators;
@@ -82,6 +85,11 @@ final class MultiLeafFieldComparator implements LeafFieldComparator {
     }
   }
 
+  /**
+   * 挨个为所有comparator设置scorer
+   * @param scorer Scorer instance that you should use to
+   * @throws IOException
+   */
   @Override
   public void setScorer(Scorable scorer) throws IOException {
     for (LeafFieldComparator comparator : comparators) {

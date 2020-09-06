@@ -70,8 +70,9 @@ import org.apache.lucene.util.BytesRefBuilder;
  * FieldDoc#fields} when returning the top results.
  * </ul>
  *
- * @lucene.experimental 对查询结果进行排序
+ * @lucene.experimental
  * @see LeafFieldComparator
+ * 因为默认情况下仅允许根据 score 以及 docId 进行排序 这里是为查询结果的顺序增加排序规则
  */
 public abstract class FieldComparator<T> {
 
@@ -113,7 +114,7 @@ public abstract class FieldComparator<T> {
      * @param context current reader context
      * @return the comparator to use for this segment
      * @throws IOException if there is a low-level IO error
-     *                     通过指定上下文  返回一个叶比较对象
+     *                     该对象也是可以根据leaf信息做出调整的
      */
     public abstract LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException;
 
@@ -143,17 +144,16 @@ public abstract class FieldComparator<T> {
 
     /**
      * Base FieldComparator class for numeric types
-     * SimpleFieldComparator 是一个骨架对象
-     * 该对象代表比较的值都是 numericDocValues 类型
+     * FieldComparator 本身是一个基于field信息进行排序的对象  而该对象的含义就是 首先field.value需要是数字类型 之后再根据field.value的大小进行排序
      */
     public static abstract class NumericComparator<T extends Number> extends SimpleFieldComparator<T> {
         protected final T missingValue;
         /**
-         * 代表比较的域
+         * 该对象针对的field
          */
         protected final String field;
         /**
-         * 该对象提供了api 负责遍历域值
+         * 该对象负责遍历该field 出现在哪些doc 以及对应的值
          */
         protected NumericDocValues currentReaderValues;
 
@@ -168,6 +168,12 @@ public abstract class FieldComparator<T> {
             this.missingValue = missingValue;
         }
 
+        /**
+         * 每当切换一个reader对象时 需要先调用该函数   也就是根据reader对象重置内部的field.value迭代器
+         *
+         * @param context
+         * @throws IOException
+         */
         @Override
         protected void doSetNextReader(LeafReaderContext context) throws IOException {
             currentReaderValues = getNumericDocValues(context, field);
@@ -176,7 +182,6 @@ public abstract class FieldComparator<T> {
         /**
          * Retrieves the NumericDocValues for the field in this segment
          */
-        // 通过context.reader读取域名对应的域值
         protected NumericDocValues getNumericDocValues(LeafReaderContext context, String field) throws IOException {
             return DocValues.getNumeric(context.reader(), field);
         }
@@ -185,21 +190,18 @@ public abstract class FieldComparator<T> {
     /**
      * Parses field's values as double (using {@link
      * org.apache.lucene.index.LeafReader#getNumericDocValues} and sorts by ascending value
+     * NumericComparator 本身只是定义了基于数字进行比较 这里明确了field.value 的类型
      */
-    // 申明 域值本身是double类型
     public static class DoubleComparator extends NumericComparator<Double> {
 
         /**
-         * 比较器本身有一个容量 是因为只存储 TopN的数据
+         * 存储topN数据的容器
          */
         private final double[] values;
-        /**
-         * 存放最小的值  这样当values满的时候 每次只要比较最小值就可以
-         */
+
+        // 排序是基于最小堆来做的  进入最小堆的前提是 本次插入的值要比最小堆的top大 而真正需要使用的实际上时top以及大于top的其他值
+
         private double bottom;
-        /**
-         * topN的最大值
-         */
         private double topValue;
 
         /**
@@ -216,7 +218,7 @@ public abstract class FieldComparator<T> {
         }
 
         /**
-         * 通过指定文档号的方式 获取对应的值
+         * 获取field在该doc下的值
          *
          * @param doc
          * @return
@@ -233,13 +235,20 @@ public abstract class FieldComparator<T> {
             }
         }
 
+        /**
+         * 首先比较的数据已经存在于 values中
+         *
+         * @param slot1 first slot to compare
+         * @param slot2 second slot to compare
+         * @return
+         */
         @Override
         public int compare(int slot1, int slot2) {
             return Double.compare(values[slot1], values[slot2]);
         }
 
         /**
-         * 看来在遍历的过程中 使用的都是文档号  通过getValueForDoc 找到对应的值 并与bottom作比较
+         * 将该field在该doc下的值与  bottom做比较
          *
          * @param doc that was hit
          * @return
@@ -250,11 +259,23 @@ public abstract class FieldComparator<T> {
             return Double.compare(bottom, getValueForDoc(doc));
         }
 
+        /**
+         * 将某个doc下 field.value的值 设置到数组对应的槽上
+         *
+         * @param slot which slot to copy the hit to
+         * @param doc  docID relative to current reader
+         * @throws IOException
+         */
         @Override
         public void copy(int slot, int doc) throws IOException {
             values[slot] = getValueForDoc(doc);
         }
 
+        /**
+         * 指定bottom的值
+         *
+         * @param bottom
+         */
         @Override
         public void setBottom(final int bottom) {
             this.bottom = values[bottom];
@@ -265,6 +286,12 @@ public abstract class FieldComparator<T> {
             topValue = value;
         }
 
+        /**
+         * 通过下标获取对应的值
+         *
+         * @param slot the value
+         * @return
+         */
         @Override
         public Double value(int slot) {
             return Double.valueOf(values[slot]);
@@ -279,8 +306,8 @@ public abstract class FieldComparator<T> {
     /**
      * Parses field's values as float (using {@link
      * org.apache.lucene.index.LeafReader#getNumericDocValues(String)} and sorts by ascending value
+     * 仅仅是类型不一致
      */
-    // 代表域值是 float类型   套路跟上面一致
     public static class FloatComparator extends NumericComparator<Float> {
         private final float[] values;
         private float bottom;
@@ -472,11 +499,11 @@ public abstract class FieldComparator<T> {
      * using {@link TopScoreDocCollector} directly (which {@link
      * IndexSearcher#search} uses when no {@link Sort} is
      * specified).
+     * 基于分数进行排序
      */
-    // 该对象会涉及到 分数系统
     public static final class RelevanceComparator extends FieldComparator<Float> implements LeafFieldComparator {
         /**
-         * 存储一组分数
+         * 存储分数的容器
          */
         private final float[] scores;
         /**
@@ -503,7 +530,7 @@ public abstract class FieldComparator<T> {
 
         @Override
         public int compareBottom(int doc) throws IOException {
-            /// 先计算分数再比较
+            /// 先计算分数再比较  因为查询数据的套路是先调用 scorer内部迭代器的数据 所以此时 scorer能够以当前的数据直接进行打分
             float score = scorer.score();
             assert !Float.isNaN(score);
             return Float.compare(score, bottom);
@@ -517,6 +544,7 @@ public abstract class FieldComparator<T> {
 
         /**
          * 相当于从最新的索引中计算相关数据的任务都交给了 scorer
+         *
          * @param context current reader context
          * @return
          */
@@ -536,7 +564,7 @@ public abstract class FieldComparator<T> {
         }
 
         /**
-         * 设置打分对象
+         * 设置打分对象  在查询数据的整个流程中 这一步属于前置操作
          *
          * @param scorer Scorer instance that you should use to
          */
@@ -545,7 +573,6 @@ public abstract class FieldComparator<T> {
             // wrap with a ScoreCachingWrappingScorer so that successive calls to
             // score() will not incur score computation over and
             // over again.
-            // 生成一个打分对象 避免重复打分
             if (!(scorer instanceof ScoreCachingWrappingScorer)) {
                 this.scorer = new ScoreCachingWrappingScorer(scorer);
             } else {
@@ -577,13 +604,14 @@ public abstract class FieldComparator<T> {
     /**
      * Sorts by ascending docID
      */
-    // 基于文档号进行排序
     public static final class DocComparator extends FieldComparator<Integer> implements LeafFieldComparator {
         /**
          * 这里存储的就是文档编号了
          */
         private final int[] docIDs;
-        // 看来使用差值存储规则 那么存储的id 就是一个相对值   好处是配合packedInts 可以节省空间
+        /**
+         * 该reader下doc的偏移量信息
+         */
         private int docBase;
         private int bottom;
         private int topValue;
@@ -617,7 +645,7 @@ public abstract class FieldComparator<T> {
             // TODO: can we "map" our docIDs to the current
             // reader? saves having to then subtract on every
             // compare call
-            // 因为该对象不需要直接读取内存中最新的索引数据 只需要保存当前索引的起点就好
+            // reader对象下doc的起点可能不是0 所以要获取偏移量信息
             this.docBase = context.docBase;
             return this;
         }
@@ -643,6 +671,11 @@ public abstract class FieldComparator<T> {
             return Integer.compare(topValue, docValue);
         }
 
+        /**
+         * 因为仅按照docId 排序所以 具体的数据内容就不重要了
+         *
+         * @param scorer Scorer instance that you should use to
+         */
         @Override
         public void setScorer(Scorable scorer) {
         }
@@ -658,8 +691,8 @@ public abstract class FieldComparator<T> {
      * to large results, this comparator will be much faster
      * than {@link org.apache.lucene.search.FieldComparator.TermValComparator}.  For very small
      * result sets it may be slower.
+     * 基于term的顺序进行排序
      */
-    // 基于词的顺序进行排序
     public static class TermOrdValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
         /* Ords for each slot.
            @lucene.internal */
@@ -694,7 +727,7 @@ public abstract class FieldComparator<T> {
         SortedDocValues termsIndex;
 
         /**
-         * 属于同一个域下面的词进行比较
+         * 基于哪个field进行排序
          */
         private final String field;
 
@@ -756,9 +789,11 @@ public abstract class FieldComparator<T> {
          * Creates this, with control over how missing values
          * are sorted.  Pass sortMissingLast=true to put
          * missing values at the end.
+         *
          * @param sortMissingLast 当未命中时 作为最大值 还是最小值
          */
         public TermOrdValComparator(int numHits, String field, boolean sortMissingLast) {
+            // 根据允许维护的数量
             ords = new int[numHits];
             values = new BytesRef[numHits];
             tempBRs = new BytesRefBuilder[numHits];
@@ -774,7 +809,6 @@ public abstract class FieldComparator<T> {
         }
 
         private int getOrdForDoc(int doc) throws IOException {
-            // 代表 docValue中有对应的文档号
             if (termsIndex.advanceExact(doc)) {
                 // 返回文档的顺序
                 return termsIndex.ordValue();
@@ -786,7 +820,7 @@ public abstract class FieldComparator<T> {
 
         @Override
         public int compare(int slot1, int slot2) {
-            // 年代相同时 直接返回顺序
+            // 首先对比2个槽对应数据的 gen 相同的情况下 再比较ords
             if (readerGen[slot1] == readerGen[slot2]) {
                 return ords[slot1] - ords[slot2];
             }
@@ -807,6 +841,7 @@ public abstract class FieldComparator<T> {
 
         /**
          * 将传入的值与 bottom 作比较
+         *
          * @param doc that was hit
          * @return
          * @throws IOException
@@ -824,7 +859,7 @@ public abstract class FieldComparator<T> {
             if (bottomSameReader) {
                 // ord is precisely comparable, even in the equal case
                 return bottomOrd - docOrd;
-            // 如果reader不同 那么即使与bottom一样 也认为小  应该是不想产生额外的操作开销吧
+                // 如果reader不同 那么即使与bottom一样 也认为小  应该是不想产生额外的操作开销吧
             } else if (bottomOrd >= docOrd) {
                 // the equals case always means bottom is > doc
                 // (because we set bottomOrd to the lower bound in
@@ -837,8 +872,9 @@ public abstract class FieldComparator<T> {
 
         /**
          * 将文档号对应的数据 拷贝到对应的槽
+         *
          * @param slot which slot to copy the hit to   指topN数组的槽号
-         * @param doc docID relative to current reader    使用当前reader读取的文档号  读取的结果要存入到TopN数组中
+         * @param doc  docID relative to current reader    使用当前reader读取的文档号  读取的结果要存入到TopN数组中
          * @throws IOException
          */
         @Override
@@ -864,27 +900,28 @@ public abstract class FieldComparator<T> {
 
         /**
          * Retrieves the SortedDocValues for the field in this segment
+         * 加载遍历该 field所在doc的数据信息   SortedDocValues 代表这些数据已经预先进行过排序了 ord 就是他们的顺序
          */
         protected SortedDocValues getSortedDocValues(LeafReaderContext context, String field) throws IOException {
             return DocValues.getSorted(context.reader(), field);
         }
 
         /**
-         * 根据当前上下文信息 切换内存中的索引数据
+         * 根据传入的reader对象 初始化comparator对象
          * @param context current reader context
          * @return
          * @throws IOException
          */
         @Override
         public LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
-            // 将最新的索引数据加载到内存
+            // 根据field信息 获取docValue迭代器  该数据还提前存储了顺序信息
             termsIndex = getSortedDocValues(context, field);
             // 更新reader的年代
             currentReaderGen++;
 
-            // 重新读取数据后 要重新查询一次 topValue
+            // 如果之前存在top值 根据该值查询顺序信息
             if (topValue != null) {
-                // Recompute topOrd/SameReader
+                // Recompute topOrd/SameReader  查找此时的 sortedDocValues 中
                 int ord = termsIndex.lookupTerm(topValue);
                 // 代表该值在新的索引中也能找到  并根据所在的下标
                 if (ord >= 0) {
@@ -911,6 +948,7 @@ public abstract class FieldComparator<T> {
 
         /**
          * 基于之前的bottom的下标 重新计算 bottom的下标
+         *
          * @param bottom
          * @throws IOException
          */
@@ -977,7 +1015,7 @@ public abstract class FieldComparator<T> {
                 // case
                 //System.out.println("compareTop doc=" + doc + " ord=" + ord + " ret=" + (topOrd-ord));
                 return topOrd - ord;
-            // 在不同年代时 相等也是返回1  应该是想要减少返回0的情况???
+                // 在不同年代时 相等也是返回1  应该是想要减少返回0的情况???
             } else if (ord <= topOrd) {
                 // the equals case always means doc is < value
                 // (because we set lastOrd to the lower bound)
@@ -1002,6 +1040,7 @@ public abstract class FieldComparator<T> {
 
         /**
          * 该对象不存在 分数的概念
+         *
          * @param scorer Scorer instance that you should use to
          */
         @Override
@@ -1014,7 +1053,6 @@ public abstract class FieldComparator<T> {
      * comparisons are done using BytesRef.compareTo, which is
      * slow for medium to large result sets but possibly
      * very fast for very small results sets.
-     * 基于词的具体数据来比较
      */
     public static class TermValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
 

@@ -79,6 +79,11 @@ final class TermScorer extends Scorer {
     return iterator;
   }
 
+  /**
+   * 为此时遍历到 的doc 进行打分 并返回结果  这里基于什么BM256算法的 先忽略计算过程
+   * @return
+   * @throws IOException
+   */
   @Override
   public float score() throws IOException {
     assert docID() != DocIdSetIterator.NO_MORE_DOCS;
@@ -95,6 +100,10 @@ final class TermScorer extends Scorer {
     return impactsDisi.getMaxScore(upTo);
   }
 
+  /**
+   * 设置最低分数
+   * @param minScore
+   */
   @Override
   public void setMinCompetitiveScore(float minScore) {
     impactsDisi.setMinCompetitiveScore(minScore);

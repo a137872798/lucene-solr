@@ -175,7 +175,7 @@ final class SegmentMerger {
         normsMergeInstance = norms.getMergeInstance();
       }
       // 在这里将所有term信息合并 term的排序借助了二叉堆  而写入term同时相关的postings 则是连续写入 (前提是不考虑IndexSort的情况)
-      // TODO 在merge term的过程中 没有按照liveDoc 剔除掉无效的doc是什么情况???
+      // 使用的 DocMap 实际上内部已经封装了剔除 无效doc的逻辑了  当对这些doc做映射时 会返回-1 在DocIdMerger对象中 这些doc就会被忽略
       mergeTerms(segmentWriteState, normsMergeInstance);
     }
     if (mergeState.infoStream.isEnabled("SM")) {

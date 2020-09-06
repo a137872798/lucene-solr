@@ -28,6 +28,7 @@ import org.apache.lucene.search.similarities.Similarity.SimScorer;
  * indexed impacts. Call {@link #setMinCompetitiveScore(float)} in order to
  * give this iterator the ability to skip low-scoring documents.
  * @lucene.internal
+ * 该对象负责迭代 doc  setMinCompetitiveScore 方法确保能够跳过分数较低的doc
  */
 public final class ImpactsDISI extends DocIdSetIterator {
 
@@ -35,6 +36,9 @@ public final class ImpactsDISI extends DocIdSetIterator {
   private final ImpactsSource impactsSource;
   private final MaxScoreCache maxScoreCache;
   private final float globalMaxScore;
+  /**
+   * 代表一个最低分数 应该是低于该分数的doc 会被过滤掉
+   */
   private float minCompetitiveScore = 0;
   private int upTo = DocIdSetIterator.NO_MORE_DOCS;
   private float maxScore = Float.MAX_VALUE;
@@ -55,6 +59,7 @@ public final class ImpactsDISI extends DocIdSetIterator {
   /**
    * Set the minimum competitive score.
    * @see Scorer#setMinCompetitiveScore(float)
+   * 设置最低分数
    */
   public void setMinCompetitiveScore(float minCompetitiveScore) {
     assert minCompetitiveScore >= this.minCompetitiveScore;
@@ -63,6 +68,7 @@ public final class ImpactsDISI extends DocIdSetIterator {
       // force upTo and maxScore to be recomputed so that we will skip documents
       // if the current block of documents is not competitive - only if the min
       // competitive score actually increased
+      // 当最低分数更新时 需要重头扫描数据
       upTo = -1;
     }
   }

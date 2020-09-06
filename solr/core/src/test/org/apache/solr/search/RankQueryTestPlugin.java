@@ -421,7 +421,7 @@ public class RankQueryTestPlugin extends QParserPlugin {
 
             if (comparator == null) {
               comparator = sortField.getComparator(1,0);
-              leafComparator = comparator.getLeafComparator(currentLeaf);
+              leafComparator = comparator.(currentLeaf);
             }
 
             doc -= currentLeaf.docBase;  // adjust for what segment this is in

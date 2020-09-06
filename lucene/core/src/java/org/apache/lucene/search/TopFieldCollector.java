@@ -38,6 +38,7 @@ import org.apache.lucene.search.TotalHits.Relation;
  * for instantiating a TopFieldCollector.
  *
  * @lucene.experimental
+ * TopDocsCollector 默认是按照 doc的得分排序的 而该对象是基于 SortField排序的
  */
 public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
 
@@ -57,7 +58,9 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
         this.reverseMul = reverseMul[0];
         this.comparator = comparators[0];
       } else {
+        // 存在多种排序规则是 默认 使用正序
         this.reverseMul = 1;
+        // 将多个比较函数整合在一起
         this.comparator = new MultiLeafFieldComparator(comparators, reverseMul);
       }
     }
@@ -76,10 +79,17 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
 
     TopFieldLeafCollector(FieldValueHitQueue<Entry> queue, Sort sort, LeafReaderContext context) throws IOException {
       super(queue.getComparators(context), queue.getReverseMul());
+      // segmentInfo信息中包含了 Sort信息
       final Sort indexSort = context.reader().getMetaData().getSort();
+      // 检测是否之前存储时已经按照相符合的 sort排序了 这样就不需要再排序
       canEarlyTerminate = canEarlyTerminate(sort, indexSort);
     }
 
+    /**
+     * 记录查询到的doc 并检测是否已经查询了一定数量的值 每当查询到一定数量就会更新全局的最小得分
+     * @param doc
+     * @throws IOException
+     */
     void countHit(int doc) throws IOException {
       ++totalHits;
       hitsThresholdChecker.incrementHitCount();
@@ -90,6 +100,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
     }
 
     boolean thresholdCheck(int doc) throws IOException {
+      // collectedAllCompetitiveHits 该属性一开始为false
       if (collectedAllCompetitiveHits || reverseMul * comparator.compareBottom(doc) <= 0) {
         // since docs are visited in doc Id order, if compare is 0, it means
         // this document is largest than anything else in the queue, and
@@ -119,8 +130,15 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
       updateMinCompetitiveScore(scorer);
     }
 
+    /**
+     * 当优先队列还没有填满时 触发该函数
+     * @param doc
+     * @param hitsCollected
+     * @throws IOException
+     */
     void collectAnyHit(int doc, int hitsCollected) throws IOException {
       // Startup transient: queue hasn't gathered numHits yet
+      // 将此时采集的数量换成slot
       int slot = hitsCollected - 1;
       // Copy hit into queue
       comparator.copy(slot, doc);
@@ -131,6 +149,11 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
       }
     }
 
+    /**
+     * 在设置 scorer时 先尝试更新最小得分
+     * @param scorer
+     * @throws IOException
+     */
     @Override
     public void setScorer(Scorable scorer) throws IOException {
       super.setScorer(scorer);
@@ -142,16 +165,33 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
     }
   }
 
+  /**
+   *
+   * @param searchSort
+   * @param indexSort  存储数据时使用的排序规则
+   * @return
+   */
   static boolean canEarlyTerminate(Sort searchSort, Sort indexSort) {
     return canEarlyTerminateOnDocId(searchSort) ||
            canEarlyTerminateOnPrefix(searchSort, indexSort);
   }
 
+  /**
+   * 检测第一排序规则是否是 DocId  因为默认的排序规则就是 score + docId
+   * @param searchSort
+   * @return
+   */
   private static boolean canEarlyTerminateOnDocId(Sort searchSort) {
     final SortField[] fields1 = searchSort.getSort();
     return SortField.FIELD_DOC.equals(fields1[0]);
   }
 
+  /**
+   * 这里应该是检测这2种匹配规则是否一致
+   * @param searchSort  查询时使用的排序规则
+   * @param indexSort   存储时使用的排序规则
+   * @return
+   */
   private static boolean canEarlyTerminateOnPrefix(Sort searchSort, Sort indexSort) {
     if (indexSort != null) {
       final SortField[] fields1 = searchSort.getSort();
@@ -169,9 +209,19 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
   /*
    * Implements a TopFieldCollector over one SortField criteria, with tracking
    * document scores and maxScore.
+   * 该对象不具备分页能力
    */
   private static class SimpleFieldCollector extends TopFieldCollector {
+
+    /**
+     * 有关排序规则的对象
+     */
     final Sort sort;
+
+    /**
+     * 改良版优先队列
+     * 该对象内部存储了一组Comparator对象 负责将数据按照多个比较对象排序后存储
+     */
     final FieldValueHitQueue<Entry> queue;
 
     public SimpleFieldCollector(Sort sort, FieldValueHitQueue<Entry> queue, int numHits,
@@ -182,14 +232,23 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
       this.queue = queue;
     }
 
+    /**
+     * 当传入一个 readerContext时做对应的处理 实际上就是需要这个docBase
+     * @param context
+     * @return
+     * @throws IOException
+     */
     @Override
     public LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
       docBase = context.docBase;
 
+      // 返回的也是基于多 comparator的对象
       return new TopFieldLeafCollector(queue, sort, context) {
 
         @Override
         public void collect(int doc) throws IOException {
+          // 当收集到某个doc时 先记录 同时根据条件更新全局最小得分
+          // 在该函数中  会增加 totalHits的值
           countHit(doc);
           if (queueFull) {
             if (thresholdCheck(doc)) {
@@ -197,6 +256,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
             }
             collectCompetitiveHit(doc);
           } else {
+            // 此时优先队列还没有填满
             collectAnyHit(doc, totalHits);
           }
         }
@@ -231,6 +291,12 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
       }
     }
 
+    /**
+     * 根据传入的 readContext 获取相关信息 并生成新对象
+     * @param context
+     * @return
+     * @throws IOException
+     */
     @Override
     public LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
       docBase = context.docBase;
@@ -241,6 +307,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
         @Override
         public void collect(int doc) throws IOException {
           countHit(doc);
+          // 如果此时优先队列已经存满了
           if (queueFull) {
             if (thresholdCheck(doc)) {
               return;
@@ -303,6 +370,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
     this.hitsThresholdChecker = hitsThresholdChecker;
     this.numComparators = pq.getComparators().length;
     FieldComparator<?> fieldComparator = pq.getComparators()[0];
+    // 代表正序/倒序的数组
     int reverseMul = pq.reverseMul[0];
     if (fieldComparator.getClass().equals(FieldComparator.RelevanceComparator.class)
           && reverseMul == 1 // if the natural sort is preserved (sort by descending relevance)
@@ -416,6 +484,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
 
   /**
    * Same as above with additional parameters to allow passing in the threshold checker and the max score accumulator.
+   * 传入一组排序的对象 其余与 TopDocsCollector一致
    */
   static TopFieldCollector create(Sort sort, int numHits, FieldDoc after,
                                          HitsThresholdChecker hitsThresholdChecker, MaxScoreAccumulator minScoreAcc) {
@@ -433,6 +502,8 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
     }
 
     FieldValueHitQueue<Entry> queue = FieldValueHitQueue.create(sort.fields, numHits);
+
+    // 这里使用after的逻辑应该是一样的
 
     if (after == null) {
       return new SimpleFieldCollector(sort, queue, numHits, hitsThresholdChecker, minScoreAcc);

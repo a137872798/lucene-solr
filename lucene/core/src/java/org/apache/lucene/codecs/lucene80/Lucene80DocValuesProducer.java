@@ -103,7 +103,6 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
             }
         }
 
-        // 这里只是打开句柄  还没有开始读取数据
         String dataName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, dataExtension);
         this.data = state.directory.openInput(dataName, state.context);
         boolean success = false;
@@ -557,7 +556,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         if (entry.docsWithFieldOffset == -2) {
             // empty
             return DocValues.emptyNumeric();
-            // -1 代表是密集存储吧
+            // -1 代表所有doc都包含该field
         } else if (entry.docsWithFieldOffset == -1) {
             // dense  这里利用差值存储 如果差值都是0 代表所有值都是一样的 所以直接返回min就好
             if (entry.bitsPerValue == 0) {
@@ -1295,7 +1294,6 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
         }
 
         /**
-         * 通过 文本信息 反向查找term
          *
          * @param key Key to look up
          * @return

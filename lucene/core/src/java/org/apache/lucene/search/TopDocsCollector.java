@@ -42,6 +42,7 @@ public abstract class TopDocsCollector<T extends ScoreDoc> implements Collector 
    * implementations of PriorityQueue give different meaning to 'top documents'.
    * HitQueue for example aggregates the top scoring documents, while other PQ
    * implementations may hold documents sorted by other criteria.
+   * 该对象就是用来采集 topN数据的  新增的数据将会通过优先队列自动排序
    */
   protected final PriorityQueue<T> pq;
 

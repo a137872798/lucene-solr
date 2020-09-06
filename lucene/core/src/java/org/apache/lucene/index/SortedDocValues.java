@@ -45,7 +45,7 @@ public abstract class SortedDocValues extends BinaryDocValues {
    * returned {@code false}.
    * @return ordinal for the document: this is dense, starts at 0, then
    *         increments by 1 for the next value in sorted order.
-   *         返回当前doc 对应的docValue的排序 结果
+   *         提前排序的顺序
    */
   public abstract int ordValue() throws IOException;
 

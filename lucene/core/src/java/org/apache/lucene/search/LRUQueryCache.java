@@ -514,12 +514,19 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
   }
 
+  /**
+   * 为权重信息生成缓存    一般只有当 权重对象本身不需要打分时 才支持缓存
+   * @param weight
+   * @param policy
+   * @return
+   */
   @Override
   public Weight doCache(Weight weight, QueryCachingPolicy policy) {
     while (weight instanceof CachingWrapperWeight) {
       weight = ((CachingWrapperWeight) weight).in;
     }
 
+    // 该对象包装了缓存功能
     return new CachingWrapperWeight(weight, policy);
   }
 
@@ -715,8 +722,14 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
   }
 
+  /**
+   * 该对象包装了缓存功能   一般支持被缓存的对象它是不具备打分能力的 否则每次随着统计数据的变化 结果都会改变 就没有使用缓存的意义了
+   */
   private class CachingWrapperWeight extends ConstantScoreWeight {
 
+    /**
+     * 实际权重
+     */
     private final Weight in;
     private final QueryCachingPolicy policy;
     // we use an AtomicBoolean because Weight.scorer may be called from multiple
@@ -724,6 +737,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
     private final AtomicBoolean used;
 
     CachingWrapperWeight(Weight in, QueryCachingPolicy policy) {
+      // 分数始终是1
       super(in.getQuery(), 1f);
       this.in = in;
       this.policy = policy;
@@ -762,12 +776,20 @@ public class LRUQueryCache implements QueryCache, Accountable {
           && leavesToCache.test(context);
     }
 
+    /**
+     * 对应某个上下文生成 获取scorer对象的提供者
+     * @param context
+     * @return
+     * @throws IOException
+     */
     @Override
     public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
+      // 记录最近使用的query 信息
       if (used.compareAndSet(false, true)) {
         policy.onUse(getQuery());
       }
 
+      // 检测该对象是否支持使用缓存
       if (in.isCacheable(context) == false) {
         // this segment is not suitable for caching
         return in.scorerSupplier(context);

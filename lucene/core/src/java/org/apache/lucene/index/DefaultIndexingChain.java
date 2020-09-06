@@ -537,7 +537,7 @@ final class DefaultIndexingChain extends DocConsumer {
             // 代表正常执行的情况 触发finish 方法
             if (docWriter.hasHitAbortingException() == false) {
                 // Finish each indexed field name seen in the document:
-                // 只要在该doc中出现过的field 都会设置到 fields[] 中 如果一个field在doc中出现多次 只设置一次
+                // 只要在该doc中出现过的field 都会设置到 fields[] 中
                 for (int i = 0; i < fieldCount; i++) {
                     fields[i].finish();
                 }

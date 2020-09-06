@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 abstract class HitsThresholdChecker {
   /**
    * Implementation of HitsThresholdChecker which allows global hit counting
+   * 每当查询到一个结果时 都会检测是否达到阈值  该对象与下面对象的区别就是 该对象允许被并发访问 下面的对象仅在单线程环境
    */
   private static class GlobalHitsThresholdChecker extends HitsThresholdChecker {
     private final int totalHitsThreshold;

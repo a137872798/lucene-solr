@@ -31,7 +31,6 @@ import java.util.Map;
  *
  * @lucene.internal
  * 环形缓冲区 也就是利用了轮式算法
- * 这个key 应该就是 docId
  */
 public final class FrequencyTrackingRingBuffer implements Accountable {
 
@@ -82,12 +81,12 @@ public final class FrequencyTrackingRingBuffer implements Accountable {
   /**
    * Add a new item to this ring buffer, potentially removing the oldest
    * entry from this buffer if it is already full.
-   * 存储某个key 同时增加频率   每次add都会伴随一次remove 频率能上去吗???
+   * 将某个query 对应的hashCode 值存储下来
    */
   public void add(int i) {
     // remove the previous value
     final int removed = buffer[position];
-    // 目标位置之前是否有存放数据
+    // 每次插入新值时 都要尝试移除之前的某个值  （当前是先减频率 当频率归0后才真正将数据去除）
     final boolean removedFromBag = frequencies.remove(removed);
     assert removedFromBag;
     // add the new value

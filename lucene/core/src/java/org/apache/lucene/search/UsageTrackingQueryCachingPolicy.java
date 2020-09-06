@@ -101,7 +101,7 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
   }
 
   /**
-   * 一个记录频率的容器
+   * 存储最近的 query.hashCode
    */
   private final FrequencyTrackingRingBuffer recentlyUsedFilters;
 
@@ -152,7 +152,6 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
   }
 
   /**
-   * 根据查询对象执行缓存策略
    * @param query
    */
   @Override
@@ -160,6 +159,7 @@ public class UsageTrackingQueryCachingPolicy implements QueryCachingPolicy {
     assert query instanceof BoostQuery == false;
     assert query instanceof ConstantScoreQuery == false;
 
+    // 虽然  query对象被包装成了 缓存对象 但并不是所有的query 都支持缓存
     if (shouldNeverCache(query)) {
       return;
     }

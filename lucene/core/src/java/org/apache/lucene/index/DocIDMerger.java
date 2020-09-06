@@ -133,6 +133,7 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
 
         // 这里会转换成 merge后的 globalDocId
         int mappedDocID = current.docMap.get(docID);
+        // 等于-1时 该doc的数据会被忽略  也就是比如 term信息在合并时 之前被标记成删除的doc 在合并时 就会被忽略了
         if (mappedDocID != -1) {
           current.mappedDocID = mappedDocID;
           return current;

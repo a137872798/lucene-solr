@@ -70,7 +70,7 @@ public class TermQuery extends Query {
     public TermWeight(IndexSearcher searcher, ScoreMode scoreMode,
         float boost, TermStates termStates) throws IOException {
       super(TermQuery.this);
-      // 如果需要打分 那么必须要生成 state信息 否则无法计算分数
+      // 合法性校验  如果需要打分的场景  已经要获取统计信息
       if (scoreMode.needsScores() && termStates == null) {
         throw new IllegalStateException("termStates are required when scores are needed");
       }
@@ -243,7 +243,7 @@ public class TermQuery extends Query {
     // perReaderTermState 负责为每个reader 构建一个 termState对象
     if (perReaderTermState == null
         || perReaderTermState.wasBuiltFor(context) == false) {
-      // 为该context 创建 termState
+      // termState 存储了该term在 leader 下的所有posting信息   如果该reader是CompositeReader 数据自然是从多个子reader处收集过来的
       termState = TermStates.build(context, term, scoreMode.needsScores());
     } else {
       // PRTS was pre-build for this IS

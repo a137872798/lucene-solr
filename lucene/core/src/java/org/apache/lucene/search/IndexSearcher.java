@@ -523,21 +523,29 @@ public class IndexSearcher {
    *
    * @throws TooManyClauses If a query would exceed
    *         {@link IndexSearcher#getMaxClauseCount()} clauses.
+   * @param after 传入上次查询的结果  主要是做分页使用
+   * @param query 本次查询条件
+   * @param numHits  TopDocs 的数量要求
+   * @return 描述查询结果 每个doc的得分 以及查询的数量信息
    */
   public TopDocs searchAfter(ScoreDoc after, Query query, int numHits) throws IOException {
     final int limit = Math.max(1, reader.maxDoc());
+    // 这个after是干嘛的  他的doc数量不能超过 reader下doc总数量
     if (after != null && after.doc >= limit) {
       throw new IllegalArgumentException("after.doc exceeds the number of documents in the reader: after.doc="
           + after.doc + " limit=" + limit);
     }
 
+    // 获取查询的总结果数量
     final int cappedNumHits = Math.min(numHits, limit);
 
     final CollectorManager<TopScoreDocCollector, TopDocs> manager = new CollectorManager<TopScoreDocCollector, TopDocs>() {
 
+      // 该对象是检测命中的数量是否达到上限的  同时根据是否使用线程池 选择创建 localChecker 还是 globalChecker
       private final HitsThresholdChecker hitsThresholdChecker = (executor == null || leafSlices.length <= 1) ? HitsThresholdChecker.create(Math.max(TOTAL_HITS_THRESHOLD, numHits)) :
           HitsThresholdChecker.createShared(Math.max(TOTAL_HITS_THRESHOLD, numHits));
 
+      // 创建一个累加器对象
       private final MaxScoreAccumulator minScoreAcc = (executor == null || leafSlices.length <= 1) ? null : new MaxScoreAccumulator();
 
       @Override
@@ -545,8 +553,15 @@ public class IndexSearcher {
         return TopScoreDocCollector.create(cappedNumHits, after, hitsThresholdChecker, minScoreAcc);
       }
 
+      /**
+       * 将多个 collector的数据整合 生成一个TopN
+       * @param collectors
+       * @return
+       * @throws IOException
+       */
       @Override
       public TopDocs reduce(Collection<TopScoreDocCollector> collectors) throws IOException {
+        // 每个 collector的 topN 数据都会暂存在这个数组中  之后通过merge 将数据进行整合
         final TopDocs[] topDocs = new TopDocs[collectors.size()];
         int i = 0;
         for (TopScoreDocCollector collector : collectors) {
@@ -565,6 +580,8 @@ public class IndexSearcher {
    *
    * @throws TooManyClauses If a query would exceed
    *         {@link IndexSearcher#getMaxClauseCount()} clauses.
+   *         基于某种查询条件 仅返回得分最高的部分
+   *         默认情况下不传入基准值  after (要求本次查询的结果是小于它的最大值 实际上是作为分页使用的)
    */
   public TopDocs search(Query query, int n)
     throws IOException {
@@ -599,6 +616,7 @@ public class IndexSearcher {
    * 
    * @throws TooManyClauses If a query would exceed
    *         {@link IndexSearcher#getMaxClauseCount()} clauses.
+   *         查询出来的doc 会按照sort进行排序
    */
   public TopFieldDocs search(Query query, int n,
       Sort sort, boolean doDocScores) throws IOException {
@@ -658,14 +676,26 @@ public class IndexSearcher {
     return searchAfter((FieldDoc) after, query, numHits, sort, doDocScores);
   }
 
+  /**
+   * 将查询结果按照sort 排序
+   * @param after
+   * @param query
+   * @param numHits
+   * @param sort
+   * @param doDocScores
+   * @return
+   * @throws IOException
+   */
   private TopFieldDocs searchAfter(FieldDoc after, Query query, int numHits, Sort sort,
       boolean doDocScores) throws IOException {
     final int limit = Math.max(1, reader.maxDoc());
+    // 如果基准值都大于 limit 就没有查询的必要了
     if (after != null && after.doc >= limit) {
       throw new IllegalArgumentException("after.doc exceeds the number of documents in the reader: after.doc="
           + after.doc + " limit=" + limit);
     }
     final int cappedNumHits = Math.min(numHits, limit);
+    // 针对查询对象 修改sort对象
     final Sort rewrittenSort = sort.rewrite(this);
 
     final CollectorManager<TopFieldCollector, TopFieldDocs> manager = new CollectorManager<>() {
@@ -675,6 +705,11 @@ public class IndexSearcher {
 
       private final MaxScoreAccumulator minScoreAcc = (executor == null || leafSlices.length <= 1) ? null : new MaxScoreAccumulator();
 
+      /**
+       * 创建的结果收集器 具备按照field排序的能力
+       * @return
+       * @throws IOException
+       */
       @Override
       public TopFieldCollector newCollector() throws IOException {
         // TODO: don't pay the price for accurate hit counts by default
@@ -688,6 +723,7 @@ public class IndexSearcher {
         for (TopFieldCollector collector : collectors) {
           topDocs[i++] = collector.topDocs();
         }
+        // 将结果进行合并
         return TopDocs.merge(rewrittenSort, 0, cappedNumHits, topDocs);
       }
 
@@ -715,8 +751,10 @@ public class IndexSearcher {
     if (executor == null || leafSlices.length <= 1) {
       final C collector = collectorManager.newCollector();
       search(query, collector);
+      // 将采集到的结果 通过collect 进行累加 并返回
       return collectorManager.reduce(Collections.singletonList(collector));
     } else {
+      // 这里是并发查询的逻辑   线程的分隔线是以 leafSlice为单位的
       final List<C> collectors = new ArrayList<>(leafSlices.length);
       ScoreMode scoreMode = null;
       for (int i = 0; i < leafSlices.length; ++i) {
@@ -746,6 +784,7 @@ public class IndexSearcher {
         listTasks.add(task);
       }
 
+      // 通过线程池 并发执行 并将结果整合
       sliceExecutor.invokeAll(listTasks);
       final List<C> collectedCollectors = new ArrayList<>();
       for (Future<C> future : listTasks) {
@@ -933,6 +972,7 @@ public class IndexSearcher {
   public Weight createWeight(Query query, ScoreMode scoreMode, float boost) throws IOException {
     final QueryCache queryCache = this.queryCache;
     Weight weight = query.createWeight(this, scoreMode, boost);
+    // 只有当不需要打分时 才使用缓存对象
     if (scoreMode.needsScores() == false && queryCache != null) {
       weight = queryCache.doCache(weight, queryCachingPolicy);
     }
@@ -1012,6 +1052,7 @@ public class IndexSearcher {
         continue;
       }
       // 代表该field出现的doc总数  虽然 计算是通过该field下所有term所在的doc总数 (已根据docId去重)  但是这些term都是以field为单位进行管理的 所以可以确保不会读取到field不存在的doc
+      // 在 DefaultChain对象处理 doc时  先通过 field 定位到 perField 之后再通过term 定位到 termHash对象 所以即使term.bytes() 是相同的 但是它们的数据也是相互隔离的
       docCount += terms.getDocCount();
       // 下面2个参数 分别记录了 该field下所有term 出现的doc总数和 以及在doc中出现的频率次数总和
       sumTotalTermFreq += terms.getSumTotalTermFreq();

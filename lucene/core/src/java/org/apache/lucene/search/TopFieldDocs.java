@@ -23,7 +23,10 @@ package org.apache.lucene.search;
  */
 public class TopFieldDocs extends TopDocs {
 
-  /** The fields which were used to sort results by. */
+  /**
+   * The fields which were used to sort results by.
+   * 表示这组结果是按照什么规则排序的
+   * */
   public SortField[] fields;
         
   /** Creates one of these objects.

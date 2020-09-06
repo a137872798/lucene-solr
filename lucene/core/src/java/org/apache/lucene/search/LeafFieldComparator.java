@@ -108,8 +108,8 @@ public interface LeafFieldComparator {
    * that will be required for future comparisons, into the
    * specified slot.
    * 
-   * @param slot which slot to copy the hit to   指topN数组的槽号
-   * @param doc docID relative to current reader    使用当前reader读取的文档号  读取的结果要存入到TopN数组中
+   * @param slot which slot to copy the hit to
+   * @param doc docID relative to current reader
    */
   void copy(int slot, int doc) throws IOException;
 
@@ -118,7 +118,6 @@ public interface LeafFieldComparator {
    * 
    * @param scorer Scorer instance that you should use to
    * obtain the current hit's score, if necessary. */
-  // 如果该文档需要打分 那么支持设置 Scorable
   void setScorer(Scorable scorer) throws IOException;
 
 }
