@@ -530,7 +530,6 @@ public class IndexSearcher {
    */
   public TopDocs searchAfter(ScoreDoc after, Query query, int numHits) throws IOException {
     final int limit = Math.max(1, reader.maxDoc());
-    // 这个after是干嘛的  他的doc数量不能超过 reader下doc总数量
     if (after != null && after.doc >= limit) {
       throw new IllegalArgumentException("after.doc exceeds the number of documents in the reader: after.doc="
           + after.doc + " limit=" + limit);
@@ -731,6 +730,7 @@ public class IndexSearcher {
 
     TopFieldDocs topDocs = search(query, manager);
     if (doDocScores) {
+      // 是否需要将得分设置到结果中
       TopFieldCollector.populateScores(topDocs.scoreDocs, this, query);
     }
     return topDocs;

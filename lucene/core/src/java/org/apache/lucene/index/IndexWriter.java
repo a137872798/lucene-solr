@@ -516,9 +516,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     private final List<MergePolicy.OneMerge> mergeExceptions = new ArrayList<>();
     private long mergeGen;
 
-    /**
-     * 这个标识 在什么时候修改 ???  当检测到该标识为true时 不会执行merge操作
-     */
     private boolean stopMerges; // TODO make sure this is only changed once and never set back to false
     private boolean didMessageState;
 
@@ -840,7 +837,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             try {
                 final double ramBufferSizeMB = config.getRAMBufferSizeMB();
                 // If the reader pool is > 50% of our IW buffer, then write the updates:
-                // 代表没有开启自动刷盘
+                // 代表开启了自动刷盘
                 if (ramBufferSizeMB != IndexWriterConfig.DISABLE_AUTO_FLUSH) {
                     long startNS = System.nanoTime();
 
@@ -963,7 +960,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * <b>NOTE:</b> after ths writer is created, the given configuration instance
      * cannot be passed to another writer.
      *
-     * @param d    the index directory. The index is either created or appended
+     * @param d    the index directory. The index is either created or appended  指定本次索引文件将要存储的目录
      *             according <code>conf.getOpenMode()</code>.
      * @param conf the configuration settings according to which IndexWriter should
      *             be initialized.
@@ -971,12 +968,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      *                     exist and <code>conf.getOpenMode()</code> is
      *                     <code>OpenMode.APPEND</code> or if there is any other low-level
      *                     IO error
-     *                     索引写入对象 通过一个 存放索引文件的目录 以及一个config类来初始化 config类内部有很多默认属性
-     *                     以及包含一个 analyzer (负责解析文本 并生成tokenStream)
      */
     public IndexWriter(Directory d, IndexWriterConfig conf) throws IOException {
         enableTestPoints = isEnableTestPoints();
-        conf.setIndexWriter(this); // prevent reuse by other instances   这里主要是为了避免 config被其他独享共享
+        conf.setIndexWriter(this); // prevent reuse by other instances   避免config被其他对象修改
         config = conf;
         infoStream = config.getInfoStream();
         // 代表config中指明了软删除的字段
@@ -1000,14 +995,17 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             OpenMode mode = config.getOpenMode();
             final boolean indexExists;  // 代表当前目录下是否已经存在段文件
             final boolean create;   // 代表是否需要创建段文件
+            // 当模式是Create时 还需要检测segment_N文件是否已经创建
             if (mode == OpenMode.CREATE) {
                 indexExists = DirectoryReader.indexExists(directory);
                 create = true;
+            // 如果是追加模式则要求segment_N 必须存在
             } else if (mode == OpenMode.APPEND) {
                 indexExists = true;
                 create = false;
             } else {
                 // CREATE_OR_APPEND - create only if an index does not exist
+                // 在CREATE_OR_APPEND模式下 如果不存在则创建
                 indexExists = DirectoryReader.indexExists(directory);
                 create = !indexExists;
             }
@@ -1018,7 +1016,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             String[] files = directory.listAll();
 
             // Set up our initial SegmentInfos:
-            // 默认情况下 该值为null  可以在config中手动设置
+            // 获取手动指定的提交信息
             IndexCommit commit = config.getIndexCommit();
 
             // Set up our initial SegmentInfos:
@@ -1026,6 +1024,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (commit == null) {
                 reader = null;
             } else {
+                // 比如 ReadCommit 就允许携带一个reader对象
                 reader = commit.getReader();
             }
 
@@ -1049,13 +1048,13 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 final SegmentInfos sis = new SegmentInfos(config.getIndexCreatedVersionMajor());
                 // 如果之前的段文件已经存在
                 if (indexExists) {
-                    // 读取段文件信息并生成 infos对象 （该对象内部包含多个 segment的信息）
+                    // 读取上次使用IndexWriter时最后写入的 segment_N 文件
                     final SegmentInfos previous = SegmentInfos.readLatestCommit(directory);
-                    // 沿用上一个 infos的 gen  counter 等信息 TODO 这是啥 ???
+                    // 更新gen的初始值  这样当发生变动时 以当前gen为基准增加
                     sis.updateGenerationVersionAndCounter(previous);
                 }
                 segmentInfos = sis;
-                // 生成用于回滚的段信息
+                // 触发rollback时 使用的segment
                 rollbackSegments = segmentInfos.createBackupSegmentInfos();
 
                 // Record that we have a change (zero out all
@@ -1063,7 +1062,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // 标记 infos发生了变化
                 changed();
 
-                // TODO 这个分支先跳过 该分支需要在config中设置 IndexCommit
+                // 如果在初始化时传入了指定的reader 则使用该reader当前读取的segment进行初始化
             } else if (reader != null) {
                 // Init from an existing already opened NRT or non-NRT reader:
 
@@ -1102,7 +1101,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 rollbackSegments = lastCommit.createBackupSegmentInfos();
-                // 代表不创建新的 infos
+                // 沿用之前的 segmentInfo
             } else {
                 // Init from either the latest commit point, or an explicit prior commit point:
 
@@ -1116,6 +1115,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // 读取上一个 segment_N 的数据
                 segmentInfos = SegmentInfos.readCommit(directoryOrig, lastSegmentsFile);
 
+                // 如果传入了commit则使用它的segmentInfos进行初始化
                 if (commit != null) {
                     // Swap out all segments, but, keep metadata in
                     // SegmentInfos, like version & generation, to
@@ -1146,6 +1146,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             // start with previous field numbers, but new FieldInfos
             // NOTE: this is correct even for an NRT reader because we'll pull FieldInfos even for the un-committed segments:
+            // 使用segmentInfos中的field信息 还原globalFieldNumberMap
             globalFieldNumberMap = getFieldNumberMap();
 
             // 如果在conf中设置了排序对象 那么所有段下都必须设置排序对象 并且排序对象必须一致
@@ -1160,6 +1161,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     config, directoryOrig, directory, globalFieldNumberMap);
             readerPool = new ReaderPool(directory, directoryOrig, segmentInfos, globalFieldNumberMap,
                     bufferedUpdatesStream::getCompletedDelGen, infoStream, conf.getSoftDeletesField(), reader);
+            // 支持池化的情况下 提前开启池化
             if (config.getReaderPooling()) {
                 readerPool.enableReaderPooling();
             }
@@ -5758,7 +5760,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      *
      * @param seqNo if the seqNo is less than 0 this method will process events otherwise it's a no-op.
      * @return the given seqId inverted if negative.
-     * 当通过 docWriter 更新完doc数据后 触发该方法
+     * 检测是否存在待处理的任务 以及是否需要merge 顺便进行处理  一般由其他线程调用 这样其他线程就可以协助消费任务了
      */
     private long maybeProcessEvents(long seqNo) throws IOException {
         if (seqNo < 0) {

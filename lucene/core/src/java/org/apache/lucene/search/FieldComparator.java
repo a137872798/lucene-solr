@@ -523,6 +523,12 @@ public abstract class FieldComparator<T> {
             scores = new float[numHits];
         }
 
+        /**
+         * 比如 IntComparator 是按照field.value从小到大的顺序 而基于分数的排序则是从大到小的顺序
+         * @param slot1 first slot to compare
+         * @param slot2 second slot to compare
+         * @return
+         */
         @Override
         public int compare(int slot1, int slot2) {
             return Float.compare(scores[slot2], scores[slot1]);
@@ -696,12 +702,10 @@ public abstract class FieldComparator<T> {
     public static class TermOrdValComparator extends FieldComparator<BytesRef> implements LeafFieldComparator {
         /* Ords for each slot.
            @lucene.internal */
-        // 存储词的顺序
         final int[] ords;
 
         /* Values for each slot.
            @lucene.internal */
-        // 存储词的内容  每个 Term 实质就是 BytesRef
         final BytesRef[] values;
         private final BytesRefBuilder[] tempBRs;
 
@@ -919,11 +923,10 @@ public abstract class FieldComparator<T> {
             // 更新reader的年代
             currentReaderGen++;
 
-            // 如果之前存在top值 根据该值查询顺序信息
+            // 代表在查询topN时 传入了 after参数 那么本次参与排序的数据都必须小于该值  先将topValue的值转换成ord
             if (topValue != null) {
                 // Recompute topOrd/SameReader  查找此时的 sortedDocValues 中
                 int ord = termsIndex.lookupTerm(topValue);
-                // 代表该值在新的索引中也能找到  并根据所在的下标
                 if (ord >= 0) {
                     topSameReader = true;
                     topOrd = ord;

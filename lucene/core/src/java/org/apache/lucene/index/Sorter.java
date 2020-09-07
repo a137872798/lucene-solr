@@ -260,10 +260,10 @@ final class Sorter {
 
   /** Wraps a {@link SortedNumericDocValues} as a single-valued view if the field is an instance of {@link SortedNumericSortField},
    * returns {@link NumericDocValues} for the field otherwise. */
-  // 读取某个段下 有关某个 field的数据
   static NumericDocValues getOrWrapNumeric(LeafReader reader, SortField sortField) throws IOException {
     if (sortField instanceof SortedNumericSortField) {
       SortedNumericSortField sf = (SortedNumericSortField) sortField;
+      // 转换成NumericDocValues
       return SortedNumericSelector.wrap(DocValues.getSortedNumeric(reader, sf.getField()), sf.getSelector(), sf.getNumericType());
     } else {
       return DocValues.getNumeric(reader, sortField.getField());

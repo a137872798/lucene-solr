@@ -89,7 +89,10 @@ public class MergeState {
   /** InfoStream for debugging messages. */
   public final InfoStream infoStream;
 
-  /** Indicates if the index needs to be sorted **/
+  /**
+   * Indicates if the index needs to be sorted
+   * 代表内部doc 依照参与排序的field.value做了排序
+   */
   public boolean needsIndexSort;
 
   /**
@@ -107,7 +110,7 @@ public class MergeState {
     final Sort indexSort = segmentInfo.getIndexSort();
     int numReaders = originalReaders.size();
     leafDocMaps = new DocMap[numReaders];
-    // 返回的reader对象 已经处理过 doc的顺序了
+    // 做校验 避免之前的reader排序规则和此时的排序规则不一致
     List<CodecReader> readers = maybeSortReaders(originalReaders, segmentInfo);
 
     // 生成存储各个segment关键信息的数组对象
@@ -222,13 +225,13 @@ public class MergeState {
 
     if (indexSort == null) {
       // no index sort ... we only must map around deletions, and rebase to the merged segment's docID space
-      // 避免 被删除的doc占用空间 这里做了整理工作
+      // 避免在合并时写入了已经被删除的doc  这里针对被删除的doc映射到-1
       return buildDeletionDocMaps(readers);
     // 利用二叉堆实现多个reader对象的重排序
     } else {
       // do a merge sort of the incoming leaves:
       long t0 = System.nanoTime();
-      // 这里生成了一组映射对象 作用就是 每个reader 可以通过现有的 doc 映射成 merge后的全局doc (在内部已经排除了 被del的doc)
+      // 构建了一个能将多个reader的doc 映射成全局doc的对象
       DocMap[] result = MultiSorter.sort(indexSort, readers);
       if (result == null) {
         // 这里代表reader内的数据一开始就是有序的 就不会处理del了 所以需要单独做一次排除操作
@@ -246,7 +249,6 @@ public class MergeState {
   }
 
   /**
-   * 检测reader的 sort属性是否合法
    * @param originalReaders
    * @param segmentInfo
    * @return
@@ -271,14 +273,11 @@ public class MergeState {
       return originalReaders;
     }
 
-    // TODO 先忽略 IndexSort 第二轮的时候再看
-
     List<CodecReader> readers = new ArrayList<>(originalReaders.size());
 
-    // 此时每个segment 设置了排序规则的情况下  要求 reader的段排序必须是 目标段排序的子集 (或者完全相同)
+    // 做一个校验 确保之前reader是基于此时使用的排序规则排序的
     for (CodecReader leaf : originalReaders) {
       Sort segmentSort = leaf.getMetaData().getSort();
-      // TODO 这里要求排序的field 是子集 也就代表每个reader对象本身的排序信息是一致的  标识需要排序的field 必须写入到segment中吗???
       if (segmentSort == null || isCongruentSort(indexSort, segmentSort) == false) {
         throw new IllegalArgumentException("index sort mismatch: merged segment has sort=" + indexSort +
             " but to-be-merged segment has sort=" + (segmentSort == null ? "null" : segmentSort));

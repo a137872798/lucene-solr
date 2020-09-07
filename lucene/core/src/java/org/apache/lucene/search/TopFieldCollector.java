@@ -124,8 +124,11 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
 
     void collectCompetitiveHit(int doc) throws IOException {
       // This hit is competitive - replace bottom element in queue & adjustTop
+      // 选择先覆盖最小值对应的slot的值
       comparator.copy(bottom.slot, doc);
+      // 此时重构堆 并重置bottom
       updateBottom(doc);
+      // 更新最小值
       comparator.setBottom(bottom.slot);
       updateMinCompetitiveScore(scorer);
     }
@@ -141,9 +144,13 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
       // 将此时采集的数量换成slot
       int slot = hitsCollected - 1;
       // Copy hit into queue
+      // 通过doc 找到对应的数据 之后设置到slot上
       comparator.copy(slot, doc);
+      // 将输入插入到优先队列中
       add(slot, doc);
+      // 此时队列满了
       if (queueFull) {
+        // 将比较器内的最小值更新成此时最小值的下标
         comparator.setBottom(bottom.slot);
         updateMinCompetitiveScore(scorer);
       }
@@ -245,6 +252,8 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
       // 返回的也是基于多 comparator的对象
       return new TopFieldLeafCollector(queue, sort, context) {
 
+        // 与SortField整合的逻辑就是在有关优先队列排序时的逻辑变复杂了 其余部分都是一样的   原本仅按照score进行排序而这里借助各种comparator
+
         @Override
         public void collect(int doc) throws IOException {
           // 当收集到某个doc时 先记录 同时根据条件更新全局最小得分
@@ -254,6 +263,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
             if (thresholdCheck(doc)) {
               return;
             }
+            // 将该doc下对应的值更新到优先队列中
             collectCompetitiveHit(doc);
           } else {
             // 此时优先队列还没有填满
@@ -284,6 +294,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
 
       FieldComparator<?>[] comparators = queue.comparators;
       // Tell all comparators their top value:
+      // 在初始化时 将after的值作为顶层值设置到comparator中 这样无法添加超过topValue的值
       for(int i=0;i<comparators.length;i++) {
         @SuppressWarnings("unchecked")
         FieldComparator<Object> comparator = (FieldComparator<Object>) comparators[i];
@@ -314,6 +325,7 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
             }
           }
 
+          // 如果当前doc对应的值超过了 top值 就代表是之前写入的 那么忽略
           final int topCmp = reverseMul * comparator.compareTop(doc);
           if (topCmp > 0 || (topCmp == 0 && doc <= afterDoc)) {
             // Already collected on a previous page
@@ -350,6 +362,9 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
   float minCompetitiveScore;
 
   final int numComparators;
+  /**
+   * 此时优先队列中的最小值
+   */
   FieldValueHitQueue.Entry bottom = null;
   boolean queueFull;
   int docBase;
@@ -588,6 +603,11 @@ public abstract class TopFieldCollector extends TopDocsCollector<Entry> {
     }
   }
 
+  /**
+   * 将数据存储到优先队列中
+   * @param slot
+   * @param doc
+   */
   final void add(int slot, int doc) {
     bottom = pq.add(new Entry(slot, docBase + doc));
     // The queue is full either when totalHits == numHits (in SimpleFieldCollector), in which case

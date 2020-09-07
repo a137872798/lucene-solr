@@ -37,7 +37,9 @@ final class MultiSorter {
      * documents into the merged segment.  The documents for each incoming leaf reader must already be sorted by the same sort!
      * Returns null if the merge sort is not needed (segments are already in index sort order).
      * 按照该排序规则 为每个reader对象都生成一个 docMap[]
-     **/
+     * 每个reader读取的 排序相关的 docValue 必须已经排序完成   在perThread.flush()中可以看到 会对doc先按照field.value进行一次排序
+     * 由同一个IndexWriter处理的所以可以保证 因为IndexSort始终没变 merge前的数据已经按照该顺序排序了
+     */
     static MergeState.DocMap[] sort(Sort sort, List<CodecReader> readers) throws IOException {
 
         // TODO: optimize if only 1 reader is incoming, though that's a rare case
@@ -47,31 +49,26 @@ final class MultiSorter {
 
         for (int i = 0; i < fields.length; i++) {
             // 每个排序的 field都会对所有reader做处理
+            // 返回一组能够反映大小关系的数据
             comparables[i] = getComparableProviders(readers, fields[i]);
             // 存储排序顺序
             reverseMuls[i] = fields[i].getReverse() ? -1 : 1;
         }
-        // 每个segment对应的 reader对象被称为 leaf
         int leafCount = readers.size();
 
         PriorityQueue<LeafAndDocID> queue = new PriorityQueue<LeafAndDocID>(leafCount) {
             @Override
             public boolean lessThan(LeafAndDocID a, LeafAndDocID b) {
-                // 这里 按照 sortedField的顺序进行比较 也就是 越前面的 sortedField 重要性越高
+                // 这里 按照 sortedField的顺序进行比较 也就是 越前面的 sortedField 优先级越高
                 for (int i = 0; i < comparables.length; i++) {
                     int cmp = Long.compare(a.valuesAsComparableLongs[i], b.valuesAsComparableLongs[i]);
                     if (cmp != 0) {
-                        // reverseMuls[i] 代表该 field 下的排序顺序
-                        // 推算一下  如果是倒序 那么 valuesAsComparableLongs[] 大的 返回算是 less  符合下面的表达式
-                        // 如果是正序 valuesAsComparableLongs[] 小的就是 less  也就要求 cmp 为负数 也是符合
-                        // ..
-                        // ..
                         return reverseMuls[i] * cmp < 0;
                     }
                 }
 
                 // tie-break by docID natural order:
-                // 如果是不同的 reader 优先选前面的
+                // 代表2个field在doc下的数据完全一致时 以readerIndex作为排序条件
                 if (a.readerIndex != b.readerIndex) {
                     return a.readerIndex < b.readerIndex;
                 } else {
@@ -81,20 +78,22 @@ final class MultiSorter {
             }
         };
 
-        // 分别记录每个reader 内部doc 对应全局doc的映射关系
         PackedLongValues.Builder[] builders = new PackedLongValues.Builder[leafCount];
 
         for (int i = 0; i < leafCount; i++) {
+            // 将reader信息包装成 LeafAndDocID
             CodecReader reader = readers.get(i);
             // 将reader的信息抽取出来生成 LeafAndDocID 对象
             LeafAndDocID leaf = new LeafAndDocID(i, reader.getLiveDocs(), reader.maxDoc(), comparables.length);
 
-            // 计算某个 reader所有 sortField 计算出来的值
+            // 将每个field的值对应的表示大小关系的数据都填充到valuesAsComparableLongs上
             for (int j = 0; j < comparables.length; j++) {
                 // docId 默认从0开始
                 leaf.valuesAsComparableLongs[j] = comparables[j][i].getAsComparableLong(leaf.docID);
             }
+            // 在初始化valuesAsComparableLongs 后才能进行比较
             queue.add(leaf);
+            // 存储排序后的doc
             builders[i] = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
         }
 
@@ -106,7 +105,8 @@ final class MultiSorter {
 
         // 代表一开始就是有序的 不需要做任何处理
         boolean isSorted = true;
-        // 这里应该是通过优先队列 对多个reader进行整合
+
+        // 这里就是通过不断迭代数据并通过优先队列排序的过程
         while (queue.size() != 0) {
             LeafAndDocID top = queue.top();
 
@@ -116,8 +116,9 @@ final class MultiSorter {
                 isSorted = false;
             }
             lastReaderIndex = top.readerIndex;
+            // 当doc不存在时 会写入一个旧的mappedDocID 但是只是占位 因为从下面的获取逻辑来看 不存在与liveDoc的docId只能返回-1
             builders[top.readerIndex].add(mappedDocID);
-            // 代表该id 对应的doc 存在    在getAsComparableLong 中 如果doc没有找到会返回一个默认值 这样就无法参考了 所以还是要借助 liveDoc 判断doc是否在reader中存在 只要存在就增加全局doc
+            // 必须确保这个doc存在  全局排序后的顺序与docId间的映射转换就是需要这层liveDocs的过滤 也就是去除不存在的doc
             if (top.liveDocs == null || top.liveDocs.get(top.docID)) {
                 mappedDocID++;
             }
@@ -148,7 +149,7 @@ final class MultiSorter {
                     if (liveDocs == null || liveDocs.get(docID)) {
                         return (int) remapped.get(docID);
                     } else {
-                        // 代表doc在原reader上不存在
+                        // 代表该doc已经被删除
                         return -1;
                     }
                 }
@@ -172,7 +173,7 @@ final class MultiSorter {
         /**
          *
          * @param readerIndex  LeafReader的下标
-         * @param liveDocs   对应的liveDoc 位图
+         * @param liveDocs   此时存活的doc位图
          * @param maxDoc    最大的doc为多少
          * @param numComparables   涉及到多少 sortField
          */
@@ -194,6 +195,7 @@ final class MultiSorter {
 
     /**
      * Returns {@code ComparableProvider}s for the provided readers to represent the requested {@link SortField} sort order.
+     * @return 每个reader下该field在每个doc下的值 或者说能决定大小的数据
      */
     private static ComparableProvider[] getComparableProviders(List<CodecReader> readers, SortField sortField) throws IOException {
 
@@ -213,9 +215,10 @@ final class MultiSorter {
                     final SortedDocValues sorted = Sorter.getOrWrapSorted(readers.get(i), sortField);
                     values[i] = sorted;
                 }
+                // 这里构建了一个将每个 reader的term的ord转换到全局term.ord的映射容器
                 OrdinalMap ordinalMap = OrdinalMap.build(null, values, PackedInts.DEFAULT);
                 final int missingOrd;
-                // 某个doc没找到时 返回默认值
+                // 在doc下没有找到该field时 该doc的ord  注意不是term的ord
                 if (sortField.getMissingValue() == SortField.STRING_LAST) {
                     missingOrd = Integer.MAX_VALUE;
                 } else {
@@ -224,15 +227,22 @@ final class MultiSorter {
 
                 for (int readerIndex = 0; readerIndex < readers.size(); readerIndex++) {
                     final SortedDocValues readerValues = values[readerIndex];
-                    // 这里reader难道已经被排序过了吗 否则不合理啊
+                    // 具备将当前reader迭代的term.ord 映射成全局term.ord的能力
                     final LongValues globalOrds = ordinalMap.getGlobalOrds(readerIndex);
                     providers[readerIndex] = new ComparableProvider() {
+
+                        /**
+                         *
+                         * @param docID
+                         * @return
+                         * @throws IOException
+                         */
                         @Override
                         public long getAsComparableLong(int docID) throws IOException {
-                            // 通过 doc 找到 文档对应的顺序
+                            // 首先该field必须要存在于该doc下 否则使用missingOrd
                             if (readerValues.advanceExact(docID)) {
                                 // translate segment's ord to global ord space:
-                                // 定位doc的时候 内部的ord 也改变了 然后通过该term的ord 换成 globalOrd
+                                // 在当前doc下 该field的值(term)对应的ord 在全局term的ord   ord实际上也就代表着大小关系 不需要实际获取term的值
                                 return globalOrds.get(readerValues.ordValue());
                             } else {
                                 return missingOrd;
@@ -254,7 +264,7 @@ final class MultiSorter {
                 }
 
                 for (int readerIndex = 0; readerIndex < readers.size(); readerIndex++) {
-                    // 读取某个segment下 有关某个field 的数据
+                    // 该迭代器负责遍历该field在所有doc下的value 并以此作为排序的条件
                     final NumericDocValues values = Sorter.getOrWrapNumeric(readers.get(readerIndex), sortField);
 
                     // 感觉上就是在 NumericDocValues 的基础上增加了未命中的默认值

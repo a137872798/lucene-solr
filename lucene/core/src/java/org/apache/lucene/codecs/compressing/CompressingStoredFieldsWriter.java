@@ -657,7 +657,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
 
         // 先假设全部都命中吧  不知道什么场景会出现未命中的情况
         MatchingReaders matching = new MatchingReaders(mergeState);
-        // TODO 先忽略 indexSort
+        // 因为设置了sort 所以在merge时又重新排序了
         if (mergeState.needsIndexSort) {
             /**
              * If all readers are compressed and they have the same fieldinfos then we can merge the serialized document
@@ -878,7 +878,7 @@ public final class CompressingStoredFieldsWriter extends StoredFieldsWriter {
     }
 
     /**
-     *
+     * 在merge时 如果使用了 DocMap 那么需要借助Sub 对象进行排序后才将结果写入
      */
     private static class CompressingStoredFieldsMergeSub extends DocIDMerger.Sub {
 

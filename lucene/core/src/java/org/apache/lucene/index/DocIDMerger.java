@@ -56,7 +56,6 @@ public abstract class DocIDMerger<T extends DocIDMerger.Sub> {
    * 将多个Sub对象组合
    * */
   public static <T extends DocIDMerger.Sub> DocIDMerger<T> of(List<T> subs, int maxCount, boolean indexIsSorted) throws IOException {
-    // TODO 先忽略排序的情况
     if (indexIsSorted && maxCount > 1) {
       // 代表需要排序
       return new SortedDocIDMerger<>(subs, maxCount);

@@ -58,6 +58,7 @@ public class TopDocs {
     final int shardIndex;
 
     // Which hit within the shard:
+    // 代表此时读取到 TopN[]的第几个数据
     int hitIndex;
 
     ShardRef(int shardIndex) {
@@ -125,6 +126,7 @@ public class TopDocs {
       // 第一维用于定义此时在处理哪组 TopN  第二维定义此时处理到第几个数据
       ScoreDoc firstScoreDoc = shardHits[first.shardIndex][first.hitIndex];
       ScoreDoc secondScoreDoc = shardHits[second.shardIndex][second.hitIndex];
+      // 分数大的反而会在堆顶
       if (firstScoreDoc.score < secondScoreDoc.score) {
         return false;
       } else if (firstScoreDoc.score > secondScoreDoc.score) {
@@ -139,6 +141,7 @@ public class TopDocs {
   private static class MergeSortQueue extends PriorityQueue<ShardRef> {
     // These are really FieldDoc instances:
     final ScoreDoc[][] shardHits;
+    // 主要就是多了这2个
     final FieldComparator<?>[] comparators;
     final int[] reverseMul;
     final Comparator<ScoreDoc> tieBreaker;
@@ -176,7 +179,7 @@ public class TopDocs {
       }
     }
 
-    // Returns true if first is < second
+    // Returns true if first is < second   将原来基于score的比较规则 转换成基于 comparator比较
     @Override
     public boolean lessThan(ShardRef first, ShardRef second) {
       assert first != second;
@@ -281,7 +284,6 @@ public class TopDocs {
   /**
    * Auxiliary method used by the {@link #merge} impls. A sort value of null
    *  is used to indicate that docs should be sorted by score.
-   * 将 shardHits的数据合并成一个 TopN
    * */
   private static TopDocs mergeAux(Sort sort, int start, int size, TopDocs[] shardHits,
                                   Comparator<ScoreDoc> tieBreaker) {
@@ -289,8 +291,8 @@ public class TopDocs {
     final PriorityQueue<ShardRef> queue;
     if (sort == null) {
       queue = new ScoreMergeSortQueue(shardHits, tieBreaker);
-      // TODO
     } else {
+      // 当传入sort时 使用下面的队列
       queue = new MergeSortQueue(sort, shardHits, tieBreaker);
     }
 
@@ -325,7 +327,6 @@ public class TopDocs {
     if (availHitCount <= start) {
       hits = new ScoreDoc[0];
     } else {
-      // 用于存储临时数据
       hits = new ScoreDoc[Math.min(size, availHitCount - start)];
       int requestedResultWindow = start + size;
       int numIterOnHits = Math.min(availHitCount, requestedResultWindow);

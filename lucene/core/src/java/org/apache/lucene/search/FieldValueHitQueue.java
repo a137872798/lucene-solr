@@ -126,7 +126,7 @@ public abstract class FieldValueHitQueue<T extends FieldValueHitQueue.Entry> ext
    *  prevent instantiation and extension.
    *  每个 sort对象对应一个comparator
    * @param fields
-   * @param size
+   * @param size 总计要查询多少数据
    */
   private FieldValueHitQueue(SortField[] fields, int size) {
     super(size);

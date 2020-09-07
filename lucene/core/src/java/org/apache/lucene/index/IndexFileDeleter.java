@@ -142,7 +142,7 @@ final class IndexFileDeleter implements Closeable {
    * @param policy 代表使用的删除策略
    * @param segmentInfos 本次打开的段信息 可能是延续上次的 也可能是本次新建的
    * @param initialIndexExists 代表目录下之前就存在 segment_N 文件
-   * @param isReaderInit 代表 indexWriter 初始化时的配置对象是否携带 StandardDirectoryReader 属性
+   * @param isReaderInit 代表初始化IndexWriter时 是否指定了reader对象
    */
   public IndexFileDeleter(String[] files, Directory directoryOrig, Directory directory, IndexDeletionPolicy policy, SegmentInfos segmentInfos,
                           InfoStream infoStream, IndexWriter writer, boolean initialIndexExists,
@@ -151,7 +151,7 @@ final class IndexFileDeleter implements Closeable {
     this.infoStream = infoStream;
     this.writer = writer;
 
-    // 代表本次 段信息会将数据写入到哪个文件
+    // 本次使用的segment_N文件
     final String currentSegmentsFile = segmentInfos.getSegmentsFileName();
 
     if (infoStream.isEnabled("IFD")) {
@@ -178,6 +178,7 @@ final class IndexFileDeleter implements Closeable {
           // 这里主要是初始化引用计数 此时计数还是0
           getRefCount(fileName);
 
+          // 代表当前处理的是segment_N文件
           if (fileName.startsWith(IndexFileNames.SEGMENTS)) {
             
             // This is a commit (segments or segments_N), and
@@ -186,17 +187,18 @@ final class IndexFileDeleter implements Closeable {
             if (infoStream.isEnabled("IFD")) {
               infoStream.message("IFD", "init: load commit \"" + fileName + "\"");
             }
-            // 读取之前文件的段信息   在 indexWriter中 只会读取最新的段文件
+            // 获取那个时间点对应的segmentInfos信息
             SegmentInfos sis = SegmentInfos.readCommit(directoryOrig, fileName);
 
-            // TODO 为什么每个段都有一个提交点对象  该对象不是在 commit时才创建的吗
+            // 将他们设置到commitsToDelete队列中 这样当产生新的段时 就可以将旧的数据删除了
             final CommitPoint commitPoint = new CommitPoint(commitsToDelete, directoryOrig, sis);
             // 代表此时遍历到的是本次正在使用的段文件
             if (sis.getGeneration() == segmentInfos.getGeneration()) {
               currentCommitPoint = commitPoint;
             }
             commits.add(commitPoint);
-            // 将所有关联的索引文件下 包括段文件本身 增加引用计数
+
+            // 将当前segment_N下所有索引文件的引用计数都增加
             incRef(sis, true);
               
             if (lastSegmentInfos == null || sis.getGeneration() > lastSegmentInfos.getGeneration()) {
@@ -208,7 +210,7 @@ final class IndexFileDeleter implements Closeable {
       }
     }
 
-    // 加载最新的 segment_N 数据
+    // 这种情况可能发生么???
     if (currentCommitPoint == null && currentSegmentsFile != null && initialIndexExists) {
       // We did not in fact see the segments_N file
       // corresponding to the segmentInfos that was passed
@@ -231,7 +233,7 @@ final class IndexFileDeleter implements Closeable {
       incRef(sis, true);
     }
 
-    // TODO 先跳过设置reader的逻辑
+    // 因为reader已经被初始化了 为下面的所有索引文件增加引用计数 确保文件不会被意外删除
     if (isReaderInit) {
       // Incoming SegmentInfos may have NRT changes not yet visible in the latest commit, so we have to protect its files from deletion too:
       checkpoint(segmentInfos, false);
@@ -241,13 +243,13 @@ final class IndexFileDeleter implements Closeable {
     // 这里按 gen 从小到大的逻辑排序
     CollectionUtil.timSort(commits);
     Collection<String> relevantFiles = new HashSet<>(refCounts.keySet());
-    // 找到该目录下一组待删除的文件
+    // 找到之前尝试删除失败的文件 并准备进行删除
     Set<String> pendingDeletions = directoryOrig.getPendingDeletions();
     if (pendingDeletions.isEmpty() == false) {
       relevantFiles.addAll(pendingDeletions);
     }
     // refCounts only includes "normal" filenames (does not include write.lock)
-    // 同步每个segmentInfo对应的gen信息  以及nextGen
+    // 检测segment的gen相关信息是否合法 避免出现冲突的情况
     inflateGens(segmentInfos, relevantFiles, infoStream);
 
     // Now delete anything with ref count at 0.  These are
@@ -323,7 +325,6 @@ final class IndexFileDeleter implements Closeable {
         } catch (NumberFormatException ignore) {
           // trash file: we have to handle this since we allow anything starting with 'segments' here
         }
-        // 这个 pending_segment 文件什么时候 出现 ???
       } else if (fileName.startsWith(IndexFileNames.PENDING_SEGMENTS)) {
         try {
           maxSegmentGen = Math.max(SegmentInfos.generationFromSegmentsFileName(fileName.substring(8)), maxSegmentGen);

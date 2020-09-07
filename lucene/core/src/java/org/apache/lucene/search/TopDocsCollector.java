@@ -159,6 +159,7 @@ public abstract class TopDocsCollector<T extends ScoreDoc> implements Collector 
     // Note that this loop will usually not be executed, since the common usage
     // should be that the caller asks for the last howMany results. However it's
     // needed here for completeness.
+    // 这些数据是要放弃的
     for (int i = pq.size() - start - howMany; i > 0; i--) { pq.pop(); }
     
     // Get the requested results from pq.

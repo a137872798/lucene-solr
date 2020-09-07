@@ -205,10 +205,13 @@ public class OrdinalMap implements Accountable {
      */
     public final IndexReader.CacheKey owner;
     // globalOrd -> (globalOrd - segmentOrd) where segmentOrd is the the ordinal in the first segment that contains this term
+    // 每次所有reader中最小的 term 在当前reader下的ord 与 全局ord的差值
     final PackedLongValues globalOrdDeltas;
     // globalOrd -> first segment container
+    // 每次最小的term首次出现的 reader下标
     final PackedLongValues firstSegments;
-    // for every segment, segmentOrd -> globalOrd   使用段ord 定位到某个全局相同term的顺序 （必然能够找到 因为所有段的term最终都会写入到 globalOrd）
+    // for every segment, segmentOrd -> globalOrd
+    // 将当前reader下该term的ord 转换为全局term的ord
     final LongValues segmentToGlobalOrds[];
     // the map from/to segment ids
     final SegmentMap segmentMap;
@@ -292,11 +295,12 @@ public class OrdinalMap implements Accountable {
                 // first segment contains most (or better all) values, this will
                 // help save significant memory
                 // 更新全局最小的term所在的reader 下标
+                // 如果有多个reader的值都相同的情况 选择下标最小的reader
                 if (segmentIndex < firstSegmentIndex) {
                     firstSegmentIndex = segmentIndex;
                     globalOrdDelta = delta;
                 }
-                // 记录此时reader读取到的term对应ord 与全局ord的差值
+                // 这个位图主要是用来鉴别 delta是否始终是0   以及计算最大的delta需要多少位表示
                 ordDeltaBits[segmentIndex] |= delta;
 
                 // for each per-segment ord, map it back to the global term; the while loop is needed
@@ -332,16 +336,17 @@ public class OrdinalMap implements Accountable {
             }
 
             // for each unique term, just mark the first segment index/delta where it occurs
-            // 记录每个 唯一 的 term 出现时对应的最小的segmentIndex下标   而且index值本身也小 所以就不需要差值存储了
+            // 这里记录的是 每次某个唯一的term出现时 reader所在的下标 如果多个reader包含相同的值 那么使用最小的readerIndex
             firstSegments.add(firstSegmentIndex);
-            // TODO 这个值不应该是单调递增啊
+            // 该值肯定是单调递增的 最优情况就是delta不变 否则就是增加
             globalOrdDeltas.add(globalOrdDelta);
-            //
+            // 全局ord始终是递增的
             globalOrd++;
         }
 
         // 这里构建出来的数据 就是每个 term 对应的最早出现的 segmentIndex
         this.firstSegments = firstSegments.build();
+        // 每次读取出来的term在它的termEnum的ord  距离全局ord的差值
         this.globalOrdDeltas = globalOrdDeltas.build();
         // ordDeltas is typically the bottleneck, so let's see what we can do to make it faster
         segmentToGlobalOrds = new LongValues[subs.length];
@@ -355,7 +360,7 @@ public class OrdinalMap implements Accountable {
         for (int i = 0; i < ordDeltas.length; ++i) {
             // 生成某个 segment.field 下 每个term.ord  与 全局term.ord的差值
             final PackedLongValues deltas = ordDeltas[i].build();
-            // 代表所有delta 都是0  代表这个数据与 global的数据完全一致  (至少前缀完全一致)
+            // 这种情况代表某个reader下的所有term 包含了其他所有reader的term  它自身就可以作为globalTerm
             if (ordDeltaBits[i] == 0L) {
                 // segment ords perfectly match global ordinals
                 // likely in case of low cardinalities and large segments
@@ -366,7 +371,6 @@ public class OrdinalMap implements Accountable {
                 final int bitsRequired = ordDeltaBits[i] < 0 ? 64 : PackedInts.bitsRequired(ordDeltaBits[i]);
                 // deltas.ramBytesUsed() 内部 bit的计算是做过特殊处理的 也就是不存储原数据 只存储差值 所以实际消耗的bit 很小
                 final long monotonicBits = deltas.ramBytesUsed() * 8;
-                // 这里计算出来会比上面大 (一般来说)
                 final long packedBits = bitsRequired * deltas.size();
 
                 if (deltas.size() <= Integer.MAX_VALUE
@@ -379,10 +383,11 @@ public class OrdinalMap implements Accountable {
                     // 将之前采用单调递增存储的数据 按照普通方法转存一次
                     final PackedLongValues.Iterator it = deltas.iterator();
                     for (int ord = 0; ord < size; ++ord) {
-                        // 在next的时候已经还原数据了
+                        // 将delta 写入到newDeltas 中
                         newDeltas.set(ord, it.next());
                     }
                     assert it.hasNext() == false;
+                    // 将当前reader下该term的ord 转换为全局term的ord
                     segmentToGlobalOrds[i] = new LongValues() {
                         @Override
                         public long get(long ord) {

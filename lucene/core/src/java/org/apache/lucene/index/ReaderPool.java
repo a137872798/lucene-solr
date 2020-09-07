@@ -115,7 +115,7 @@ final class ReaderPool implements Closeable {
     this.infoStream = infoStream;
     this.softDeletesField = softDeletesField;
 
-    // TODO 先假设 reader 为null的情况
+    // reader已经初始化的情况 预先将读取索引文件的对象存储到pool中
     if (reader != null) {
       // Pre-enroll all segment readers into the reader pool; this is necessary so
       // any in-memory NRT live docs are correctly carried over, and so NRT readers
