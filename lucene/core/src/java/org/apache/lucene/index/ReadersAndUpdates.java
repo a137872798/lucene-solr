@@ -362,7 +362,7 @@ final class ReadersAndUpdates {
         for (Entry<String, List<DocValuesFieldUpdates>> ent : pendingDVUpdates.entrySet()) {
             final String field = ent.getKey();
             final List<DocValuesFieldUpdates> updates = ent.getValue();
-            // 以field为单位 所有docUpdate 对象的 type都是一致的  TODO 为什么能确定type一致
+            // 以field为单位 所有docUpdate 对象的 type都是一致的
             DocValuesType type = updates.get(0).type;
             assert type == DocValuesType.NUMERIC || type == DocValuesType.BINARY : "unsupported type: " + type;
             final List<DocValuesFieldUpdates> updatesToApply = new ArrayList<>();

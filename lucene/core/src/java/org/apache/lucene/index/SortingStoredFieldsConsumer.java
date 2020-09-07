@@ -43,6 +43,7 @@ final class SortingStoredFieldsConsumer extends StoredFieldsConsumer {
 
   @Override
   protected void initStoredFieldsWriter() throws IOException {
+    // 该对象使得父类创建的索引文件变成了一个临时文件   当所有doc解析完毕时 需要重新读取之前写入的数据 并通过sortMap排序后 按照新的顺序写入到最终索引文件中
     if (writer == null) {
       this.tmpDirectory = new TrackingTmpOutputDirectoryWrapper(docWriter.directory);
       this.writer = docWriter.codec.storedFieldsFormat().fieldsWriter(tmpDirectory, docWriter.getSegmentInfo(),
@@ -50,19 +51,29 @@ final class SortingStoredFieldsConsumer extends StoredFieldsConsumer {
     }
   }
 
+  /**
+   * 在flush这里增加了额外的功能
+   * @param state
+   * @param sortMap
+   * @throws IOException
+   */
   @Override
   void flush(SegmentWriteState state, Sorter.DocMap sortMap) throws IOException {
     super.flush(state, sortMap);
     if (sortMap == null) {
       // we're lucky the index is already sorted, just rename the temporary file and return
+      // 将父类创建的临时文件重命名后返回
       for (Map.Entry<String, String> entry : tmpDirectory.getTemporaryFiles().entrySet()) {
         tmpDirectory.rename(entry.getValue(), entry.getKey());
       }
       return;
     }
+    // 在 super.flush() 中数据已经完成持久化了 现在读取写入的数据
     StoredFieldsReader reader = docWriter.codec.storedFieldsFormat()
         .fieldsReader(tmpDirectory, state.segmentInfo, state.fieldInfos, IOContext.DEFAULT);
     StoredFieldsReader mergeReader = reader.getMergeInstance();
+
+    // 这里又生成了一个写入对象 看来是要将之前的数据通过特殊处理后重新写入
     StoredFieldsWriter sortWriter = docWriter.codec.storedFieldsFormat()
         .fieldsWriter(state.directory, state.segmentInfo, IOContext.DEFAULT);
     try {
@@ -70,6 +81,8 @@ final class SortingStoredFieldsConsumer extends StoredFieldsConsumer {
       CopyVisitor visitor = new CopyVisitor(sortWriter);
       for (int docID = 0; docID < state.segmentInfo.maxDoc(); docID++) {
         sortWriter.startDocument();
+        // 在SortMap中维护了原顺序与重排序后的顺序的映射关系  在读取到对应doc的数据时 交由visitor对象处理  在CopyVisitor 中会重新写入field的信息
+        // 这样doc的顺序就不是按照解析时的顺序 而是按照 sortMap的顺序
         mergeReader.visitDocument(sortMap.newToOld(docID), visitor);
         sortWriter.finishDocument();
       }
@@ -97,6 +110,10 @@ final class SortingStoredFieldsConsumer extends StoredFieldsConsumer {
    * A visitor that copies every field it sees in the provided {@link StoredFieldsWriter}.
    */
   private static class CopyVisitor extends StoredFieldVisitor implements IndexableField {
+
+    /**
+     * 该对象负责往 field.value 索引文件中写入数据
+     */
     final StoredFieldsWriter writer;
     BytesRef binaryValue;
     String stringValue;

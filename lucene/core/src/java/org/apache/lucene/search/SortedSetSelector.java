@@ -41,6 +41,7 @@ public class SortedSetSelector {
    *       optional codec support. However several codecs provided by Lucene, 
    *       including the current default codec, support this.
    * </ul>
+   * 他这里的选择范围还多出2个
    */
   public enum Type {
     /** 

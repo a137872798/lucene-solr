@@ -38,11 +38,18 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /** Buffers up pending byte[]s per doc, deref and sorting via
- *  int ord, then flushes when segment flushes. */
-// 这里负责存储二进制数据 并在填充完某个doc后 会先将结果进行排序
+ *  int ord, then flushes when segment flushes.
+ */
 class SortedSetDocValuesWriter extends DocValuesWriter {
   final BytesRefHash hash;
+
+  /**
+   * 存储了field每次出现时 对应的termId
+   */
   private PackedLongValues.Builder pending; // stream of all termIDs
+  /**
+   * 每个doc下存储了多少termId
+   */
   private PackedLongValues.Builder pendingCounts; // termIDs per doc
   private DocsWithFieldSet docsWithField;
   private final Counter iwBytesUsed;
@@ -51,11 +58,18 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
   private int currentDoc = -1;
   private int currentValues[] = new int[8];
   private int currentUpto;
+  /**
+   * 记录单个doc下 出现该field的最大次数是多少
+   */
   private int maxCount;
 
   private PackedLongValues finalOrds;
   private PackedLongValues finalOrdCounts;
+
   private int[] finalSortedValues;
+  /**
+   * 以termId 为下标 存储的是ord
+   */
   private int[] finalOrdMap;
 
 
@@ -93,7 +107,7 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
   }
   
   // finalize currentDoc: this deduplicates the current term ids
-  // 只有当切换doc时 才真正存入到 pending中
+  // 以doc为单位 为field.value排序
   private void finishCurrentDoc() {
     if (currentDoc == -1) {
       return;
@@ -123,6 +137,7 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
   }
 
   private void addOneValue(BytesRef value) {
+    // 这里存储的是 termId
     int termID = hash.add(value);
     if (termID < 0) {
       termID = -termID-1;
@@ -149,6 +164,14 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
     bytesUsed = newBytesUsed;
   }
 
+  /**
+   * 重排序
+   * @param maxDoc
+   * @param sortMap
+   * @param oldValues
+   * @return
+   * @throws IOException
+   */
   private long[][] sortDocValues(int maxDoc, Sorter.DocMap sortMap, SortedSetDocValues oldValues) throws IOException {
     long[][] ords = new long[maxDoc][];
     int docID;
@@ -178,6 +201,7 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
     int valueCount = hash.size();
     finalOrds = pending.build();
     finalOrdCounts = pendingCounts.build();
+    // 按照term大小排序后的 termId数组
     finalSortedValues = hash.sort();
     finalOrdMap = new int[valueCount];
     for (int ord = 0; ord < valueCount; ord++) {
@@ -238,14 +262,24 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
                                  });
   }
 
+  /**
+   * 跟 SortedNumber类似 在一个doc下 同一field可以出现多次
+   */
   private static class BufferedSortedSetDocValues extends SortedSetDocValues {
     final int[] sortedValues;
     final int[] ordMap;
     final BytesRefHash hash;
     final BytesRef scratch = new BytesRef();
+    /**
+     * 存储每个doc下所有field.value 对应的termId
+     */
     final PackedLongValues.Iterator ordsIter;
     final PackedLongValues.Iterator ordCountsIter;
     final DocIdSetIterator docsWithField;
+
+    /**
+     * 存储当前doc下所有term 对应的ord
+     */
     final int currentDoc[];
     
     private int ordCount;
@@ -266,15 +300,23 @@ class SortedSetDocValuesWriter extends DocValuesWriter {
       return docsWithField.docID();
     }
 
+    /**
+     * 切换到下一个doc
+     * @return
+     * @throws IOException
+     */
     @Override
     public int nextDoc() throws IOException {
       int docID = docsWithField.nextDoc();
       if (docID != NO_MORE_DOCS) {
+        // 在当前doc下 总计存储了多少termId
         ordCount = (int) ordCountsIter.next();
         assert ordCount > 0;
         for (int i = 0; i < ordCount; i++) {
+          // ordMap 负责将termId 换算成ord
           currentDoc[i] = ordMap[Math.toIntExact(ordsIter.next())];
         }
+        // 按照ord 进行排序   在组合 selector 就可以屏蔽一个doc下多个field的影响了 仅使用对排序影响最大的那个ord
         Arrays.sort(currentDoc, 0, ordCount);          
         ordUpto = 0;
       }

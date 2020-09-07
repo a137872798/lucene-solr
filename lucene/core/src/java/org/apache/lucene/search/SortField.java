@@ -31,7 +31,7 @@ import org.apache.lucene.util.BytesRef;
  *
  * @since   lucene 1.4
  * @see Sort
- * 描述了在某个field中 doc按照什么规则排序
+ * 描述了存储该field信息的doc 应该如何排序
  */
 public class SortField {
 
@@ -109,7 +109,7 @@ public class SortField {
   boolean reverse = false;  // defaults to natural order
 
   // Used for CUSTOM sort
-  // 该对象用于提供排序函数  (对域内的term)
+  // 通过comparator 比较大小
   private FieldComparatorSource comparatorSource;
 
   // Used for 'sortMissingFirst/Last'
@@ -335,7 +335,7 @@ public class SortField {
   }
 
   /**
-   * 按照自然顺序排序
+   * 对象中自带了一个基于 bytes进行排序的对象
    */
   private Comparator<BytesRef> bytesComparator = Comparator.naturalOrder();
 

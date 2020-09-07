@@ -117,7 +117,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
   }
 
   /**
-   * 该对象代表内部的数据已经完成排序
+   * 基于 sortMap 对之前写入的doc数据做排序
    * @param maxDoc
    * @param sortMap
    * @param oldValues
@@ -133,6 +133,7 @@ class BinaryDocValuesWriter extends DocValuesWriter {
       if (docID == NO_MORE_DOCS) {
         break;
       }
+      // 该容器负责将原来的docId 兑换成ord  以ord作为新的docId
       int newDocID = sortMap.oldToNew(docID);
       docsWithField.set(newDocID);
       values[newDocID] = BytesRef.deepCopyOf(oldValues.binaryValue());
@@ -158,7 +159,6 @@ class BinaryDocValuesWriter extends DocValuesWriter {
     bytes.freeze(false);
     // 该对象专门用于存储 每个docValue的长度 (采用差值 存储的方式)
     final PackedLongValues lengths = this.lengths.build();
-    // 先看无 sortMap的场景
     final SortingLeafReader.CachedBinaryDVs sorted;
     if (sortMap != null) {
       sorted = sortDocValues(state.segmentInfo.maxDoc(), sortMap,
@@ -173,10 +173,10 @@ class BinaryDocValuesWriter extends DocValuesWriter {
                                   if (fieldInfoIn != fieldInfo) {
                                     throw new IllegalArgumentException("wrong fieldInfo");
                                   }
-                                  // 先看无sortMap的情况
                                   if (sorted == null) {
                                     return new BufferedBinaryDocValues(lengths, maxLength, bytes.getDataInput(), docsWithField.iterator());
                                   } else {
+                                    // 该容器只是简单的遍历 sorted
                                     return new SortingLeafReader.SortingBinaryDocValues(sorted);
                                   }
                                 }

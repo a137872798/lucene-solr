@@ -273,6 +273,7 @@ public final class DocValues {
 
   /** 
    * Returns a multi-valued view over the provided SortedDocValues
+   * 使得SortedDocValues 兼容 SortedSetDocValues
    */
   public static SortedSetDocValues singleton(SortedDocValues dv) {
     return new SingletonSortedSetDocValues(dv);

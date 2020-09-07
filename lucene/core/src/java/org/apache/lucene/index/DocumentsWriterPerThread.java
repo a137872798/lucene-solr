@@ -156,7 +156,7 @@ final class DocumentsWriterPerThread {
          */
         final FixedBitSet liveDocs;
         /**
-         * flush 时返回的排序容器  先忽略
+         * 代表刷盘时 doc已经发生过重排序了
          */
         final Sorter.DocMap sortMap;
         /**
@@ -581,6 +581,7 @@ final class DocumentsWriterPerThread {
         if (infoStream.isEnabled("DWPT")) {
             infoStream.message("DWPT", "flush postings as segment " + flushState.segmentInfo.name + " numDocs=" + numDocsInRAM);
         }
+        // 针对存在 SortedField的doc 会按照 SortedField 进行重排序
         final Sorter.DocMap sortMap;
         try {
             // 对应匹配软删除域的所有doc
@@ -592,7 +593,6 @@ final class DocumentsWriterPerThread {
                 softDeletedDocs = null;
             }
             // 将之前解析doc 后生成的各种数据写入到索引文件中  返回一个排序相关的map
-            // TODO 先忽略排序的逻辑 所以sortMap返回null
             sortMap = consumer.flush(flushState);
             // 忽略软删除
             if (softDeletedDocs == null) {
@@ -691,7 +691,7 @@ final class DocumentsWriterPerThread {
     }
 
     /**
-     * 之前还存活的 doc 可能已经被排序过了 所以这里要重新生成一次 liveDoc
+     * 使用重排序后的doc 填充liveDoc
      * @param liveDocs
      * @param sortMap
      * @return
@@ -778,7 +778,7 @@ final class DocumentsWriterPerThread {
                 if (sortMap == null) {
                     bits = flushedSegment.liveDocs;
                 } else {
-                    // TODO 先忽略存在 sort的情况
+                    // 首先要确保liveDoc中部分doc已经被删除  这样才会重排序 并将排序后的结果写入liveDoc中
                     bits = sortLiveDocs(flushedSegment.liveDocs, sortMap);
                 }
                 // 这里将 当前还留存的 doc 信息写入到索引文件中

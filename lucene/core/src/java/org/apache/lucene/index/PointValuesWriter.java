@@ -198,7 +198,6 @@ class PointValuesWriter {
     if (sortMap == null) {
       values = points;
     } else {
-      // TODO 先忽略排序的情况
       values = new MutableSortingPointValues((MutablePointValues) points, sortMap);
     }
 
@@ -228,7 +227,6 @@ class PointValuesWriter {
       }
     };
 
-    // TODO 这里不看bkd树的实现了 所以就当作写入成功
     writer.writeField(fieldInfo, reader);
   }
 

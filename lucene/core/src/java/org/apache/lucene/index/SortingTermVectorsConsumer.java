@@ -42,8 +42,10 @@ final class SortingTermVectorsConsumer extends TermVectorsConsumer {
 
   @Override
   void flush(Map<String, TermsHashPerField> fieldsToFlush, final SegmentWriteState state, Sorter.DocMap sortMap, NormsProducer norms) throws IOException {
+    // 首先确保父类的数据已经持久化 之后基于临时文件的数据 配合 sortMap实现重排序
     super.flush(fieldsToFlush, state, sortMap, norms);
     if (tmpDirectory != null) {
+      // 此时不需要进行重排序 只要将父类写入的临时文件修改成 普通的文件名就可以
       if (sortMap == null) {
         // we're lucky the index is already sorted, just rename the temporary file and return
         for (Map.Entry<String, String> entry : tmpDirectory.getTemporaryFiles().entrySet()) {
@@ -51,14 +53,17 @@ final class SortingTermVectorsConsumer extends TermVectorsConsumer {
         }
         return;
       }
+      // 读取之前写入的数据
       TermVectorsReader reader = docWriter.codec.termVectorsFormat()
           .vectorsReader(tmpDirectory, state.segmentInfo, state.fieldInfos, IOContext.DEFAULT);
       TermVectorsReader mergeReader = reader.getMergeInstance();
+      // 准备好新的写入对象
       TermVectorsWriter writer = docWriter.codec.termVectorsFormat()
           .vectorsWriter(state.directory, state.segmentInfo, IOContext.DEFAULT);
       try {
         reader.checkIntegrity();
         for (int docID = 0; docID < state.segmentInfo.maxDoc(); docID++) {
+          // 获取到原来doc对应的数据 之后重新写入
           Fields vectors = mergeReader.get(sortMap.newToOld(docID));
           writeTermVectors(writer, vectors, state.fieldInfos);
         }
@@ -71,6 +76,10 @@ final class SortingTermVectorsConsumer extends TermVectorsConsumer {
     }
   }
 
+  /**
+   * 跟 SortingStoredFieldsConsumer 相同的套路 确保父类一开始只是将数据写入到临时索引文件
+   * @throws IOException
+   */
   @Override
   void initTermVectorsWriter() throws IOException {
     if (writer == null) {
@@ -93,7 +102,10 @@ final class SortingTermVectorsConsumer extends TermVectorsConsumer {
     }
   }
 
-  /** Safe (but, slowish) default method to copy every vector field in the provided {@link TermVectorsWriter}. */
+  /**
+   * Safe (but, slowish) default method to copy every vector field in the provided {@link TermVectorsWriter}.
+   * 总的来说就是将之前已经写入的数据 按照 sortMap 重排序后重新写入
+   * */
   private static void writeTermVectors(TermVectorsWriter writer, Fields vectors, FieldInfos fieldInfos) throws IOException {
     if (vectors == null) {
       writer.startDocument(0);
@@ -153,6 +165,7 @@ final class SortingTermVectorsConsumer extends TermVectorsConsumer {
       while(termsEnum.next() != null) {
         termCount++;
 
+        // 写入term的相关信息
         final int freq = (int) termsEnum.totalTermFreq();
 
         writer.startTerm(termsEnum.term(), freq);

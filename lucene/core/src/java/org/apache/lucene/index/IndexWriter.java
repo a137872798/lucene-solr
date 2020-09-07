@@ -2932,7 +2932,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * @param fieldInfos 本次解析的所有doc中携带的field
      * @param packet  对应perThread 自创建开始到某个预备刷盘时 从 deleteQueue同步过来的删除信息   deleteQueue的节点信息是所有perThread共享的  所以叫做slice
      * @param globalPacket 从globalSlice 中截获的更新/删除信息
-     * @param sortMap  排序相关的先忽略
+     * @param sortMap  本次刷盘时 doc发生了重排序
      * 发布某个已经完成刷盘的段
      * perThread 首先解析doc 将数据结构化后存储在内存 之后通过刷盘将数据持久化 同时会生成一个 flushedSegment 代表一个完成刷盘的段， 之后在处理因为刷盘创建的ticket时
      * 就会触发该方法
@@ -2980,7 +2980,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             // 为新插入的 segment下 关联的新生成的所有索引文件通过 IndexFileDeleter 维护引用计数
             checkpoint();
-            // TODO 先忽略 sortMap
+
+            // 如果本次doc发生了重排序 设置sortMap信息
             if (packet != null && packet.any() && sortMap != null) {
                 // TODO: not great we do this heavyish op while holding IW's monitor lock,
                 // but it only applies if you are using sorted indices and updating doc values:

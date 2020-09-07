@@ -1197,8 +1197,6 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
                 }
 
                 /**
-                 * 返回 doc对应的顺序信息  这个 ord 应该就是可以找到对应term   可以看到nextDoc本身不会影响到 termEnum 由此可以推断 一般的使用方式是先遍历doc
-                 * 然后将doc 换成ord  然后用ord去查找term
                  * @return
                  */
                 @Override
@@ -1260,7 +1258,7 @@ final class Lucene80DocValuesProducer extends DocValuesProducer implements Close
          */
         final IndexInput data;
         /**
-         * 这个对象内部存储了所有的 term 并且可以通过 seekExact 等方法定位到某个term
+         * SortedDocValues 内部的数据被称为term  跟解析doc时生成的term不同  就是field.value
          */
         final TermsEnum termsEnum;
 

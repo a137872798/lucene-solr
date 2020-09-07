@@ -96,6 +96,7 @@ public final class SegmentInfo {
 
   /**
    * 描述这个段内的doc是按照什么规则排序的
+   * 最初是通过 IndexConfig.IndexSorted 进行初始化的
    */
   private final Sort indexSort;
 

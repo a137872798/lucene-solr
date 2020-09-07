@@ -50,9 +50,12 @@ public class OrdinalMap implements Accountable {
     private static class TermsEnumIndex {
         public final static TermsEnumIndex[] EMPTY_ARRAY = new TermsEnumIndex[0];
         /**
-         * 按照 term 数量从大到小的序号排列 比如subIndex=0 代表该对象对应的termsEnum 是本批数据中 term最多的
+         * 按照term数量从大到小的顺序
          */
         final int subIndex;
+        /**
+         * 迭代顺序是term从小到大
+         */
         final TermsEnum termsEnum;
         BytesRef currentTerm;
 
@@ -72,8 +75,7 @@ public class OrdinalMap implements Accountable {
 
         /**
          * Build a map from an index into a sorted view of `weights` to an index into `weights`.
-         * @param weights  每个segment 下某个相同的field 有多少 term
-         *                 排序结果是 weight 倒序排列  也就是 term数量多的排在前面
+         * @param weights  每个reader下该field有多少term
          */
         private static int[] map(final long[] weights) {
             // 使用这个数组解耦 这样排序后 不会影响到 weights数组
@@ -81,6 +83,8 @@ public class OrdinalMap implements Accountable {
             for (int i = 0; i < weights.length; ++i) {
                 newToOld[i] = i;
             }
+
+            // 这里按照 term的数量进行排序
             new InPlaceMergeSorter() {
                 @Override
                 protected void swap(int i, int j) {
@@ -98,9 +102,6 @@ public class OrdinalMap implements Accountable {
             return newToOld;
         }
 
-        /**
-         * Inverse the map.
-         */
         private static int[] inverse(int[] map) {
             final int[] inverse = new int[map.length];
             for (int i = 0; i < map.length; ++i) {
@@ -110,10 +111,15 @@ public class OrdinalMap implements Accountable {
         }
 
         /**
-         * newToOld 可以通过原来reader的序号 获取到 以term数量排序后的位置
+         * newToOld 通过按照term数量排序后的顺序可以映射到排序前的顺序
+         * oldToNew 使用原顺序(reader下标) 映射到排序后的顺序
          */
         private final int[] newToOld, oldToNew;
 
+        /**
+         *
+         * @param weights 描述了每个reader对应的 SortedDocValue 的 term数量  (去重后的数量)
+         */
         SegmentMap(long[] weights) {
             newToOld = map(weights);
             oldToNew = inverse(newToOld);
@@ -139,9 +145,10 @@ public class OrdinalMap implements Accountable {
      * {@link SortedDocValues} instance as a weight.
      *
      * @see #build(IndexReader.CacheKey, TermsEnum[], long[], float)
-     * 创建一个维护所有reader顺序的 map
+     * @param values 每个值对应某个reader对象的SortedDocValues 他们决定了本次全局的排序结果
      */
     public static OrdinalMap build(IndexReader.CacheKey owner, SortedDocValues[] values, float acceptableOverheadRatio) throws IOException {
+        // 每个迭代器 还具备遍历所有field.value的能力  (已去重)
         final TermsEnum[] subs = new TermsEnum[values.length];
         final long[] weights = new long[values.length];
         for (int i = 0; i < values.length; ++i) {
@@ -174,9 +181,9 @@ public class OrdinalMap implements Accountable {
      * space from <code>subs</code>.
      *
      * @param owner   a cache key
-     * @param subs    TermsEnums that support {@link TermsEnum#ord()}. They need
+     * @param subs    TermsEnums that support {@link TermsEnum#ord()}. They need    每个reader的SortedDocValues 对应的term迭代器对象
      *                not be dense (e.g. can be FilteredTermsEnums}.
-     * @param weights a weight for each sub. This is ideally correlated with
+     * @param weights a weight for each sub. This is ideally correlated with        描述了每个reader对应的SortedDocValues 出现的总的 field.value数量 (去重后的数量)
      *                the number of unique terms that each sub introduces compared
      *                to the other subs
      * @throws IOException if an I/O error occurred.
@@ -211,9 +218,9 @@ public class OrdinalMap implements Accountable {
 
     /**
      *
-     * @param owner
-     * @param subs 按原顺序 每个reader对应的term
-     * @param segmentMap  内部包含可以通过原顺序 获取到 根据term数量排序后的顺序的 映射数组 (双向映射)
+     * @param owner  先忽略
+     * @param subs 存储reader下某参与排序的field.value 的迭代器对象 前提是该field.value是byteRef类型 这样可以使用termHash存储
+     * @param segmentMap  存储映射关系的容器
      * @param acceptableOverheadRatio
      * @throws IOException
      */
@@ -246,11 +253,11 @@ public class OrdinalMap implements Accountable {
             }
         };
 
+        // 每个reader都往内部添加一个term  以从小到大的顺序写入
         for (int i = 0; i < subs.length; i++) {
-            // 在这里顺序已经被打乱了 i 变成了以term数量倒序排序
+            // 此时newToOld 已经按照term数量排序了 (从大到小的顺序)
             TermsEnumIndex sub = new TermsEnumIndex(subs[segmentMap.newToOld(i)], i);
             if (sub.next() != null) {
-                // 这里先将 第一个term加入到队列中进行排序
                 queue.add(sub);
             }
         }
@@ -261,10 +268,8 @@ public class OrdinalMap implements Accountable {
         // 注意 termEnum 内部的 ord 本身也是从0 开始的
         long globalOrd = 0;
 
-        // 结果这2个循环就是抽取一堆数据 实际上还没有做合并的工作
-        // 外循环的工作是 寻找每个不同的 term
         while (queue.size() != 0) {
-            // 先记录此时的top
+            // 此时top就是所有reader下的最小term
             TermsEnumIndex top = queue.top();
             // 将 term的数据填充到  refBuilder内
             scratch.copyBytes(top.currentTerm);
@@ -277,22 +282,21 @@ public class OrdinalMap implements Accountable {
             // 内循环负责将多个相同的term 合并 找到出现时最小的 segment下标
             while (true) {
                 top = queue.top();
-                // 假设此时多个 termEnum 的首个 term 都是一样的
+                // 返回该term在该termEnum的顺序
                 long segmentOrd = top.termsEnum.ord();
-                // 计算 当前 segment 与当前应该使用的全局范围内 ord的差值   为了之后快捷寻找而存储的参数  比如我想要在全局范围内 找下一个term 这时就可以直接通过 segmentIndex 定位到去哪个segment寻找
-                // 还有 根据 delta 就可以知道对应的term 的ord 是多少
+                // 计算此时顶部term在对应termEnum下的 顺序信息 与 全局ord的差值
                 long delta = globalOrd - segmentOrd;
-                // 最小值对应的reader原顺序
+                // 对应reader的下标
                 int segmentIndex = top.subIndex;
                 // We compute the least segment where the term occurs. In case the
                 // first segment contains most (or better all) values, this will
                 // help save significant memory
-                // 这里只会触发一次
+                // 更新全局最小的term所在的reader 下标
                 if (segmentIndex < firstSegmentIndex) {
                     firstSegmentIndex = segmentIndex;
                     globalOrdDelta = delta;
                 }
-                // 因为 bits 只是用来评估表示这个值 最多要多少位 所以计算结果本身无意义
+                // 记录此时reader读取到的term对应ord 与全局ord的差值
                 ordDeltaBits[segmentIndex] |= delta;
 
                 // for each per-segment ord, map it back to the global term; the while loop is needed
@@ -300,15 +304,17 @@ public class OrdinalMap implements Accountable {
                 // are skipped), which can happen e.g. with a FilteredTermsEnum:
                 assert segmentOrds[segmentIndex] <= segmentOrd;
 
-                // TODO: we could specialize this case (the while loop is not needed when the ords are compact)   这个注释说明了while非必须 你大爷
+                // TODO: we could specialize this case (the while loop is not needed when the ords are compact)   当ord本身是连续时就不需要这个while了
                 do {
-                    // delta 可以理解为差了几级  每当term增加到下一个值时 globalOrd+1 这个遵循单调递增
+                    // 记录某个reader下每个值与全局ord的差值
                     ordDeltas[segmentIndex].add(delta);
+                    // 此时将该reader的ord增加 意味着要读取下一个较大的term值
                     segmentOrds[segmentIndex]++;
                     // 照理说这里只会执行一次  因为 termEnum 本身就是单调递增的 所以当某个term变成top时 它前面的term 肯定已经处理过了
+                    // 主要是考虑到 ord可能不连续的情况
                 } while (segmentOrds[segmentIndex] <= segmentOrd);
 
-                // 当 top内没有下一个元素了 将整个 term块 从优先队列移除
+                // 当 top内没有下一个元素了 将该reader对应的termEnum移除
                 if (top.next() == null) {
                     queue.pop();
                     // 代表所有 term 都已经处理完毕
@@ -319,7 +325,7 @@ public class OrdinalMap implements Accountable {
                     // 重新寻找最小值  (因为上面调用next 所以堆顶元素已经改变了)
                     queue.updateTop();
                 }
-                // 只要此时 堆顶元素与一开始设置的不一样 退出内循环
+                // 当此时最小的term还是与之前一致的情况 就要继续循环
                 if (queue.top().currentTerm.equals(scratch.get()) == false) {
                     break;
                 }

@@ -36,9 +36,13 @@ import org.apache.lucene.index.SortedNumericDocValues;
  * Like sorting by string, this also supports sorting missing values as first or last,
  * via {@link #setMissingValue(Object)}.
  * @see SortedNumericSelector
+ * 制定了排序类型必须是数字类型
  */
 public class SortedNumericSortField extends SortField {
-  
+
+  /**
+   * 定义是根据 MIN/MAX 进行排序
+   */
   private final SortedNumericSelector.Type selector;
   private final SortField.Type type;
   

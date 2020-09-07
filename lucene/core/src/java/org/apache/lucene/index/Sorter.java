@@ -37,7 +37,6 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * Sorts documents of a given index by returning a permutation on the document
  * IDs.
  * @lucene.experimental
- * 该对象负责进行真正的排序操作
  */
 final class Sorter {
 
@@ -63,14 +62,17 @@ final class Sorter {
    */
   static abstract class DocMap {
 
-    // 原本是按照 docId 进行排序 这里进行重排序后 可以通过原有的docId 找到当前新的位置
-
-    /** Given a doc ID from the original index, return its ordinal in the
-     *  sorted index. */
+    /**
+     * Given a doc ID from the original index, return its ordinal in the
+     *  sorted index.
+     *  传入docId 返回此时的顺序
+     */
     abstract int oldToNew(int docID);
 
-    /** Given the ordinal of a doc ID, return its doc ID in the original index. */
-    // 反向查询
+    /**
+     * Given the ordinal of a doc ID, return its doc ID in the original index.
+     * 传入 ord 返回排序后的docId
+     */
     abstract int newToOld(int docID);
 
     /** Return the number of documents in this map. This must be equal to the
@@ -111,7 +113,7 @@ final class Sorter {
   private static final class DocValueSorter extends TimSorter {
 
     /**
-     * 通过一组 docId 进行初始化
+     * 存储原顺序的容器
      */
     private final int[] docs;
     /**
@@ -124,7 +126,6 @@ final class Sorter {
     private final int[] tmp;
 
     /**
-     * 核心的比较逻辑 还是看 com对象
      * @param docs
      * @param comparator
      */
@@ -168,13 +169,15 @@ final class Sorter {
     }
   }
 
-  /** Computes the old-to-new permutation over the given comparator. */
-  // 通过指定 比较器对象 将doc 排序后 并返回存储新顺序的 DocMap     comparator 内部应该定义了 根据docId 获取什么样的数据的逻辑
+  /**
+   *  Computes the old-to-new permutation over the given comparator.
+   *  生成 新旧docId的映射容器
+   */
   private static Sorter.DocMap sort(final int maxDoc, DocComparator comparator) {
     // check if the index is sorted
     boolean sorted = true;
     for (int i = 1; i < maxDoc; ++i) {
-      // 如果已经是从小到大的顺序了 代表当前已经有序 就不需要排序了
+      // 排序结果如果与当前docId 顺序一致 那么不需要生成映射容器
       if (comparator.compare(i-1, i) > 0) {
         sorted = false;
         break;
@@ -185,33 +188,32 @@ final class Sorter {
     }
 
     // sort doc IDs
-    // 代表需要重更新排序
+    // 先填充旧顺序的容器
     final int[] docs = new int[maxDoc];
     for (int i = 0; i < maxDoc; i++) {
       docs[i] = i;
     }
 
-    // 创建 排序对象
     DocValueSorter sorter = new DocValueSorter(docs, comparator);
     // It can be common to sort a reader, add docs, sort it again, ... and in
     // that case timSort can save a lot of time
-    // 这里已经完成了排序
+    // 进行重排序  此时 docs已经完成排序了
     sorter.sort(0, docs.length); // docs is now the newToOld mapping
 
     // The reason why we use MonotonicAppendingLongBuffer here is that it
     // wastes very little memory if the index is in random order but can save
     // a lot of memory if the index is already "almost" sorted
-    // 因为完成排序 所以数据是单调变化的   这里利用单调性 + 差值存储 使得最后存储到 packed中的数据都是0 最大化节省内存开销
+    // 先通过减去期望值 使得数据尽可能平均 之后再基于min 做差值存储   nb
     final PackedLongValues.Builder newToOldBuilder = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
-    // 这里存储了所有的文档号    (按照差值存储规则)
     for (int i = 0; i < maxDoc; ++i) {
       newToOldBuilder.add(docs[i]);
     }
+    // 这里存储的是 排序后的结果  以顺序为下标 指向docId
     final PackedLongValues newToOld = newToOldBuilder.build();
 
     // invert the docs mapping:
     for (int i = 0; i < maxDoc; ++i) {
-      // 创建反向索引
+      // 创建反向映射  以docId为下标 指向此时的顺序
       docs[(int) newToOld.get(i)] = i;
     } // docs is now the oldToNew mapping
 
@@ -242,8 +244,9 @@ final class Sorter {
   }
 
   /** Returns the native sort type for {@link SortedSetSortField} and {@link SortedNumericSortField},
-   * {@link SortField#getType()} otherwise */
-  // 找到该排序域 定义的排序规则
+   * {@link SortField#getType()} otherwise
+   * 排序类型 (基于什么原则进行排序)
+   * */
   static SortField.Type getSortFieldType(SortField sortField) {
     // 主要是为了这2种特殊类型服务的
     if (sortField instanceof SortedSetSortField) {
@@ -270,6 +273,8 @@ final class Sorter {
   /** Wraps a {@link SortedSetDocValues} as a single-valued view if the field is an instance of {@link SortedSetSortField},
    * returns {@link SortedDocValues} for the field otherwise. */
   static SortedDocValues getOrWrapSorted(LeafReader reader, SortField sortField) throws IOException {
+
+    // 将 SortedSetSortField 转换成 SortedDocValues
     if (sortField instanceof SortedSetSortField) {
       SortedSetSortField sf = (SortedSetSortField) sortField;
       return SortedSetSelector.wrap(DocValues.getSortedSet(reader, sf.getField()), sf.getSelector());
@@ -303,8 +308,11 @@ final class Sorter {
   /** We cannot use the {@link FieldComparator} API because that API requires that you send it docIDs in order.  Note that this API
    *  allocates arrays[maxDoc] to hold the native values needed for comparison, but 1) they are transient (only alive while sorting this one
    *  segment), and 2) in the typical index sorting case, they are only used to sort newly flushed segments, which will be smaller than
-   *  merged segments.  */
-  // 获取一个可以对doc 进行排序的对象
+   *  merged segments.
+   * @param maxDoc 本次处理的最大doc是多少
+   * @param sortField  该对象定义了如何根据该field进行排序
+   * @param numericProvider  返回该field 出现在哪些doc 下 以及对应的value值
+   */
   static DocComparator getDocComparator(int maxDoc,
                                         SortField sortField,
                                         SortedDocValuesSupplier sortedProvider,
@@ -312,6 +320,7 @@ final class Sorter {
 
     // 正序or倒序
     final int reverseMul = sortField.getReverse() ? -1 : 1;
+    // 获取本次的排序类型
     final SortField.Type sortType = getSortFieldType(sortField);
 
     switch(sortType) {
@@ -320,7 +329,7 @@ final class Sorter {
       {
         final SortedDocValues sorted = sortedProvider.get();
         final int missingOrd;
-        // 这里是默认值
+        // 如果默认值是最小的String  那么 默认ord 就是max 实际上就是最小值
         if (sortField.getMissingValue() == SortField.STRING_LAST) {
           missingOrd = Integer.MAX_VALUE;
         } else {
@@ -328,9 +337,10 @@ final class Sorter {
         }
 
         final int[] ords = new int[maxDoc];
+        // 先全部使用默认顺序进行填充
         Arrays.fill(ords, missingOrd);
         int docID;
-        // 因为docId 不一定是连续的 这里设置到一个连续数组中
+        // 将field在该doc下对应的field.value 对应的ord填入到数组中  value可能会重复  那么此时ord是一样的
         while ((docID = sorted.nextDoc()) != NO_MORE_DOCS) {
           ords[docID] = sorted.ordValue();
         }
@@ -348,9 +358,11 @@ final class Sorter {
       {
         final NumericDocValues dvs = numericProvider.get();
         long[] values = new long[maxDoc];
+        // 预先为所有槽设置默认值
         if (sortField.getMissingValue() != null) {
           Arrays.fill(values, (Long) sortField.getMissingValue());
         }
+        // 在对应的槽上设置对应的值  此时还没有进行排序
         while (true) {
           int docID = dvs.nextDoc();
           if (docID == NO_MORE_DOCS) {
@@ -367,6 +379,8 @@ final class Sorter {
           }
         };
       }
+
+      // 剩余数字类型排序套路都是一致的
 
       case INT:
       {
@@ -470,9 +484,9 @@ final class Sorter {
 
 
   /**
-   * 这里 将一组comp 对象组合成单个对象 并对doc排序
+   * 将一组为doc重排序的cmp对象 合并 得到一个唯一的排序规则后 将此时的doc按照该排序规则生成映射容器
    * @param maxDoc
-   * @param comparators
+   * @param comparators  越前面的cmp 优先级越高
    * @return
    * @throws IOException
    */
@@ -486,7 +500,7 @@ final class Sorter {
             return comp;
           }
         }
-        // 当所有 comp的结果都是0的时候 直接比较 docId
+        // 按照其他情况排序结果都一致时 按照docId进行排序
         return Integer.compare(docID1, docID2); // docid order tiebreak
       }
     };

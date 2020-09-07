@@ -102,7 +102,7 @@ final class DefaultIndexingChain extends DocConsumer {
     private PerField[] fields = new PerField[1];
 
     /**
-     * 当某个 field 对应的docValue 已经全部写入到 docValueWriter 并触发了 finish后 才会按照 fieldName 填入到这个set
+     * 记录已经执行过 finish的容器 避免重复执行
      */
     private final Set<String> finishedDocValues = new HashSet<>();
 
@@ -119,14 +119,13 @@ final class DefaultIndexingChain extends DocConsumer {
         this.bytesUsed = docWriter.bytesUsed;
 
         final TermsHash termVectorsWriter;
-        // TODO 先假设 indexSort为null
         if (docWriter.getSegmentInfo().getIndexSort() == null) {
             // 该对象专门负责存储 field相关信息 (生成索引结构 并存储)
             storedFieldsConsumer = new StoredFieldsConsumer(docWriter);
             // 该对象负责写入term的向量信息
             termVectorsWriter = new TermVectorsConsumer(docWriter);
         } else {
-            // 当声明了排序规则时 创建2个排序对象
+            // 当声明了排序规则时 创建2个排序对象   在存储doc数据时 就会按照该规则进行排序
             storedFieldsConsumer = new SortingStoredFieldsConsumer(docWriter);
             termVectorsWriter = new SortingTermVectorsConsumer(docWriter);
         }
@@ -152,15 +151,15 @@ final class DefaultIndexingChain extends DocConsumer {
         // sort 对象本身是由多个 SortField 组成的 每个对象都会影响排序的结果
         for (int i = 0; i < indexSort.getSort().length; i++) {
             SortField sortField = indexSort.getSort()[i];
-            // 尝试从 hash桶中 找到 field 对应的 PerField 对象 如果对象不存在 则忽略
+            // 首先要确保这个field在本次解析的所有doc中存在 如果不存在就没必要处理了
             PerField perField = getPerField(sortField.getField());
 
             if (perField != null && perField.docValuesWriter != null &&
-                    // 标记某个field 还没有处理完
+                    // 如果该field 已经执行过finish 就不需要再处理了
                     finishedDocValues.contains(perField.fieldInfo.name) == false) {
-                // 原本该对象在感知到docId发生变化时 会自动将之前已经写入的 docValue 做排序
-                // 这里是手动触发
+                // 代表所有doc都已经处理完了 避免docValuesWriter中还有残留数据
                 perField.docValuesWriter.finish(state.segmentInfo.maxDoc());
+                // 获取排序对象 因为最终排序结果是多个comparator一起作用的结果
                 Sorter.DocComparator cmp = perField.docValuesWriter.getDocComparator(state.segmentInfo.maxDoc(), sortField);
                 comparators.add(cmp);
                 finishedDocValues.add(perField.fieldInfo.name);
@@ -185,8 +184,7 @@ final class DefaultIndexingChain extends DocConsumer {
 
         // NOTE: caller (DocumentsWriterPerThread) handles
         // aborting on any exception from this method
-        // 首先尝试根据 segmentInfo 内部包含的排序对象 进行排序
-        // TODO 先忽略排序逻辑 那么这里会返回null
+        // 这里要根据 segment的 Sort 为doc排序 不是按照解析doc的顺序 而是 sortedField定义的顺序
         Sorter.DocMap sortMap = maybeSortSegment(state);
         // 获取该段总计解析了多少doc  (这里是包含解析失败的)  解析失败的doc 会通过delCountOnFlush 展示
         int maxDoc = state.segmentInfo.maxDoc();
@@ -342,7 +340,7 @@ final class DefaultIndexingChain extends DocConsumer {
                             dvConsumer = fmt.fieldsConsumer(state);
                         }
 
-                        // 如果这个域对应的 docValue 还没有全部写入  手动触发 finish
+                        // 代表还没有执行过finish
                         if (finishedDocValues.contains(perField.fieldInfo.name) == false) {
                             perField.docValuesWriter.finish(maxDoc);
                         }
@@ -634,7 +632,6 @@ final class DefaultIndexingChain extends DocConsumer {
         // 被索引的数据是可以选择的 可以选择 term 也可以选择 field  或者 term + field
         // 实际上只看到了从 NONE 到 != NONE 时    对fieldPer的修改     而如果本次设置的是NONE 没有覆盖的入口
 
-        // TODO 照理说一个doc下应该是能出现多个相同的field 但是比如是 NumDocValue类型 那么在写入时 会报错 要求docId必须递增
         if (dvType != DocValuesType.NONE) {
             if (fp == null) {
                 // 如果只是存储field信息 那么是不需要存储 invert数据的  同时 如果需要存储term的情况  那么在上面的逻辑中肯定已经完成了对 fp的创建
@@ -760,7 +757,7 @@ final class DefaultIndexingChain extends DocConsumer {
             // This is the first time we are seeing this field indexed with doc values, so we
             // now record the DV type so that any future attempt to (illegally) change
             // the DV type of this field, will throw an IllegalArgExc:
-            // TODO 有关排序的先忽略
+            // 检测排序类型是否合法
             if (docWriter.getSegmentInfo().getIndexSort() != null) {
                 final Sort indexSort = docWriter.getSegmentInfo().getIndexSort();
                 validateIndexSortDVType(indexSort, fp.fieldInfo.name, dvType);
@@ -774,7 +771,6 @@ final class DefaultIndexingChain extends DocConsumer {
 
         int docID = docState.docID;
 
-        // 一旦docValueType的类型确定下来就不会再改变了   TODO 在一个doc下可以出现多个相同的field吗??? 如果可以出现在这里就会出错了
         switch (dvType) {
 
             case NUMERIC:
@@ -788,6 +784,7 @@ final class DefaultIndexingChain extends DocConsumer {
                 ((NumericDocValuesWriter) fp.docValuesWriter).addValue(docID, field.numericValue().longValue());
                 break;
 
+                // 该种类型不支持排序
             case BINARY:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new BinaryDocValuesWriter(fp.fieldInfo, bytesUsed);
@@ -795,14 +792,15 @@ final class DefaultIndexingChain extends DocConsumer {
                 ((BinaryDocValuesWriter) fp.docValuesWriter).addValue(docID, field.binaryValue());
                 break;
 
-            // TODO 从写入逻辑看 并没有发现哪里体现了 排序 可能写入的field本身就要按照某种规则
+                // 基于 field.value (此时value为 byteRef类型)为doc进行排序
             case SORTED:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new SortedDocValuesWriter(fp.fieldInfo, bytesUsed);
                 }
                 ((SortedDocValuesWriter) fp.docValuesWriter).addValue(docID, field.binaryValue());
                 break;
-            //
+            // 基于field.value 为doc进行排序 此时value为数字类型
+            // 该对象支持往一个doc中同时插入多个相同的field 这样在doc之间的排序是基于这些field下的 MIN/MAX
             case SORTED_NUMERIC:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new SortedNumericDocValuesWriter(fp.fieldInfo, bytesUsed);
@@ -810,7 +808,8 @@ final class DefaultIndexingChain extends DocConsumer {
                 ((SortedNumericDocValuesWriter) fp.docValuesWriter).addValue(docID, field.numericValue().longValue());
                 break;
 
-            // SortedSetDocValuesWriter 实现 跟 SortedNumericDocValuesWriter 比较相似
+            // 与SORTED_NUMERIC类似 也就是支持同一个doc下存储多个相同field (他们的value可以相同也可以不相同
+            // 这时排序就是基于selector选出该field在该doc下的代表值 在代表值经过比较后 将doc进行重排序)
             case SORTED_SET:
                 if (fp.docValuesWriter == null) {
                     fp.docValuesWriter = new SortedSetDocValuesWriter(fp.fieldInfo, bytesUsed);

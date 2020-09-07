@@ -224,7 +224,7 @@ public class MergeState {
       // no index sort ... we only must map around deletions, and rebase to the merged segment's docID space
       // 避免 被删除的doc占用空间 这里做了整理工作
       return buildDeletionDocMaps(readers);
-    // TODO 先忽略 indexSort
+    // 利用二叉堆实现多个reader对象的重排序
     } else {
       // do a merge sort of the incoming leaves:
       long t0 = System.nanoTime();

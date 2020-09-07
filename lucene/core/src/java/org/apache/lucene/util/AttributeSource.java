@@ -312,7 +312,6 @@ public class AttributeSource {
     /**
      * Resets all Attributes in this AttributeSource by calling
      * {@link AttributeImpl#clear()} on each Attribute implementation.
-     * TODO 只清理[0]吗 那么为什么要用 state[] 呢
      */
     public final void clearAttributes() {
         for (State state = getCurrentState(); state != null; state = state.next) {

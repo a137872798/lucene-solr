@@ -689,6 +689,12 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     doAddSortedField(field, valuesProducer);
   }
 
+  /**
+   * 写入 SortedField信息时 需要额外写入termDict
+   * @param field
+   * @param valuesProducer
+   * @throws IOException
+   */
   private void doAddSortedField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
     SortedDocValues values = valuesProducer.getSorted(field);
     int numDocsWithField = 0;
@@ -735,9 +741,15 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       meta.writeLong(data.getFilePointer() - start); // ordsLength
     }
 
+    // 将SortedDocValues 包装成SortedSetDocValues
     addTermsDict(DocValues.singleton(valuesProducer.getSorted(field)));
   }
 
+  /**
+   * 在SortedSetDocValues 中  field.value 就是存储在termHash中的
+   * @param values
+   * @throws IOException
+   */
   private void addTermsDict(SortedSetDocValues values) throws IOException {
     final long size = values.getValueCount();
     meta.writeVLong(size);
@@ -753,13 +765,18 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     long ord = 0;
     long start = data.getFilePointer();
     int maxLength = 0;
+    // 因为SortedSetDocValues 下field.value 是byteRef类型 同时使用termHash存储 所以实际上它也可以作为 termEnum
+    // 在遍历时 是按照term.ord进行遍历的 也就是从小到大的顺序   （利用termHash做的排序）
     TermsEnum iterator = values.termsEnum();
     for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
+      // 每15个term 生成一个词典
       if ((ord & Lucene80DocValuesFormat.TERMS_DICT_BLOCK_MASK) == 0) {
         writer.add(data.getFilePointer() - start);
+        // 将term信息写入
         data.writeVInt(term.length);
         data.writeBytes(term.bytes, term.offset, term.length);
       } else {
+        // 仅写入后缀信息
         final int prefixLength = StringHelper.bytesDifference(previous.get(), term);
         final int suffixLength = term.length - prefixLength;
         assert suffixLength > 0; // terms are unique
@@ -832,6 +849,12 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
     }
   }
 
+  /**
+   * 这个写入相对比较简单 不需要写入 termDict信息
+   * @param field field information
+   * @param valuesProducer produces the values to write
+   * @throws IOException
+   */
   @Override
   public void addSortedNumericField(FieldInfo field, DocValuesProducer valuesProducer) throws IOException {
     meta.writeInt(field.number);
@@ -876,6 +899,7 @@ final class Lucene80DocValuesConsumer extends DocValuesConsumer implements Close
       }
     }
 
+    // 代表每个doc下都只写入了一个field 这样就退化成和 addSortedField 逻辑一样了
     if (numDocsWithField == numOrds) {
       meta.writeByte((byte) 0); // multiValued (0 = singleValued)
       doAddSortedField(field, new EmptyDocValuesProducer() {

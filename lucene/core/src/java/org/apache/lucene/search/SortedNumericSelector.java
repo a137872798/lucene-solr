@@ -51,10 +51,11 @@ public class SortedNumericSelector {
   /** 
    * Wraps a multi-valued SortedNumericDocValues as a single-valued view, using the specified selector 
    * and numericType.
-   * @param sortedNumeric  内部存储了很多数据  现在还不清楚内部的数据是否有某种顺序关系 还是需要看看数据是怎么存的
+   * @param sortedNumeric  同一个doc下允许迭代多个相同field的value (field一致 value不一致)
    * @param numericType    用于描述数字类型的
    */
   public static NumericDocValues wrap(SortedNumericDocValues sortedNumeric, Type selector, SortField.Type numericType) {
+    // 非数字类型无法包装
     if (numericType != SortField.Type.INT &&
         numericType != SortField.Type.LONG && 
         numericType != SortField.Type.FLOAT &&
@@ -62,7 +63,6 @@ public class SortedNumericSelector {
       throw new IllegalArgumentException("numericType must be a numeric type");
     }
     final NumericDocValues view;
-    // 先检查是否是Single类 是的话直接取出内部的 NumDocValue
     NumericDocValues singleton = DocValues.unwrapSingleton(sortedNumeric);
     if (singleton != null) {
       // it's actually single-valued in practice, but indexed as multi-valued,
@@ -70,7 +70,7 @@ public class SortedNumericSelector {
       // regardless of selector type, this optimization is safe!
       view = singleton;
     } else {
-      // 现在是明白它在做什么了  为什么要这样做呢???
+      // 将原本获取field.value 的迭代器对象包装成 每次获取MIN/MAX的视图对象
       switch(selector) {
         case MIN: 
           view = new MinValue(sortedNumeric);
@@ -82,7 +82,8 @@ public class SortedNumericSelector {
           throw new AssertionError();
       }
     }
-    // undo the numericutils sortability  这里继续处理包装过的 view
+    // undo the numericutils sortability
+    // 这里做一层适配后返回
     switch(numericType) {
       case FLOAT:
         return new FilterNumericDocValues(view) {
@@ -103,8 +104,10 @@ public class SortedNumericSelector {
     }
   }
   
-  /** Wraps a SortedNumericDocValues and returns the first value (min) */
-  // 首先根据 SortedNumericDocValues 可以知道 每次定位到一个doc时 都有一个 start,end 指针 他们内部应该时存放了一组有序的数据 并且从这个类可以推断 数字是从小到大的
+  /**
+   *  Wraps a SortedNumericDocValues and returns the first value (min)
+   *  总是返回最小值
+   */
   static class MinValue extends NumericDocValues {
     final SortedNumericDocValues in;
     private long value;

@@ -26,8 +26,7 @@ import org.apache.lucene.util.BytesRef;
  * <p>
  * This can be used if you want to have one multi-valued implementation
  * that works for single or multi-valued types.
- * SortedSetDocValues 本身代表由一组 SortedDocValues 组成  而该对象就是一个特例 代表内部只有一个 SortedDocValues
- * 内部实现都是委托给 in
+ * 将 SortedDocValues 包装成 SortedSetDocValues
  */
 final class SingletonSortedSetDocValues extends SortedSetDocValues {
   private final SortedDocValues in;
@@ -54,6 +53,11 @@ final class SingletonSortedSetDocValues extends SortedSetDocValues {
     return in.docID();
   }
 
+  /**
+   * 确保始终只能返回一个ord  因为在 SortedSetDocValues 下一个doc
+   * 可能存储多次同一个field 这样每次field对应的value都有自己的ord 就可以通过nextOrd 遍历多个ord值
+   * @return
+   */
   @Override
   public long nextOrd() {
     long v = ord;

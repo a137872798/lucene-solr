@@ -34,11 +34,18 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 import static org.apache.lucene.util.ByteBlockPool.BYTE_BLOCK_SIZE;
 
 /** Buffers up pending byte[] per doc, deref and sorting via
- *  int ord, then flushes when segment flushes. */
-// 该容器存储的是已经排序完成的的数据
+ *  int ord, then flushes when segment flushes.
+ *  这里是将 field.value 全部写入不需要经过分词器处理
+ *
+ *  在doc中写入了这种 SortedXXX的值 也不一定会起作用 必须要 IndexConfig.Sort中包含这些field
+ */
 class SortedDocValuesWriter extends DocValuesWriter {
   final BytesRefHash hash;
   private PackedLongValues.Builder pending;
+
+  /**
+   * doc位图
+   */
   private DocsWithFieldSet docsWithField;
   private final Counter iwBytesUsed;
   private long bytesUsed; // this currently only tracks differences in 'pending'
@@ -47,6 +54,9 @@ class SortedDocValuesWriter extends DocValuesWriter {
 
   private PackedLongValues finalOrds;
   private int[] finalSortedValues;
+  /**
+   * termId 作为下标 value 对应该term的顺序
+   */
   private int[] finalOrdMap;
 
   public SortedDocValuesWriter(FieldInfo fieldInfo, Counter iwBytesUsed) {
@@ -97,7 +107,7 @@ class SortedDocValuesWriter extends DocValuesWriter {
    * @param value
    */
   private void addOneValue(BytesRef value) {
-    // 将数据存储到hash结构下的 BytePool 中   他跟单纯写入 二进制数据的 BinaryDocValuesWriter 写入数据的容器不同
+    // 将数据存储到hash结构下的 BytePool中
     int termID = hash.add(value);
     // 代表 value之前已经写入过
     if (termID < 0) {
@@ -121,15 +131,24 @@ class SortedDocValuesWriter extends DocValuesWriter {
     bytesUsed = newBytesUsed;
   }
 
+  /**
+   * 为本次结果排序
+   * @param maxDoc
+   * @param sortField
+   * @return
+   * @throws IOException
+   */
   @Override
   Sorter.DocComparator getDocComparator(int maxDoc, SortField sortField) throws IOException {
     assert sortField.getType().equals(SortField.Type.STRING);
     assert finalSortedValues == null && finalOrdMap == null &&finalOrds == null;
     int valueCount = hash.size();
+    // 生成一个 按照term数值进行排序的 termId[] 对象
     finalSortedValues = hash.sort();
     finalOrds = pending.build();
     finalOrdMap = new int[valueCount];
     for (int ord = 0; ord < valueCount; ord++) {
+      // 这里就生成了一个 按照大小关系排序后的 termId 数组
       finalOrdMap[finalSortedValues[ord]] = ord;
     }
     final SortedDocValues docValues =
@@ -143,18 +162,28 @@ class SortedDocValuesWriter extends DocValuesWriter {
     Arrays.fill(ords, -1);
     int docID;
     while ((docID = oldValues.nextDoc()) != NO_MORE_DOCS) {
+      // 将旧的docId 转化成ord 并以该ord作为新的docId   在生成sortMap的过程中 当所有comparator比较后都相等时 会按照旧的docId进行排序 所以这里能确保newDocId不会出现重复
       int newDocID = sortMap.oldToNew(docID);
+      // 这里的 ordValue 是该field在该doc下的term的ord 与 newDocId无关
       ords[newDocID] = oldValues.ordValue();
     }
     return ords;
   }
 
+  /**
+   * 如果sortMap 不为空 按照该顺序为doc重排序
+   * @param state
+   * @param sortMap
+   * @param dvConsumer
+   * @throws IOException
+   */
   @Override
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, DocValuesConsumer dvConsumer) throws IOException {
     final int valueCount = hash.size();
     final PackedLongValues ords;
     final int[] sortedValues;
     final int[] ordMap;
+    // 代表没有调用过 getComparator 这里初始化相关信息
     if (finalOrds == null) {
       sortedValues = hash.sort();
       ords = pending.build();
@@ -168,8 +197,10 @@ class SortedDocValuesWriter extends DocValuesWriter {
       ordMap = finalOrdMap;
     }
 
+    // sorted 以新docId 作为下标 存储的是在新的doc下 term的ord (ord可以转换成 termId)
     final int[] sorted;
     if (sortMap != null) {
+      // 使用sortMap 进行重排序
       sorted = sortDocValues(state.segmentInfo.maxDoc(), sortMap,
           new BufferedSortedDocValues(hash, valueCount, ords, sortedValues, ordMap, docsWithField.iterator()));
     } else {
@@ -193,13 +224,32 @@ class SortedDocValuesWriter extends DocValuesWriter {
   }
 
   private static class BufferedSortedDocValues extends SortedDocValues {
+
+    /**
+     * 存储term信息的hash桶
+     */
     final BytesRefHash hash;
     final BytesRef scratch = new BytesRef();
+
+    /**
+     * 按照term大小 为termId进行排序 (下标是ord value是 termId )
+     */
     final int[] sortedValues;
     final int[] ordMap;
+    /**
+     * 总计写入了多少值
+     */
     final int valueCount;
     private int ord;
+
+    /**
+     * 遍历field在每个doc下的 value 对应的termId 可以重复出现
+     */
     final PackedLongValues.Iterator iter;
+
+    /**
+     * 用于迭代该field出现过的所有doc
+     */
     final DocIdSetIterator docsWithField;
 
     public BufferedSortedDocValues(BytesRefHash hash, int valueCount, PackedLongValues docToOrd, int[] sortedValues, int[] ordMap, DocIdSetIterator docsWithField) {
@@ -220,7 +270,9 @@ class SortedDocValuesWriter extends DocValuesWriter {
     public int nextDoc() throws IOException {
       int docID = docsWithField.nextDoc();
       if (docID != NO_MORE_DOCS) {
+        // 这里是获取field在该doc下写入的term的id
         ord = Math.toIntExact(iter.next());
+        // 通过termId 转换成序号
         ord = ordMap[ord];
       }
       return docID;
@@ -246,10 +298,16 @@ class SortedDocValuesWriter extends DocValuesWriter {
       return ord;
     }
 
+    /**
+     * 传入 ord 反向获取term信息 实际上就是依赖于 termHash
+     * @param ord ordinal to lookup (must be &gt;= 0 and &lt; {@link #getValueCount()})
+     * @return
+     */
     @Override
     public BytesRef lookupOrd(int ord) {
       assert ord >= 0 && ord < sortedValues.length;
       assert sortedValues[ord] >= 0 && sortedValues[ord] < sortedValues.length;
+      // 反向获取termId
       hash.get(sortedValues[ord], scratch);
       return scratch;
     }

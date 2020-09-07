@@ -36,18 +36,17 @@ final class MultiSorter {
      * Does a merge sort of the leaves of the incoming reader, returning {@link DocMap} to map each leaf's
      * documents into the merged segment.  The documents for each incoming leaf reader must already be sorted by the same sort!
      * Returns null if the merge sort is not needed (segments are already in index sort order).
+     * 按照该排序规则 为每个reader对象都生成一个 docMap[]
      **/
     static MergeState.DocMap[] sort(Sort sort, List<CodecReader> readers) throws IOException {
 
         // TODO: optimize if only 1 reader is incoming, though that's a rare case
-        // 返回所有被排序的 field     每个field可以定义自己的规则
-        // 如果reader下没有该field 返回null
         SortField fields[] = sort.getSort();
         final ComparableProvider[][] comparables = new ComparableProvider[fields.length][];
         final int[] reverseMuls = new int[fields.length];
 
         for (int i = 0; i < fields.length; i++) {
-            // 返回的 ComparableProvider 已经具备了整合的逻辑了
+            // 每个排序的 field都会对所有reader做处理
             comparables[i] = getComparableProviders(readers, fields[i]);
             // 存储排序顺序
             reverseMuls[i] = fields[i].getReverse() ? -1 : 1;
@@ -204,15 +203,16 @@ final class MultiSorter {
 
         switch (sortType) {
 
+            // 这个时候 comparator对象就要由多个reader组合提供了 所以要先将他们有关排序的 docValue取出来 重新进行排序
+
             case STRING: {
                 // this uses the efficient segment-local ordinal map:
                 final SortedDocValues[] values = new SortedDocValues[readers.size()];
                 for (int i = 0; i < readers.size(); i++) {
-                    // 获取遍历所有 docValue的迭代器 同时该迭代器还具备了 通过docId 查询ord的功能   如果该segment下没有该field的信息 返回一个 empty对象
+                    // 还原之前的 SortedDocValues数据
                     final SortedDocValues sorted = Sorter.getOrWrapSorted(readers.get(i), sortField);
                     values[i] = sorted;
                 }
-                // 生成一个数据结构 用于映射 全局ord 与 某个segment相同term的ord  (只针对当前 sortedField)
                 OrdinalMap ordinalMap = OrdinalMap.build(null, values, PackedInts.DEFAULT);
                 final int missingOrd;
                 // 某个doc没找到时 返回默认值

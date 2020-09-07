@@ -375,13 +375,14 @@ final class FrozenBufferedUpdates {
           }
           // 经过上面 termDelete 和 queryDelete的处理后 此时已经更新了存活的doc  以及被标记成待删除的doc 就不需要再处理了
           final Bits acceptDocs = segState.rld.getLiveDocs();
-          // TODO 先忽略
+          // 如果发生了重排序 需要确保docId 在limit内
           if (segState.rld.sortMap != null && segmentPrivateDeletes) {
             // This segment was sorted on flush; we must apply seg-private deletes carefully in this case:
             int doc;
             while ((doc = docIdSetIterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
               if (acceptDocs == null || acceptDocs.get(doc)) {
                 // The limit is in the pre-sorted doc space:
+                // 因为重排序发生在 flush时 所以之前的limit 仅针对重排序前的
                 if (segState.rld.sortMap.newToOld(doc) < limit) {
                   docIdConsumer.accept(doc);
                   updateCount++;
@@ -422,7 +423,6 @@ final class FrozenBufferedUpdates {
 
   // Delete by query
   // 代表被 query 命中的doc 都需要被删除
-  // TODO
   private long applyQueryDeletes(BufferedUpdatesStream.SegmentState[] segStates) throws IOException {
 
     if (deleteQueries.length == 0) {
@@ -458,12 +458,15 @@ final class FrozenBufferedUpdates {
         } else {
           limit = Integer.MAX_VALUE;
         }
+        // 通过searcher 查找query命中的 doc
         final IndexSearcher searcher = new IndexSearcher(readerContext.reader());
         searcher.setQueryCache(null);
         query = searcher.rewrite(query);
+        // 因为不看重查询的比重  所以不需要打分
         final Weight weight = searcher.createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 1);
         final Scorer scorer = weight.scorer(readerContext);
         if (scorer != null) {
+          // 返回命中的doc
           final DocIdSetIterator it = scorer.iterator();
           if (segState.rld.sortMap != null && limit != Integer.MAX_VALUE) {
             assert privateSegment != null;
@@ -471,6 +474,7 @@ final class FrozenBufferedUpdates {
             int docID;
             while ((docID = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
               // The limit is in the pre-sorted doc space:
+              // 这里是认为 设置limit时使用的doc还是未重排序前的 所以新的docId 映射到旧的时 不能超过limit
               if (segState.rld.sortMap.newToOld(docID) < limit) {
                 if (segState.rld.delete(docID)) {
                   delCount++;

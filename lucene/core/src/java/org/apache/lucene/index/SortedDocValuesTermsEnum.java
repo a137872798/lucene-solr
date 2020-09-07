@@ -23,10 +23,14 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 
 /** Implements a {@link TermsEnum} wrapping a provided
- * {@link SortedDocValues}. */
-// 类似一层装饰器  实际数据获取都是通过内部的 values 对象
-
+ * {@link SortedDocValues}.
+ * 类似一层装饰器  实际数据获取都是通过内部的 values 对象
+ * */
 class SortedDocValuesTermsEnum extends BaseTermsEnum {
+
+  /**
+   * field.value都是term类型
+   */
   private final SortedDocValues values;
   private int currentOrd = -1;
   private final BytesRefBuilder scratch;

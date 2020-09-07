@@ -91,7 +91,7 @@ class NumericDocValuesWriter extends DocValuesWriter {
   /**
    * 根据传入的  sortedField 对象获取对应的排序对象
    * @param maxDoc
-   * @param sortField
+   * @param sortField  定义了排序规则
    * @return
    * @throws IOException
    */
@@ -99,6 +99,7 @@ class NumericDocValuesWriter extends DocValuesWriter {
   Sorter.DocComparator getDocComparator(int maxDoc, SortField sortField) throws IOException {
     assert finalValues == null;
     finalValues = pending.build();
+    // 该对象负责迭代之前写入的每个doc对应的value
     final BufferedNumericDocValues docValues =
         new BufferedNumericDocValues(finalValues, docsWithField.iterator());
     return Sorter.getDocComparator(maxDoc, sortField, () -> null, () -> docValues);
@@ -112,7 +113,7 @@ class NumericDocValuesWriter extends DocValuesWriter {
   /**
    *
    * @param maxDoc 当前最大的docId
-   * @param sortMap   docId 根据对应的值已经排序过了  该对象可以通过docId的自然顺序找到排序后的位置
+   * @param sortMap   该结构内存储了排序后的信息
    * @param oldDocValues  该对象可以遍历 docId 并获取绑定的value
    * @return
    * @throws IOException
@@ -126,7 +127,7 @@ class NumericDocValuesWriter extends DocValuesWriter {
       if (docID == NO_MORE_DOCS) {
         break;
       }
-      // 找到排序后的位置
+      // 返回排序后的顺序 以此作为新的docId
       int newDocID = sortMap.oldToNew(docID);
       docsWithField.set(newDocID);
       // 在对应的位置设置 绑定的值
@@ -152,8 +153,8 @@ class NumericDocValuesWriter extends DocValuesWriter {
       values = finalValues;
     }
 
-    // 先忽略排序的
     final SortingLeafReader.CachedNumericDVs sorted;
+    // 如果存在排序对象时 先构架BufferedNumericDocValues之后进行重排序 并按照排序后的结果写入
     if (sortMap != null) {
       NumericDocValues oldValues = new BufferedNumericDocValues(values, docsWithField.iterator());
       sorted = sortDocValues(state.segmentInfo.maxDoc(), sortMap, oldValues);

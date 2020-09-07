@@ -91,9 +91,8 @@ class NormValuesWriter {
   public void flush(SegmentWriteState state, Sorter.DocMap sortMap, NormsConsumer normsConsumer) throws IOException {
     // 之前该field在所有相关doc下生成的标准因子合成一个 压缩格式数据
     final PackedLongValues values = pending.build();
-    // TODO 先忽略排序   这个leaf指代的是通过跳跃表检索到的某个fst索引吗???
     final SortingLeafReader.CachedNumericDVs sorted;
-    // 代表根据 docValue 做了排序
+    // 需要先将此时的数据排序
     if (sortMap != null) {
       sorted = NumericDocValuesWriter.sortDocValues(state.segmentInfo.maxDoc(), sortMap,
           new BufferedNorms(values, docsWithField.iterator()));
@@ -112,7 +111,7 @@ class NormValuesWriter {
                                    if (sorted == null) {
                                      return new BufferedNorms(values, docsWithField.iterator());
                                    } else {
-                                     // 该对象也是 NumericDocValues 的子类 只是读取数据的时候是按照 docValue的顺序所对应的docId的顺序 而不是自然顺序
+                                     // 内部通过遍历sorted获取数据
                                      return new SortingLeafReader.SortingNumericDocValues(sorted);
                                    }
                                   }

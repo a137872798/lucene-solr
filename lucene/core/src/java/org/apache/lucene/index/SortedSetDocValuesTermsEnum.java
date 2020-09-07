@@ -23,8 +23,9 @@ import org.apache.lucene.util.BytesRefBuilder;
 import java.io.IOException;
 
 /** Implements a {@link TermsEnum} wrapping a provided
- * {@link SortedSetDocValues}. */
-
+ * {@link SortedSetDocValues}.
+ * 基于SortedSetDocValues实现termEnum 的功能
+ */
 class SortedSetDocValuesTermsEnum extends BaseTermsEnum {
   private final SortedSetDocValues values;
   private long currentOrd = -1;
@@ -38,6 +39,7 @@ class SortedSetDocValuesTermsEnum extends BaseTermsEnum {
 
   @Override
   public SeekStatus seekCeil(BytesRef text) throws IOException {
+    // 基于term 查询到它的 ord (在termHash中可以将term按照大小排序 这时就产生了ord信息)
     long ord = values.lookupTerm(text);
     if (ord >= 0) {
       currentOrd = ord;
@@ -80,6 +82,7 @@ class SortedSetDocValuesTermsEnum extends BaseTermsEnum {
     if (currentOrd >= values.getValueCount()) {
       return null;
     }
+    // 这里遍历term的逻辑跟 SortedDocValues一致 就是遍历ord 直到最大值 并将对应的term取出来
     scratch.copyBytes(values.lookupOrd(currentOrd));
     return scratch.get();
   }

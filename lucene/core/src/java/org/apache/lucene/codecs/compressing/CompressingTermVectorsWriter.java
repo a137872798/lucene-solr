@@ -737,7 +737,6 @@ public final class CompressingTermVectorsWriter extends TermVectorsWriter {
    */
   private void flushTermLengths() throws IOException {
 
-    // TODO 在写入 term前应该是已经做好排序了 在哪排序来着
     writer.reset(vectorsStream);
     // 此前 term本身是按照共享前缀的方式写入的 这里先写入与上一个term的共享前缀长度
     for (DocData dd : pendingDocs) {

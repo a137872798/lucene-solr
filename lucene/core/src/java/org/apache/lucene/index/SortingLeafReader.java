@@ -48,6 +48,9 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 class SortingLeafReader extends FilterLeafReader {
 
     //TODO remove from here; move to FreqProxTermsWriter or FreqProxFields?
+    /**
+     * 该对象在FreqProxTermsWriter 中使用   原本迭代field信息时 field.value解析出来的term 的doc信息都应该是按照processDocument的顺序 这里利用docMap 尝试修改遍历的顺序
+     */
     static class SortingFields extends FilterFields {
 
         private final Sorter.DocMap docMap;
@@ -65,13 +68,15 @@ class SortingLeafReader extends FilterLeafReader {
             if (terms == null) {
                 return null;
             } else {
-                // 返回的对象会按照term数据的大小排序
                 return new SortingTerms(terms, infos.fieldInfo(field).getIndexOptions(), docMap);
             }
         }
 
     }
 
+    /**
+     * 在迭代term的相关信息时 doc的顺序会被调换
+     */
     private static class SortingTerms extends FilterTerms {
 
         private final Sorter.DocMap docMap;
@@ -96,6 +101,9 @@ class SortingLeafReader extends FilterLeafReader {
 
     }
 
+    /**
+     * 查询到的doc 需要通过docMap 做一层转换
+     */
     private static class SortingTermsEnum extends FilterTermsEnum {
 
         final Sorter.DocMap docMap; // pkg-protected to avoid synthetic accessor methods
@@ -385,7 +393,13 @@ class SortingLeafReader extends FilterLeafReader {
 
     static class SortingSortedDocValues extends SortedDocValues {
 
+        /**
+         * 原顺序容器 可以迭代doc以及绑定的相关数据
+         */
         private final SortedDocValues in;
+        /**
+         * 经sortMap 转换后存储新顺序的容器
+         */
         private final int[] ords;
         private int docID = -1;
 
@@ -400,6 +414,10 @@ class SortingLeafReader extends FilterLeafReader {
             return docID;
         }
 
+        /**
+         * 这里迭代docId 就很简单了 不是基于原来的in 而是每次累加doc
+         * @return
+         */
         @Override
         public int nextDoc() {
             while (true) {
@@ -411,7 +429,7 @@ class SortingLeafReader extends FilterLeafReader {
                 if (ords[docID] != -1) {
                     break;
                 }
-                // skip missing docs
+                // skip missing docs   某些doc上不存在该field 就跳过
             }
 
             return docID;
@@ -436,6 +454,10 @@ class SortingLeafReader extends FilterLeafReader {
             return ords[target] != -1;
         }
 
+        /**
+         * 这个ord值是 该doc下该field存储的term 在所有doc下term对比后的顺序 并且多个doc下 field.value对应的ord可以一致
+         * @return
+         */
         @Override
         public int ordValue() {
             return ords[docID];
@@ -446,6 +468,12 @@ class SortingLeafReader extends FilterLeafReader {
             return in.cost();
         }
 
+        /**
+         * 通过ord 查找term  (实际上是利用了termHash)
+         * @param ord ordinal to lookup (must be &gt;= 0 and &lt; {@link #getValueCount()})
+         * @return
+         * @throws IOException
+         */
         @Override
         public BytesRef lookupOrd(int ord) throws IOException {
             return in.lookupOrd(ord);
@@ -801,6 +829,9 @@ class SortingLeafReader extends FilterLeafReader {
         }
     }
 
+    /**
+     * 在获取位置信息时 需要通过 docMap 做转换
+     */
     static class SortingPostingsEnum extends FilterPostingsEnum {
 
         /**
@@ -869,6 +900,9 @@ class SortingLeafReader extends FilterLeafReader {
         private final int maxDoc;
         private final DocOffsetSorter sorter;
         private int[] docs;
+        /**
+         * 记录每个doc数据在 buffer的偏移量
+         */
         private long[] offsets;
         private final int upto;
 
@@ -909,19 +943,24 @@ class SortingLeafReader extends FilterLeafReader {
 
             int doc;
             int i = 0;
+            // 读取原有的数据
             while ((doc = in.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
                 if (i == docs.length) {
                     final int newLength = ArrayUtil.oversize(i + 1, 4);
                     docs = ArrayUtil.growExact(docs, newLength);
                     offsets = ArrayUtil.growExact(offsets, newLength);
                 }
+                // 这里相当于只是将数据读取出来
                 docs[i] = docMap.oldToNew(doc);
                 offsets[i] = buffer.size();
+                // 将位置信息存储在buffer中
                 addPositions(in, buffer);
                 i++;
             }
             upto = i;
+            // 使用 docs和offsets 来初始化sorted对象
             sorter.reset(docs, offsets);
+            // 在这里按照之前的ord 进行排序
             sorter.sort(0, upto);
 
             this.postingInput = buffer.toDataInput();
@@ -989,6 +1028,11 @@ class SortingLeafReader extends FilterLeafReader {
             return payload.length == 0 ? null : payload;
         }
 
+        /**
+         * 这样 该term出现的doc顺序就发生了改变
+         * @return
+         * @throws IOException
+         */
         @Override
         public int nextDoc() throws IOException {
             if (++docIt >= upto) return DocIdSetIterator.NO_MORE_DOCS;
@@ -997,6 +1041,7 @@ class SortingLeafReader extends FilterLeafReader {
             // reset variables used in nextPosition
             pos = 0;
             endOffset = 0;
+            // 此时docs的数据就是docId  只要下标是递增的就能确保 获取到递增有效的docId
             return docs[docIt];
         }
 
