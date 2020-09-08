@@ -584,9 +584,8 @@ final class DocumentsWriterPerThread {
         // 针对存在 SortedField的doc 会按照 SortedField 进行重排序
         final Sorter.DocMap sortMap;
         try {
-            // 对应匹配软删除域的所有doc
             DocIdSetIterator softDeletedDocs;
-            // TODO 先忽略软删除
+            // 如果存在软删除的field 获取该软删除的field所在的所有doc
             if (indexWriterConfig.getSoftDeletesField() != null) {
                 softDeletedDocs = consumer.getHasDocValues(indexWriterConfig.getSoftDeletesField());
             } else {
@@ -594,10 +593,11 @@ final class DocumentsWriterPerThread {
             }
             // 将之前解析doc 后生成的各种数据写入到索引文件中  返回一个排序相关的map
             sortMap = consumer.flush(flushState);
-            // 忽略软删除
             if (softDeletedDocs == null) {
                 flushState.softDelCountOnFlush = 0;
             } else {
+                // 代表在flush过程中软删除的数量  软删除就是一开始直接指定一个field  然后携带该field的doc自动就变成了软删除的doc
+                // 这里只是记录了 软删除的数量 并没有将变化作用到liveDoc上
                 flushState.softDelCountOnFlush = PendingSoftDeletes.countSoftDeletes(softDeletedDocs, flushState.liveDocs);
                 assert flushState.segmentInfo.maxDoc() >= flushState.softDelCountOnFlush + flushState.delCountOnFlush;
             }
@@ -608,6 +608,7 @@ final class DocumentsWriterPerThread {
             segmentInfo.setFiles(new HashSet<>(directory.getCreatedFiles()));
 
             // 当segment的数据刷盘完成时  会创建一个 commitInfo对象   初始化的这个对象很多属性都是默认值
+            // 注意这里将软删除的数量设置到 segmentCommitInfo下了
             final SegmentCommitInfo segmentInfoPerCommit = new SegmentCommitInfo(segmentInfo, 0, flushState.softDelCountOnFlush, -1L, -1L, -1L, StringHelper.randomId());
             if (infoStream.isEnabled("DWPT")) {
                 infoStream.message("DWPT", "new segment has " + (flushState.liveDocs == null ? 0 : flushState.delCountOnFlush) + " deleted docs");

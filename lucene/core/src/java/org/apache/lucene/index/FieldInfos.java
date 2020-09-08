@@ -581,7 +581,7 @@ public class FieldInfos implements Iterable<FieldInfo> {
                 // number for this field.  If the field was seen
                 // before then we'll get the same name and number,
                 // else we'll allocate a new one:
-                // 判断该field 是否采用软删除 TODO 什么是软删除
+                // 判断该field 是否采用软删除
                 final boolean isSoftDeletesField = name.equals(globalFieldNumbers.softDeletesFieldName);
                 // 既然是新建的 field 需要分配一个全局的 num
                 // 如果同名的field已经存在 共用一个number  否则重新分配一个num

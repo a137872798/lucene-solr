@@ -629,9 +629,8 @@ final class DefaultIndexingChain extends DocConsumer {
             throw new NullPointerException("docValuesType must not be null (field: \"" + fieldName + "\")");
         }
 
-        // 被索引的数据是可以选择的 可以选择 term 也可以选择 field  或者 term + field
-        // 实际上只看到了从 NONE 到 != NONE 时    对fieldPer的修改     而如果本次设置的是NONE 没有覆盖的入口
 
+        // 注意 没有指定类型时是不需要存储 docValue的
         if (dvType != DocValuesType.NONE) {
             if (fp == null) {
                 // 如果只是存储field信息 那么是不需要存储 invert数据的  同时 如果需要存储term的情况  那么在上面的逻辑中肯定已经完成了对 fp的创建
@@ -1192,8 +1191,7 @@ final class DefaultIndexingChain extends DocConsumer {
     }
 
     /**
-     * 找到某个field出现在了哪些 doc下
-     *
+     * 一般是查询软删除的field关联的doc时使用
      * @param field
      * @return
      */
