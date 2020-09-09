@@ -112,9 +112,6 @@ final class IndexFileDeleter implements Closeable {
    */
   private final IndexDeletionPolicy policy;
 
-  /**
-   * 代表初始的那个段文件是否已经被删除了
-   */
   final boolean startingCommitDeleted;
   /**
    * 最新的 segment_N 对应的数据
@@ -243,7 +240,6 @@ final class IndexFileDeleter implements Closeable {
     // 这里按 gen 从小到大的逻辑排序
     CollectionUtil.timSort(commits);
     Collection<String> relevantFiles = new HashSet<>(refCounts.keySet());
-    // 找到之前尝试删除失败的文件 并准备进行删除
     Set<String> pendingDeletions = directoryOrig.getPendingDeletions();
     if (pendingDeletions.isEmpty() == false) {
       relevantFiles.addAll(pendingDeletions);
@@ -256,10 +252,10 @@ final class IndexFileDeleter implements Closeable {
     // presumably abandoned files eg due to crash of
     // IndexWriter.
     Set<String> toDelete = new HashSet<>();
+    // 之前已经为索引文件增加了引用计数做保护 此时可以将其他无关的文件删除
     for(Map.Entry<String, RefCount> entry : refCounts.entrySet() ) {
       RefCount rc = entry.getValue();
       final String fileName = entry.getKey();
-      // 这里是命中正则表达式  但是又不属于 segmentInfo.files() 相关的文件 这些文件应当被直接删除
       if (0 == rc.count) {
         // A segments_N file should never have ref count 0 on init:
         if (fileName.startsWith(IndexFileNames.SEGMENTS)) {
@@ -277,13 +273,12 @@ final class IndexFileDeleter implements Closeable {
 
     // Finally, give policy a chance to remove things on
     // startup:
-    // 每个commit 对象对应一个 segment_N 文件   默认实现是 KeepOnlyLastCommitDeletionPolicy
-    // 实现就是只保留最后一个提交点 将其他提交点 设置到  待删除列表中   TODO 可能相同gen的段相关文件被看作是一个提交点
+    // 这里基于特定的删除策略做处理 此时如果是 KeepOnlyLastCommitDeletionPolicy 那么只会保留最新的segmentInfos
     policy.onInit(commits);
 
     // Always protect the incoming segmentInfos since
     // sometime it may not be the most recent commit
-    // 将当前段信息存储到 lastFile中
+    // 为当前正在使用的segmentInfo 额外增加一层引用计数 避免被policy删除
     checkpoint(segmentInfos, false);
 
     if (currentCommitPoint == null) {
@@ -292,7 +287,7 @@ final class IndexFileDeleter implements Closeable {
       startingCommitDeleted = currentCommitPoint.isDeleted();
     }
 
-    // 尝试删除队列中的提交点
+    // 将除了正在使用的segmentInfos 和最新的segmentInfos之外的其他文件都删除
     deleteCommits();
   }
 

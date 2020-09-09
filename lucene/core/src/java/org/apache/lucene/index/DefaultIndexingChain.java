@@ -1115,7 +1115,6 @@ final class DefaultIndexingChain extends DocConsumer {
                         throw new IllegalArgumentException("position " + invertState.position + " is too large for field '" + field.name() + "': max allowed position is " + IndexWriter.MAX_POSITION);
                     }
                     invertState.lastPosition = invertState.position;
-                    // TODO 为什么可以出现0啊  先忽略
                     if (posIncr == 0) {
                         invertState.numOverlap++;
                     }
