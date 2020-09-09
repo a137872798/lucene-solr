@@ -789,7 +789,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
             }
             anyChanges |= maybeMerge.getAndSet(false);
-            // 这里开始对段进行merge
+            // merge通过 MergePolicy执行 一般都是使用 ConcurrentMergePolicy 也就是并行执行 可以提高效率 而本次是否立即生成mergeSegment 实际上对本次查询是没有影响的
             if (anyChanges) {
                 maybeMerge(config.getMergePolicy(), MergeTrigger.FULL_FLUSH, UNBOUNDED_MAX_MERGE_SEGMENTS);
             }
@@ -2196,6 +2196,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * all merging completes.  This is only meaningful with a
      * {@link MergeScheduler} that is able to run merges in
      * background threads.
+     * 指定一个segment数量 并将他们尽可能的合并
      */
     public void forceMerge(int maxNumSegments, boolean doWait) throws IOException {
         ensureOpen();
@@ -2453,8 +2454,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
         boolean newMergesFound = false;
         final MergePolicy.MergeSpecification spec;
-        // 代表本次 merge 有数量限制
-        // TODO 先跳过这段
+        // 代表用户指定了参与merge的segment数量
         if (maxNumSegments != UNBOUNDED_MAX_MERGE_SEGMENTS) {
             assert trigger == MergeTrigger.EXPLICIT || trigger == MergeTrigger.MERGE_FINISHED :
                     "Expected EXPLICT or MERGE_FINISHED as trigger even with maxNumSegments set but was: " + trigger.name();
@@ -2465,7 +2465,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (newMergesFound) {
                 final int numMerges = spec.merges.size();
                 for (int i = 0; i < numMerges; i++) {
-                    // 为所有包含merge信息的对象设置 maxNumSegment  为什么这里不用 register???
                     final MergePolicy.OneMerge merge = spec.merges.get(i);
                     merge.maxNumSegments = maxNumSegments;
                 }
@@ -4259,10 +4258,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     /**
      * This method carries over hard-deleted documents that are applied to the source segment during a merge.
      * @param mergedReadersAndUpdates   merge后的段对应的  readersAndUpdates 对象
-     * @param maxDoc 当前segment的 maxDoc
-     * @param mergeLiveDocs  每个参与merge的segment对应的liveDoc
-     * @param prevHardLiveDocs   在 mergeMiddle中会设置  在没有使用软删除的情况下 它和 liveDoc是一样的
-     * @param currentHardLiveDocs  此时最新的 hardLiveDocs    在merge过程中 可能会产生新的删除
+     * @param maxDoc 参与merge的segment的最大文档数
+     * @param mergeLiveDocs  某个参与merge的segment 在merge时使用的liveDoc (包含软删除中确定要删除的部分)
+     * @param prevHardLiveDocs   在merge过程中 硬删除的位图
+     * @param currentHardLiveDocs  此时参与merge的segment最新的hardLiveDocs    在merge过程中 可能会产生新的删除  只处理硬删除的部分
      * @param segDocMap 该对象负责将 每个参与merge的段doc 映射到一个全局doc
      * 应该是因为 segment已经合并完成了 就可以丢弃之前的数据
      */
@@ -4277,13 +4276,12 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // that were not deleted before. Otherwise the segDocMap doesn't contain a mapping.
         // yet this is also required if any MergePolicy modifies the liveDocs since this is
         // what the segDocMap is build on.
-        // TODO 正常情况下应该是相等的    可能涉及到软删除时情况会不一样 先不考虑软删除
-        // carryOverDelete 该函数就是检测某个doc 此时是否还存在
         final IntPredicate carryOverDelete = mergeLiveDocs == null || mergeLiveDocs == prevHardLiveDocs
-                ? docId -> currentHardLiveDocs.get(docId) == false
-                : docId -> mergeLiveDocs.get(docId) && currentHardLiveDocs.get(docId) == false;
+                ? docId -> currentHardLiveDocs.get(docId) == false   // 如果之前的doc此时被标记成删除了 需要将该doc更新成删除状态
+                : docId -> mergeLiveDocs.get(docId) && currentHardLiveDocs.get(docId) == false;  // 代表在之前的merge中有部分doc是通过软删除的机制删除的 那为了避免重复删除
+                                                                                                // 需要确保本次被硬删除的doc 之前没有通过软删除机制删除
 
-        // 代表在执行merge前 已经检测到某些doc被删除了
+       // 代表在merge前 segment 就有部分doc被删除  那么必须要检测此时最新的位图与之前位图不同的部分
         if (prevHardLiveDocs != null) {
             // If we had deletions on starting the merge we must
             // still have deletions now:
@@ -4423,7 +4421,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // Pass false for assertInfoLive because the merged
                 // segment is not yet live (only below do we commit it
                 // to the segmentInfos):
-                // 仅减少引用计数 实际上没有从池中移除  TODO 这里应该是对应 处理update时那个引用计数是否为1的判断  代表update已经处理过了
+                // 仅减少引用计数 实际上没有从池中移除
                 release(mergedUpdates, false);
                 success = true;
             } finally {
@@ -4438,7 +4436,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         // exception is hit e.g. writing the live docs for the
         // merge segment, in which case we need to abort the
         // merge:
-        // 将merge后的段发布到IndexWriter中 同时将之前参与merge的段从 indexWriter中移除
+        // 将merge后的段发布到IndexWriter中 同时将之前参与merge的段从 indexWriter中移除  这样forceApply 就不会更新参与过merge的segment了
+        // (也没必要再维护这些旧的segment了 同时使用者要经常性调用 IndexReader.openIfChanged 确保读取到最新的segment)
         segmentInfos.applyMergeChanges(merge, dropSegment);
 
         // Now deduct the deleted docs that we just reclaimed from this
@@ -4875,6 +4874,15 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
         }
     }
 
+    /**
+     * 统计本次未处理的软删除的数量 用于更新segmentInfo.softDelCount
+     * @param reader
+     * @param wrappedLiveDocs
+     * @param hardLiveDocs
+     * @param softDeleteCounter
+     * @param hardDeleteCounter
+     * @throws IOException
+     */
     private void countSoftDeletes(CodecReader reader, Bits wrappedLiveDocs, Bits hardLiveDocs, Counter softDeleteCounter,
                                   Counter hardDeleteCounter) throws IOException {
         int hardDeleteCount = 0;
@@ -4986,6 +4994,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             countSoftDeletes(wrappedReader, wrappedLiveDocs, hardLiveDocs, softDeleteCount, hardDeleteCounter);
                             int hardDeleteCount = Math.toIntExact(hardDeleteCounter.get());
                             // Wrap the wrapped reader again if we have excluded some hard-deleted docs
+                            // 可能在恢复软删除的doc时 将一些之前硬删除的doc也恢复了 这里要重新标记成删除
                             if (hardDeleteCount > 0) {
                                 Bits liveDocs = wrappedLiveDocs == null ? hardLiveDocs : new Bits() {
                                     @Override
@@ -5017,7 +5026,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     merge.info.info, infoStream, dirWrapper,
                     globalFieldNumberMap,
                     context);
-            // TODO 先忽略软删除
+
+            // 更新未处理的软删除数量
             merge.info.setSoftDelCount(Math.toIntExact(softDeleteCount.get()));
 
             // 检测merge是否被终止
@@ -5860,7 +5870,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * @param info the segment to get the number of deletes for
      * @lucene.experimental
      * @see MergePolicy#numDeletesToMerge(SegmentCommitInfo, int, org.apache.lucene.util.IOSupplier)
-     * 返回某个段下此时被删除的数量
+     * 该segment在merge时 预计会删除多少doc
      */
     @Override
     public final int numDeletesToMerge(SegmentCommitInfo info) throws IOException {
@@ -6073,9 +6083,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // in pulling all our delGens into a merge:
                 synchronized (this) {
 
-                    // 代表在这个期间检测到发生了一次merge 操作
-                    // mergeMiddle 在执行完merge后 会先增加mergeFinishedGen  并检测在merge期间是否处理了 update数据  这样更新数据就不会丢失了  同时处理update的线程在检测到 mergeFinishedGen 发生了变化 又会重复处理一次之前的数据
-                    // 这样就能确保merge后的segment 不会丢失update信息
+                    // 代表处理 apply() 与merge 发生了并发 那么此时merge后的段在同步merge期间发生的update/delete时 就有可能丢失数据 就要重新执行一次 apply
                     long mergeGenCur = mergeFinishedGen.get();
 
                     // 本次segment都是可靠的 没有因为merge导致segment的变化

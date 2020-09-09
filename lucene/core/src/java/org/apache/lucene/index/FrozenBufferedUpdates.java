@@ -442,7 +442,8 @@ final class FrozenBufferedUpdates {
         continue;
       }
 
-      // 从注释上理解 当引用计数为1 时 代表该对象已经被其他地方放弃了 会出现这种情况的原因是之前的数据 已经被merge掉了 所以该segment应当被废弃 就忽略对它的处理
+      // 当引用计数为1 时 代表此时只有当前对象持有它 并且已经生成了一个合并后的segment了 那么可以忽略对旧的segment的更新动作 只管往下遍历最新的segment就可以
+      // 同时在merge完成时 会将之前参与merge的segment从 segmentInfos中移除 也就是旧的segment 将不再参与更新 (所以使用者要经常性的调用 IndexReader.openIfChanged 确保始终读取到最新数据)
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running
@@ -533,7 +534,8 @@ final class FrozenBufferedUpdates {
         // our deletes don't apply to this segment
         continue;
       }
-      // 代表该state之前已经处理过了
+
+      // 当引用计数为1 时 代表此时只有当前对象持有它 并且已经生成了一个合并后的segment了 那么可以忽略对旧的segment的更新动作 只管往下遍历最新的segment就可以
       if (segState.rld.refCount() == 1) {
         // This means we are the only remaining reference to this segment, meaning
         // it was merged away while we were running, so we can safely skip running

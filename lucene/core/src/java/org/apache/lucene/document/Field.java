@@ -79,7 +79,6 @@ public class Field implements IndexableField {
     /**
      * Field's value
      */
-    // 域所携带的数据  也许被分词器处理后的单词就是 term
     protected Object fieldsData;
 
     /**

@@ -30,6 +30,12 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOSupplier;
 import org.apache.lucene.util.IOUtils;
 
+/**
+ * 软删除的含义实际上类似于假删除
+ * 在docValue有效时 对应的doc会被标记成删除 同时searcher也无法查询到 而当docValue更新后 可能searcher就变得可以查询到该doc了
+ * (比如将softField在该doc下的hasValue更新成false)
+ * 而每次在merge时 被标记成假删除的doc 会尝试进行真删除 如果满足了 某种query条件 那么在merge时 doc还是会保留
+ */
 final class PendingSoftDeletes extends PendingDeletes {
 
   /**
@@ -54,6 +60,11 @@ final class PendingSoftDeletes extends PendingDeletes {
     hardDeletes = new PendingDeletes(reader, info);
   }
 
+  /**
+   * @param docID
+   * @return
+   * @throws IOException
+   */
   @Override
   boolean delete(int docID) throws IOException {
     FixedBitSet mutableBits = getMutableBits(); // we need to fetch this first it might be a shared instance with hardDeletes
@@ -163,7 +174,7 @@ final class PendingSoftDeletes extends PendingDeletes {
           // below.
         }
       } else {
-        // 因为之前field在该doc下的值被移除掉了 反而认为该doc不需要被删除
+        // 代表软删除field在某个doc下的值被移除了 反而不需要删除该doc了
         if (bits.get(docID) == false) {
           bits.set(docID);
           newDeletes--;

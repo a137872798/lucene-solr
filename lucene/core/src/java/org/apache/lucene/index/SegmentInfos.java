@@ -166,9 +166,6 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
      */
     public Map<String, String> userData = Collections.emptyMap();
 
-    /**
-     * 插入情况有2种  第一种启动时读取之前存在的索引文件  第二种 每当perThread 刷盘生成新的段时 也会插入到该容器
-     */
     private List<SegmentCommitInfo> segments = new ArrayList<>();
 
     /**

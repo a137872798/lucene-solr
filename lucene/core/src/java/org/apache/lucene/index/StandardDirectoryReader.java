@@ -147,7 +147,7 @@ public final class StandardDirectoryReader extends DirectoryReader {
 
         final ReadersAndUpdates rld = writer.getPooledInstance(info, true);
         try {
-          // 抽取reader 对象
+          // 如果不存在reader对象则初始化 否则更新reader对象的liveDoc
           final SegmentReader reader = rld.getReadOnlyClone(IOContext.READ);
           // 代表reader 还存在 就加入到 readers中
           if (reader.numDocs() > 0 || writer.getConfig().mergePolicy.keepFullyDeletedSegment(() -> reader)) {

@@ -147,6 +147,14 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
     return weight.scorer(reader.getContext());
   }
 
+  /**
+   * 返回某个segment在merge过程中会删除多少doc
+   * @param info
+   * @param delCount
+   * @param readerSupplier
+   * @return
+   * @throws IOException
+   */
   @Override
   public int numDeletesToMerge(SegmentCommitInfo info, int delCount, IOSupplier<CodecReader> readerSupplier) throws IOException {
     final int numDeletesToMerge = super.numDeletesToMerge(info, delCount, readerSupplier);
@@ -158,9 +166,11 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
         builder.add(retentionQuerySupplier.get(), BooleanClause.Occur.FILTER);
         Scorer scorer = getScorer(builder.build(), FilterCodecReader.wrapLiveDocs(reader, null, reader.maxDoc()));
         if (scorer != null) {
+          // 查询本次需要保留的doc
           DocIdSetIterator iterator = scorer.iterator();
           Bits liveDocs = reader.getLiveDocs();
           int numDeletedDocs = reader.numDeletedDocs();
+          // 因为之后该doc 会被重新设置 所以这里可以减少数量
           while (iterator.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
             if (liveDocs.get(iterator.docID()) == false) {
               numDeletedDocs--;
