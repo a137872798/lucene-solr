@@ -827,8 +827,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 当没有开启自动刷盘时  也就代表内存中的数据无法自动减少 那么一些比较占用内存的数据就需要尽早清除
-     * 这里是处理doc的更新信息
      *
      * @throws IOException
      */
@@ -915,7 +913,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // 返回的数量包含 还未刷盘的 delCount
             return rld.getDelCount(); // get the full count from here since SCI might change concurrently
         } else {
-            // 只返回segment 当前记录的删除数量
+            // 当开启软删除的情况下  将软删除对应的field命中的doc数量也加上
             final int delCount = info.getDelCount(softDeletesEnabled);
             assert delCount <= info.info.maxDoc() : "delCount: " + delCount + " maxDoc: " + info.info.maxDoc();
             return delCount;
@@ -3004,7 +3002,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             // we either have a fully hard-deleted segment or one or more docs are soft-deleted. In both cases we need
             // to go and check if they are fully deleted. This has the nice side-effect that we now have accurate numbers
             // for the soft delete right after we flushed to disk.
-            // TODO 先忽略 存在软删除field  或者该segment 下所有的doc 都被标记成删除
+            // 如果包含有效的软删除字段 需要确定此时哪些doc已经被硬删除了
             if (hasInitialSoftDeleted || isFullyHardDeleted) {
                 // this operation is only really executed if needed an if soft-deletes are not configured it only be executed
                 // if we deleted all docs in this newly flushed segment.
@@ -4967,16 +4965,19 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
             // Let the merge wrap readers
             List<CodecReader> mergeReaders = new ArrayList<>();
+            // 记录未处理的软删除数量  本次softMergePolicy 没有命中的doc 将会被删除 就不再需要维护它了
             Counter softDeleteCount = Counter.newCounter(false);
             for (int r = 0; r < merge.readers.size(); r++) {
                 // 获取上面设置的reader对象
                 SegmentReader reader = merge.readers.get(r);
                 // 这里使用 merge对象对原本的 reader对象进行加工  默认情况下直接返回reader  相当于对子类开放的钩子
+                // 当如果是使用SoftDeletesRetentionMergePolicy时  初始化该对象需要传入一个query 并且该query命中的doc会从软删除状态变成存活状态
                 CodecReader wrappedReader = merge.wrapForMerge(reader);
                 validateMergeReader(wrappedReader);
 
-                // TODO
+                // 当开启软删除时
                 if (softDeletesEnabled) {
+                    // 如果不使用软删除对应的 mergePolicy 包装reader对象 那么软删除的doc都会被删除
                     if (reader != wrappedReader) { // if we don't have a wrapped reader we won't preserve any soft-deletes
                         Bits hardLiveDocs = merge.hardLiveDocs.get(r);
                         if (hardLiveDocs != null) { // we only need to do this accounting if we have mixed deletes
@@ -5921,7 +5922,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * applying the package. In order to ensure the packet has been applied,
      * {@link IndexWriter#forceApply(FrozenBufferedUpdates)} must be called.
      * <p>
-     * 开始处理 deleteQueue中采集到的删除信息  这里针对每个perThread会产生2个 updates对象 一个是全局对象 一个是该perThread 对应的deleteSlice 采集到的删除对象  （为什么要处理2次呢）
+     * 开始处理 deleteQueue中采集到的删除信息  这里针对每个perThread会产生2个 updates对象 一个是全局对象 一个是该perThread 对应的deleteSlice 采集到的删除对象
      * 并且 如果针对 perThread产生的分片对象如果只有 termNode信息 那么会在flush时 直接处理掉这部分 也就是在 liveDoc中直接清除掉这部分 这样 该对象就不会被作为任务插入到任务队列了
      */
     @SuppressWarnings("try")
@@ -6046,7 +6047,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 // Since we just resolved some more deletes/updates, now is a good time to write them:
-                // 当此时update占用的内存开销比较大  且关闭自动刷盘的情况  为了避免oom 而尝试将一些内存开销大的update处理掉 并持久化最新的 docValue， fieldInfo  在更新过程中要修改gen
+                // 当此时update占用的内存开销比较大  且开启自动刷盘的情况
+                // 为了避免oom 而尝试将一些内存开销大的update处理掉 并持久化最新的 docValue， fieldInfo  在更新过程中要修改gen
                 writeSomeDocValuesUpdates();
 
                 // It's OK to add this here, even if the while loop retries, because delCount only includes newly
@@ -6063,7 +6065,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 if (updates.privateSegment != null) {
                     // No need to retry for a segment-private packet: the merge that folds in our private segment already waits for all deletes to
                     // be applied before it kicks off, so this private segment must already not be in the set of merging segments
-
+                    // 私有段必须等待 更新/删除处理完后 才允许被加入到merge候选对象中  所以这里不需要考虑段在merge期间发生变化
                     break;
                 }
 

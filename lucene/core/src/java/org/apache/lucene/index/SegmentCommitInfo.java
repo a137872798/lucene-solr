@@ -48,7 +48,7 @@ public class SegmentCommitInfo {
   private int delCount;
 
   // How many soft-deleted docs in the segment that are not also hard-deleted:
-  // 软删除数量   TODO 什么是软删除
+  // 软删除数量
   private int softDelCount;
 
   // Generation number of the live docs file (-1 if there

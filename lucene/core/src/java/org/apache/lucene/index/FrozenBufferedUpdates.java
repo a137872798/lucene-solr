@@ -268,6 +268,8 @@ final class FrozenBufferedUpdates {
 
   /**
    * 处理针对某个 segment对象的 DV update
+   * @param delGen  每次处理的 frozenBufferedUpdates 需要保留delGen 因为这些数据可能是并发产生的 也就是可能先产生的update对象反而后作用到dv上
+   *                所以之后在真正更新field.value时 就要根据gen进行过滤  仅保留最新的更新数据  而删除就不需要在意是乱序问题
    */
   private static long  applyDocValuesUpdates(BufferedUpdatesStream.SegmentState segState,
                                             Map<String, FieldUpdatesBuffer> updates,

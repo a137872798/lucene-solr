@@ -30,6 +30,9 @@ import java.util.List;
  * If the subclass wants to wrap the DirectoryReader's subreaders, it should also
  * implement a SubReaderWrapper subclass, and pass an instance to its super
  * constructor.
+ * 该对象作为 reader的包装类 每次获取reader时 都会使用doWrapDirectoryReader 对reader做处理
+ * 比如SoftDeletesDirectoryReaderWrapper 不会将软删除的docLive展示给查询对象  这样命中了软删除的doc也能被查出来
+ *
  */
 public abstract class FilterDirectoryReader extends DirectoryReader {
 

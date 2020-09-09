@@ -46,7 +46,8 @@ final class FreqProxTermsWriter extends TermsHash {
   }
 
   /**
-   * 检测是否有数据被删除 / 更新
+   * 处理被 termNode 命中的数据 注意此时 FreqProxTermsWriter的doc并没有重排序 所以返回的liveDoc 也是旧顺序 在perThread对象中 会按照docMap对liveDoc进行排序
+   * 确保删除的doc正确
    * @param state
    * @param fields
    * @throws IOException

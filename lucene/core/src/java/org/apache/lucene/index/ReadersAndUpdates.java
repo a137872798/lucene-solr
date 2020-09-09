@@ -262,7 +262,6 @@ final class ReadersAndUpdates {
         }
         // force new liveDocs
         Bits liveDocs = pendingDeletes.getLiveDocs();
-        // 返回一个实时查询的 reader对象
         if (liveDocs != null) {
             return new SegmentReader(info, reader, liveDocs, pendingDeletes.getHardLiveDocs(), pendingDeletes.numDocs(), true);
         } else {
@@ -421,7 +420,7 @@ final class ReadersAndUpdates {
                     // 这里如果多个更新 对应到同一个doc时 应该只按照最新的处理
                     return DocValuesFieldUpdates.mergedIterator(subs);
                 };
-                // 处理前置钩子
+                // 在硬删除下该方法是NOOP 在软删除场景下 某个原本不存在软删除field的doc 可能会增加该field 反而要变成被软删除的doc
                 pendingDeletes.onDocValuesUpdate(fieldInfo, updateSupplier.apply(fieldInfo));
 
                 // 如果docValue 是 二进制类型
@@ -906,7 +905,7 @@ final class ReadersAndUpdates {
     }
 
     /**
-     * 将当前对象标记成正在merging中
+     * 将当前对象标记成正在merging中   这样之后的更新信息就会在merge容器中存储一份 这样merge后的segment就不会丢失这部分更新数据
      */
     synchronized void setIsMerging() {
         // This ensures any newly resolved doc value updates while we are merging are
@@ -925,9 +924,6 @@ final class ReadersAndUpdates {
     final static class MergeReader {
         final SegmentReader reader;
 
-        /**
-         * 没有使用软删除的情况下 该位图与 liveDocs一样
-         */
         final Bits hardLiveDocs;
 
         MergeReader(SegmentReader reader, Bits hardLiveDocs) {

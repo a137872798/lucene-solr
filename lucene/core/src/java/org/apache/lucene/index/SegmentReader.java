@@ -161,7 +161,7 @@ public final class SegmentReader extends CodecReader {
         this.si = si.clone();
         this.originalSi = si;
         this.metaData = sr.getMetaData();
-        // 这里使用最新的位图
+        // 该位图包含了软删除的doc
         this.liveDocs = liveDocs;
         this.hardLiveDocs = hardLiveDocs;
         assert assertLiveDocs(isNRT, hardLiveDocs, liveDocs);

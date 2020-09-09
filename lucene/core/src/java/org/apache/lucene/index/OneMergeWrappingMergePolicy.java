@@ -28,6 +28,9 @@ import java.util.function.UnaryOperator;
  */
 public class OneMergeWrappingMergePolicy extends FilterMergePolicy {
 
+  /**
+   * 每个生成的 MergeSpecification对象 都会被该函数包装后返回
+   */
   private final UnaryOperator<OneMerge> wrapOneMerge;
 
   /**

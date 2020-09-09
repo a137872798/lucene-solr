@@ -63,7 +63,7 @@ public final class ConstantScoreScorer extends Scorer {
   private final DocIdSetIterator approximation;
   private final TwoPhaseIterator twoPhaseIterator;
   /**
-   * 该对象用于迭代内部的 docId
+   * 迭代查询命中的doc
    */
   private final DocIdSetIterator disi;
 

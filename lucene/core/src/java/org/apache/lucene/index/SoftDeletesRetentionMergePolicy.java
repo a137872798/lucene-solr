@@ -42,6 +42,7 @@ import org.apache.lucene.util.IOSupplier;
  * The main purpose for this merge policy is to implement retention policies for document modification to vanish in the
  * index. Using this merge policy allows to control when soft deletes are claimed by merges.
  * @lucene.experimental
+ * 配合软删除使用
  */
 public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMergePolicy {
   private final String field;
@@ -49,19 +50,23 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
   /**
    * Creates a new {@link SoftDeletesRetentionMergePolicy}
    * @param field the soft deletes field
-   * @param retentionQuerySupplier a query supplier for the retention query
+   * @param retentionQuerySupplier a query supplier for the retention query    在本次软删除中选择保留的doc
+   *                               (也就是软删除可以根据某种条件选择性删除  而硬删除则是强制删除 没有操作的余地)
    * @param in the wrapped MergePolicy
    */
   public SoftDeletesRetentionMergePolicy(String field, Supplier<Query> retentionQuerySupplier, MergePolicy in) {
-    // 这里是 lucene中唯一的 OneMerge实现类
+
+    // 第二个参数会将每次生成的MergeSpecification包装
     super(in, toWrap -> new MergePolicy.OneMerge(toWrap.segments) {
       @Override
       public CodecReader wrapForMerge(CodecReader reader) throws IOException {
         CodecReader wrapped = toWrap.wrapForMerge(reader);
+        // 该位图中包含了软删除的doc
         Bits liveDocs = reader.getLiveDocs();
         if (liveDocs == null) { // no deletes - just keep going
           return wrapped;
         }
+        // 这里代表需要保留被query命中的软删除的doc
         return applyRetentionQuery(field, retentionQuerySupplier.get(), wrapped);
       }
     });
@@ -84,8 +89,17 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
     return super.keepFullyDeletedSegment(readerIOSupplier) ;
   }
 
-  // pkg private for testing
+  /**
+   * pkg private for testing
+   * 软删除的field 有关的doc  如果命中了query 将被保留
+   * @param softDeleteField
+   * @param retentionQuery
+   * @param reader
+   * @return
+   * @throws IOException
+   */
   static CodecReader applyRetentionQuery(String softDeleteField, Query retentionQuery, CodecReader reader) throws IOException {
+    // 包含软删除的liveDoc
     Bits liveDocs = reader.getLiveDocs();
     if (liveDocs == null) { // no deletes - just keep going
       return reader;
@@ -100,8 +114,10 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
       public int length() {
         return liveDocs.length();
       }
+      // reader.maxDoc() - reader.numDocs() 软删除+硬删除的doc总数
     }, reader.maxDoc() - reader.numDocs());
     BooleanQuery.Builder builder = new BooleanQuery.Builder();
+    // 这里做了一层查询 确保本次只对软删除的field 做处理 而不会影响到其他field
     builder.add(new DocValuesFieldExistsQuery(softDeleteField), BooleanClause.Occur.FILTER);
     builder.add(retentionQuery, BooleanClause.Occur.FILTER);
     Scorer scorer = getScorer(builder.build(), wrappedReader);
@@ -110,12 +126,14 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
       DocIdSetIterator iterator = scorer.iterator();
       int numExtraLiveDocs = 0;
       while (iterator.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+        // 代表某个原本被指定软删除的doc 复活了
         if (cloneLiveDocs.getAndSet(iterator.docID()) == false) {
           // if we bring one back to live we need to account for it
           numExtraLiveDocs++;
         }
       }
       assert reader.numDocs() + numExtraLiveDocs <= reader.maxDoc() : "numDocs: " + reader.numDocs() + " numExtraLiveDocs: " + numExtraLiveDocs + " maxDoc: " + reader.maxDoc();
+      // 使用被还原软删除的doc 的liveDoc 作为新的liveDoc
       return FilterCodecReader.wrapLiveDocs(reader, cloneLiveDocs, reader.numDocs() + numExtraLiveDocs);
     } else {
       return reader;
