@@ -38,15 +38,22 @@ import org.apache.lucene.store.AlreadyClosedException;
  *          {@link #release(Object) released}.
  * 
  * @lucene.experimental
+ * 为内部的数据属性定义了一套在多线程环境下 具备刷新能力的模板
  */
 public abstract class ReferenceManager<G> implements Closeable {
 
   private static final String REFERENCE_MANAGER_IS_CLOSED_MSG = "this ReferenceManager is closed";
-  
+
+  /**
+   * 此时数据体
+   */
   protected volatile G current;
   
   private final Lock refreshLock = new ReentrantLock();
 
+  /**
+   * 监听刷新动作
+   */
   private final List<RefreshListener> refreshListeners = new CopyOnWriteArrayList<>();
 
   private void ensureOpen() {
@@ -54,7 +61,12 @@ public abstract class ReferenceManager<G> implements Closeable {
       throw new AlreadyClosedException(REFERENCE_MANAGER_IS_CLOSED_MSG);
     }
   }
-  
+
+  /**
+   * 更新内部的数据对象
+   * @param newReference
+   * @throws IOException
+   */
   private synchronized void swapReference(G newReference) throws IOException {
     ensureOpen();
     final G oldReference = current;
@@ -88,7 +100,8 @@ public abstract class ReferenceManager<G> implements Closeable {
    * call to {@link #release}; it's best to do so in a finally clause, and set
    * the reference to {@code null} to prevent accidental usage after it has been
    * released.
-   * @throws AlreadyClosedException if the reference manager has been {@link #close() closed}. 
+   * @throws AlreadyClosedException if the reference manager has been {@link #close() closed}.
+   * 在获取内部属性前 需要做一些准备工作
    */
   public final G acquire() throws IOException {
     G ref;
@@ -97,9 +110,11 @@ public abstract class ReferenceManager<G> implements Closeable {
       if ((ref = current) == null) {
         throw new AlreadyClosedException(REFERENCE_MANAGER_IS_CLOSED_MSG);
       }
+      // 因为在多线程环境下使用这个属性 所以要增加引用计数 避免被其他线程意外关闭
       if (tryIncRef(ref)) {
         return ref;
       }
+      // 因为多线程间的竞争 本次更新失败就获取此时的最新值  当发现数值归0 或者数据已经被清理了就抛出异常
       if (getRefCount(ref) == 0 && current == ref) {
         assert ref != null;
         /* if we can't increment the reader but we are
@@ -113,6 +128,7 @@ public abstract class ReferenceManager<G> implements Closeable {
            the reference. */
         throw new IllegalStateException("The managed reference has already closed - this is likely a bug when the reference count is modified outside of the ReferenceManager");
       }
+      // 重试直到增加成功
     } while (true);
   }
   
@@ -160,6 +176,10 @@ public abstract class ReferenceManager<G> implements Closeable {
   protected void afterClose() throws IOException {
   }
 
+  /**
+   * 进行刷新工作
+   * @throws IOException
+   */
   private void doMaybeRefresh() throws IOException {
     // it's ok to call lock() here (blocking) because we're supposed to get here
     // from either maybeRefresh() or maybeRefreshBlocking(), after the lock has
@@ -170,13 +190,17 @@ public abstract class ReferenceManager<G> implements Closeable {
     refreshLock.lock();
     boolean refreshed = false;
     try {
+      // 获取内部的数据体
       final G reference = acquire();
       try {
+        // 触发所有前置钩子
         notifyRefreshListenersBefore();
+        // 子类通过重写该函数 实现数据的更新功能
         G newReference = refreshIfNeeded(reference);
         if (newReference != null) {
           assert newReference != reference : "refreshIfNeeded should return null if refresh wasn't needed";
           try {
+            // 之后的线程都只会获取到新数据了
             swapReference(newReference);
             refreshed = true;
           } finally {
@@ -186,6 +210,7 @@ public abstract class ReferenceManager<G> implements Closeable {
           }
         }
       } finally {
+        // 释放旧数据的引用计数
         release(reference);
         notifyRefreshListenersRefreshed(refreshed);
       }
@@ -213,7 +238,8 @@ public abstract class ReferenceManager<G> implements Closeable {
    * thread is currently refreshing.
    * </p>
    * @throws IOException if refreshing the resource causes an {@link IOException}
-   * @throws AlreadyClosedException if the reference manager has been {@link #close() closed}. 
+   * @throws AlreadyClosedException if the reference manager has been {@link #close() closed}.
+   * 尝试进行更新   应该是感知到某个信号后才会主动调用该方法
    */
   public final boolean maybeRefresh() throws IOException {
     ensureOpen();
@@ -242,7 +268,8 @@ public abstract class ReferenceManager<G> implements Closeable {
    * will return a refreshed instance. Otherwise, consider using the
    * non-blocking {@link #maybeRefresh()}.
    * @throws IOException if refreshing the resource causes an {@link IOException}
-   * @throws AlreadyClosedException if the reference manager has been {@link #close() closed}. 
+   * @throws AlreadyClosedException if the reference manager has been {@link #close() closed}.
+   * 阻塞直到确定调用了刷新函数
    */
   public final void maybeRefreshBlocking() throws IOException {
     ensureOpen();
@@ -268,6 +295,7 @@ public abstract class ReferenceManager<G> implements Closeable {
    * <p>
    * <b>NOTE:</b> it's safe to call this after {@link #close()}.
    * @throws IOException if the release operation on the given resource throws an {@link IOException}
+   * 在释放旧的数据时 不会直接进行清理 而是采用引用计数的方式  避免影响到其他使用者
    */
   public final void release(G reference) throws IOException {
     assert reference != null;
@@ -307,7 +335,9 @@ public abstract class ReferenceManager<G> implements Closeable {
   }
 
   /** Use to receive notification when a refresh has
-   *  finished.  See {@link #addListener}. */
+   *  finished.  See {@link #addListener}.
+   *  刷新监听器 在前后植入钩子
+   *  */
   public interface RefreshListener {
 
     /** Called right before a refresh attempt starts. */

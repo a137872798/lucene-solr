@@ -101,11 +101,17 @@ public class LRUQueryCache implements QueryCache, Accountable {
   private final Predicate<LeafReaderContext> leavesToCache;
   // maps queries that are contained in the cache to a singleton so that this
   // cache does not store several copies of the same query
+  /**
+   * 拆分成2个容器是有原因的
+   * lru算法针对的级别是 query  而查询时针对的级别是 唯一键
+   * 每一个查询单位 都有唯一的CacheKey  但是多个查询单元的query可能会相同 这样被经常查询的query认为具有更高的优先级  而在每个查询单元上 相同的query查询到的结果有可能不同
+   * 所以将 实现lru功能的容器 与存储数据的容器解耦
+   */
   private final Map<Query, Query> uniqueQueries;
   // The contract between this set and the per-leaf caches is that per-leaf caches
   // are only allowed to store sub-sets of the queries that are contained in
   // mostRecentlyUsedQueries. This is why write operations are performed under a lock
-  // 记录最近使用的 query 就是 uniqueQueries 的keySet
+  // 该容器应该实现了 lru算法
   private final Set<Query> mostRecentlyUsedQueries;
   /**
    * LeafCache 内部存储了一组命中的 docId
@@ -147,8 +153,8 @@ public class LRUQueryCache implements QueryCache, Accountable {
     this.skipCacheFactor = skipCacheFactor;
 
     uniqueQueries = new LinkedHashMap<>(16, 0.75f, true);
+    // keySet 实际上是一个链表结构 具有顺序性
     mostRecentlyUsedQueries = uniqueQueries.keySet();
-    // 基于线性探测法创建的 map
     cache = new IdentityHashMap<>();
     lock = new ReentrantLock();
     ramBytesUsed = 0;
@@ -190,13 +196,12 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
     @Override
     public boolean test(LeafReaderContext context) {
-      // 当前页的最大doc 必须超过 minSize  每个页上的doc可能就是相对值 比如到一个新的页又是从0开始
+      // 每个leaf 对应一个segment 而每个segment下面又是多个doc 这里是获取doc的总数
       final int maxDoc = context.reader().maxDoc();
-      // 当数据量不大的情况不考虑缓存   (是因为数据量小查询也快吗???)
+      // 当doc数量小于要求值时 不需要使用缓存
       if (maxDoc < minSize) {
         return false;
       }
-      // 获取最上层节点对应的上下文  该上下文记录的 docMax 应该就是全局范围的doc
       final IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(context);
       // 当前叶子节点 (段)  内部存储的文档数 要在全局范围内超过最小比率才允许缓存
       final float sizeRatio = (float) context.reader().maxDoc() / topLevelContext.reader().maxDoc();
@@ -290,7 +295,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
   }
 
   /** Whether evictions are required. */
-  // 检测是否需要清理数据
+  // 是否需要清理长期未使用的缓存  2种指标  1 缓存的数据对应的query数超过了限制值   2 缓存的数据大小超过了允许的最大缓存大小
   boolean requiresEviction() {
     assert lock.isHeldByCurrentThread();
     final int size = mostRecentlyUsedQueries.size();
@@ -312,20 +317,20 @@ public class LRUQueryCache implements QueryCache, Accountable {
     assert key instanceof BoostQuery == false;
     assert key instanceof ConstantScoreQuery == false;
     final IndexReader.CacheKey readerKey = cacheHelper.getKey();
-    // 通过缓存键 定位到cache 对象
+    // 通过缓存键 定位到cache对象   每个cache对象对应在这个segment下查询到的所有doc
     final LeafCache leafCache = cache.get(readerKey);
     if (leafCache == null) {
       onMiss(readerKey, key);
       return null;
     }
     // this get call moves the query to the most-recently-used position
-    // 做一层额外的映射  当映射失败时认为缓存未命中
+    // uniqueQueries 通过linkedHashMap 实现lru算法 所以这里是检测数据是否因为 lru算法导致被移除
     final Query singleton = uniqueQueries.get(key);
     if (singleton == null) {
       onMiss(readerKey, key);
       return null;
     }
-    // cache对象内部也是一个容器   可以通过query定位到具体的文档
+    // 返回一组命中的docId 列表
     final DocIdSet cached = leafCache.get(singleton);
     if (cached == null) {
       onMiss(readerKey, singleton);
@@ -339,16 +344,15 @@ public class LRUQueryCache implements QueryCache, Accountable {
    * 将数据插入到缓存中
    * @param query
    * @param set  本次查询的结果集
-   * @param cacheHelper
+   * @param cacheHelper  该对象用于提供缓存键  缓存键在查询时 通过 == 进行匹配
    */
   private void putIfAbsent(Query query, DocIdSet set, IndexReader.CacheHelper cacheHelper) {
     assert query instanceof BoostQuery == false;
     assert query instanceof ConstantScoreQuery == false;
     // under a lock to make sure that mostRecentlyUsedQueries and cache remain sync'ed
-    // 该锁的目的主要是为了确保 2个非线程安全的容器 同步操作
     lock.lock();
     try {
-      // 该容器本身应该是额外做了一层多对1的映射
+      // 加入到 lru链表尾部  当query重复传入时 会更新在链表中的位置
       Query singleton = uniqueQueries.putIfAbsent(query, query);
       // 代表首次插入到缓存
       if (singleton == null) {
@@ -365,10 +369,12 @@ public class LRUQueryCache implements QueryCache, Accountable {
         ramBytesUsed += HASHTABLE_RAM_BYTES_PER_ENTRY;
         assert previous == null;
         // we just created a new leaf cache, need to register a close listener
-        // helper对象是使用方传入的   这里为helper追加一个监听器 负责回调
+        // 当检测到cacheHelper 绑定的资源被关闭时 触发清理钩子 将产生的所有数据从缓存中移除
         cacheHelper.addClosedListener(this::clearCoreCacheKey);
       }
+      // 将query 对应的查询结果存储在缓存中 方便之后复用
       leafCache.putIfAbsent(query, set);
+      // 每当插入新的数据时 检测 是否超过了缓存上线 并清理过期数据
       evictIfNecessary();
     } finally {
       lock.unlock();
@@ -403,6 +409,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
   /**
    * Remove all cache entries for the given core cache key.
+   * 当资源被关闭时 清理相关缓存
    */
   public void clearCoreCacheKey(Object coreKey) {
     lock.lock();
@@ -438,10 +445,15 @@ public class LRUQueryCache implements QueryCache, Accountable {
     }
   }
 
+  /**
+   * 当 lru链表中某个 query被移除时触发
+   * @param singleton
+   */
   private void onEviction(Query singleton) {
     assert lock.isHeldByCurrentThread();
     onQueryEviction(singleton, LINKED_HASHTABLE_RAM_BYTES_PER_ENTRY + QUERY_DEFAULT_RAM_BYTES_USED);
     for (LeafCache leafCache : cache.values()) {
+      // 在 cache容器中移除相关数据
       leafCache.remove(singleton);
     }
   }
@@ -505,6 +517,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
 
   // pkg-private for testing
   // return the list of cached queries in LRU order
+  // 将最近使用过的所有query返回
   List<Query> cachedQueries() {
     lock.lock();
     try {
@@ -668,13 +681,19 @@ public class LRUQueryCache implements QueryCache, Accountable {
   }
 
   // this class is not thread-safe, everything but ramBytesUsed needs to be called under a lock
-  // 缓存对象  包含 query 到一组文件id的映射
   private class LeafCache implements Accountable {
 
     private final Object key;
+    /**
+     * 每个查询结果在这个segment下命中的所有doc
+     */
     private final Map<Query, DocIdSet> cache;
     private volatile long ramBytesUsed;
 
+    /**
+     *
+     * @param key 缓存键对象
+     */
     LeafCache(Object key) {
       this.key = key;
       cache = new IdentityHashMap<>();
@@ -837,6 +856,7 @@ public class LRUQueryCache implements QueryCache, Accountable {
               }
 
               Scorer scorer = supplier.get(Long.MAX_VALUE);
+              // 在处理后将结果设置到 缓存中
               DocIdSet docIdSet = cacheImpl(new DefaultBulkScorer(scorer), context.reader().maxDoc());
               putIfAbsent(in.getQuery(), docIdSet, cacheHelper);
               DocIdSetIterator disi = docIdSet.iterator();
