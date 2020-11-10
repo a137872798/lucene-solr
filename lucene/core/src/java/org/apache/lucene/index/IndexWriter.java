@@ -1014,7 +1014,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             String[] files = directory.listAll();
 
             // Set up our initial SegmentInfos:
-            // 获取手动指定的提交信息
+            // 在append模式下才会设置
             IndexCommit commit = config.getIndexCommit();
 
             // Set up our initial SegmentInfos:
@@ -1022,7 +1022,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (commit == null) {
                 reader = null;
             } else {
-                // 比如 ReadCommit 就允许携带一个reader对象
+                // 默认情况下 ReaderCommit内部的reader是null
                 reader = commit.getReader();
             }
 
@@ -1060,7 +1060,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 // 标记 infos发生了变化
                 changed();
 
-                // 如果在初始化时传入了指定的reader 则使用该reader当前读取的segment进行初始化
+                // 在append模式下 如果 commit中携带了 reader对象
             } else if (reader != null) {
                 // Init from an existing already opened NRT or non-NRT reader:
 
@@ -1099,7 +1099,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 rollbackSegments = lastCommit.createBackupSegmentInfos();
-                // 沿用之前的 segmentInfo
+                // 代表处于 append模式下 并且在commit中没有携带reader
             } else {
                 // Init from either the latest commit point, or an explicit prior commit point:
 
@@ -1110,7 +1110,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
 
                 // Do not use SegmentInfos.read(Directory) since the spooky
                 // retrying it does is not necessary here (we hold the write lock):
-                // 读取上一个 segment_N 的数据
+                // 读取最新的 segment_N 的数据
                 segmentInfos = SegmentInfos.readCommit(directoryOrig, lastSegmentsFile);
 
                 // 如果传入了commit则使用它的segmentInfos进行初始化

@@ -184,7 +184,7 @@ final class IndexFileDeleter implements Closeable {
             if (infoStream.isEnabled("IFD")) {
               infoStream.message("IFD", "init: load commit \"" + fileName + "\"");
             }
-            // 获取那个时间点对应的segmentInfos信息
+            // 解析获取对应的segmentInfos 数据
             SegmentInfos sis = SegmentInfos.readCommit(directoryOrig, fileName);
 
             // 将他们设置到commitsToDelete队列中 这样当产生新的段时 就可以将旧的数据删除了
@@ -274,6 +274,7 @@ final class IndexFileDeleter implements Closeable {
     // Finally, give policy a chance to remove things on
     // startup:
     // 这里基于特定的删除策略做处理 此时如果是 KeepOnlyLastCommitDeletionPolicy 那么只会保留最新的segmentInfos
+    // 这里还没有处理引用计数啥的 只是将segment 转移到  commitsToDelete 中
     policy.onInit(commits);
 
     // Always protect the incoming segmentInfos since
@@ -418,6 +419,9 @@ final class IndexFileDeleter implements Closeable {
    */
   private void deleteCommits() throws IOException {
 
+    // 只保留初始化时指定的segment  和 最新的segment
+
+    // 对应deletionPolicy 指定的删除commit  默认情况下会保留最新的segment
     int size = commitsToDelete.size();
 
     if (size > 0) {
@@ -431,7 +435,7 @@ final class IndexFileDeleter implements Closeable {
           infoStream.message("IFD", "deleteCommits: now decRef commit \"" + commit.getSegmentsFileName() + "\"");
         }
         try {
-          // 引用计数归0的文件会被删除
+          // 引用计数归0的文件会被删除  只有初始化时被选中的 segment的引用计数不会归0
           decRef(commit.files);
         } catch (Throwable t) {
           firstThrowable = IOUtils.useOrSuppress(firstThrowable, t);
