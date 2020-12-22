@@ -1099,10 +1099,10 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 rollbackSegments = lastCommit.createBackupSegmentInfos();
-                // 代表处于 append模式下 并且在commit中没有携带reader
-            } else {
-                // Init from either the latest commit point, or an explicit prior commit point:
 
+            } else {
+                // 代表处于 append模式下 并且在commit中没有携带reader
+                // Init from either the latest commit point, or an explicit prior commit point:
                 String lastSegmentsFile = SegmentInfos.getLastCommitSegmentsFileName(files);
                 if (lastSegmentsFile == null) {
                     throw new IndexNotFoundException("no segments* file found in " + directory + ": files: " + Arrays.toString(files));
@@ -1178,7 +1178,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 assert create || filesExist(segmentInfos);
             }
 
-            // 代表段文件已经被删除了
+            // 代表启动时指定的segment 已经被设置成deleted了
             if (deleter.startingCommitDeleted) {
                 // Deletion policy deleted the "head" commit point.
                 // We have to mark ourself as changed so that if we
@@ -3826,7 +3826,6 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     * 在提交数据前 应该尽可能的将segment进行合并
      * @param mergePolicy
      * @return
      * @throws IOException

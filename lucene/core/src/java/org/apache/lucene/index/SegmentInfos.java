@@ -987,6 +987,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
             // 将文件重命名
             final String src = IndexFileNames.fileNameFromGeneration(IndexFileNames.PENDING_SEGMENTS, "", generation);
             dest = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS, "", generation);
+            // 这个rename会发生覆盖操作 如果此时有 segment_N pending_segment_N 那么本次操作将会覆盖之前的 segment_N
             dir.rename(src, dest);
             // 同步元数据到底是干嘛的
             dir.syncMetaData();

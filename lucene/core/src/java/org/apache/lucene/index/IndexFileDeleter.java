@@ -187,7 +187,7 @@ final class IndexFileDeleter implements Closeable {
             // 解析获取对应的segmentInfos 数据
             SegmentInfos sis = SegmentInfos.readCommit(directoryOrig, fileName);
 
-            // 将他们设置到commitsToDelete队列中 这样当产生新的段时 就可以将旧的数据删除了
+            // 将他们设置到commitsToDelete队列中 当满足删除条件时本对象就会被加入到 commitsToDelete队列中
             final CommitPoint commitPoint = new CommitPoint(commitsToDelete, directoryOrig, sis);
             // 代表此时遍历到的是本次正在使用的段文件
             if (sis.getGeneration() == segmentInfos.getGeneration()) {
@@ -195,7 +195,7 @@ final class IndexFileDeleter implements Closeable {
             }
             commits.add(commitPoint);
 
-            // 将当前segment_N下所有索引文件的引用计数都增加
+            // 将当前segment_N下所有索引文件的引用计数都增加  isCommit代表本次增加的文件是否包含 segment_N 自身  自此所有索引文件ref都为1了
             incRef(sis, true);
               
             if (lastSegmentInfos == null || sis.getGeneration() > lastSegmentInfos.getGeneration()) {
@@ -207,7 +207,7 @@ final class IndexFileDeleter implements Closeable {
       }
     }
 
-    // 这种情况可能发生么???
+    // TODO 先忽略这种情况  因为目前看来 currentCommitPoint不会为null
     if (currentCommitPoint == null && currentSegmentsFile != null && initialIndexExists) {
       // We did not in fact see the segments_N file
       // corresponding to the segmentInfos that was passed
@@ -231,6 +231,7 @@ final class IndexFileDeleter implements Closeable {
     }
 
     // 因为reader已经被初始化了 为下面的所有索引文件增加引用计数 确保文件不会被意外删除
+    // 而当reader还没有初始化时 所有索引文件的引用计数还是只有1
     if (isReaderInit) {
       // Incoming SegmentInfos may have NRT changes not yet visible in the latest commit, so we have to protect its files from deletion too:
       checkpoint(segmentInfos, false);
@@ -245,7 +246,7 @@ final class IndexFileDeleter implements Closeable {
       relevantFiles.addAll(pendingDeletions);
     }
     // refCounts only includes "normal" filenames (does not include write.lock)
-    // 检测segment的gen相关信息是否合法 避免出现冲突的情况
+    // 检测segment的gen相关信息是否合法 避免出现冲突的情况   与删除流程本身无关  先忽略
     inflateGens(segmentInfos, relevantFiles, infoStream);
 
     // Now delete anything with ref count at 0.  These are
@@ -285,6 +286,7 @@ final class IndexFileDeleter implements Closeable {
     if (currentCommitPoint == null) {
       startingCommitDeleted = false;
     } else {
+      // 因为默认只保留最后一个 segment_N 所以此时正在使用的已经被标记成删除了
       startingCommitDeleted = currentCommitPoint.isDeleted();
     }
 
