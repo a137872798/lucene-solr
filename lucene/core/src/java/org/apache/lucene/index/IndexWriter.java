@@ -1051,6 +1051,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     // 更新gen的初始值  这样当发生变动时 以当前gen为基准增加
                     sis.updateGenerationVersionAndCounter(previous);
                 }
+                // 如果之前没有segment_N 文件 那么此时只有一个空的segmentInfos对象
                 segmentInfos = sis;
                 // 触发rollback时 使用的segment
                 rollbackSegments = segmentInfos.createBackupSegmentInfos();

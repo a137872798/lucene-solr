@@ -138,7 +138,7 @@ final class IndexFileDeleter implements Closeable {
    * @param files  当前 indexWriter 在操作前可观测到的所有文件  也就是之前提交的   如果选择打开一个新的段文件 那么该数组应该为空
    * @param policy 代表使用的删除策略
    * @param segmentInfos 本次打开的段信息 可能是延续上次的 也可能是本次新建的
-   * @param initialIndexExists 代表目录下之前就存在 segment_N 文件
+   * @param initialIndexExists 代表目录下之前就存在 segment_N 文件     在创建IndexWriter时 是允许dir下之前没有segment_N的 但是此时创建模式必须是 CREATE
    * @param isReaderInit 代表初始化IndexWriter时 是否指定了reader对象
    */
   public IndexFileDeleter(String[] files, Directory directoryOrig, Directory directory, IndexDeletionPolicy policy, SegmentInfos segmentInfos,
@@ -148,7 +148,7 @@ final class IndexFileDeleter implements Closeable {
     this.infoStream = infoStream;
     this.writer = writer;
 
-    // 本次使用的segment_N文件
+    // 本次使用的segment_N文件   如果之前还没有segment_N文件 生成一个 segment_0的文件名
     final String currentSegmentsFile = segmentInfos.getSegmentsFileName();
 
     if (infoStream.isEnabled("IFD")) {
@@ -207,7 +207,7 @@ final class IndexFileDeleter implements Closeable {
       }
     }
 
-    // TODO 先忽略这种情况  因为目前看来 currentCommitPoint不会为null
+    // TODO
     if (currentCommitPoint == null && currentSegmentsFile != null && initialIndexExists) {
       // We did not in fact see the segments_N file
       // corresponding to the segmentInfos that was passed
