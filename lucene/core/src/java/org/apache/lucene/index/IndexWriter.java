@@ -1022,7 +1022,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
             if (commit == null) {
                 reader = null;
             } else {
-                // 默认情况下 ReaderCommit内部的reader是null
+                // 当指定commit时 reader会读取对应的数据
                 reader = commit.getReader();
             }
 
@@ -1079,6 +1079,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 }
 
                 // Must clone because we don't want the incoming NRT reader to "see" any changes this writer now makes:
+                // 如果在初始化时 就指定了commit信息 那么会将commit的数据还原到内存中
                 segmentInfos = reader.segmentInfos.clone();
 
                 SegmentInfos lastCommit;
@@ -1126,6 +1127,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                     }
 
                     SegmentInfos oldInfos = SegmentInfos.readCommit(directoryOrig, commit.getSegmentsFileName());
+                    // 注意该方法是不会替换 userData的 所以在ES中可以看到 是手动替换userData
                     segmentInfos.replace(oldInfos);
                     changed();
 
@@ -1138,7 +1140,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                 rollbackSegments = segmentInfos.createBackupSegmentInfos();
             }
 
-            // 上面已经完成了 segmentInfos 的数据读取
+            // 上面已经完成了 segmentInfos 的数据读取  如果在初始化时指定了 indexCommit 那么此时读取的就是对应的userData 否则默认使用最新的commit
             commitUserData = new HashMap<>(segmentInfos.getUserData()).entrySet();
 
             pendingNumDocs.set(segmentInfos.totalMaxDoc());
@@ -3602,7 +3604,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                                 segmentInfos.changed();
                             }
 
-                            // 该属性是由用户设置的
+                            // 更新当前 segment中的用户信息
                             if (commitUserData != null) {
                                 Map<String, String> userData = new HashMap<>();
                                 for (Map.Entry<String, String> ent : commitUserData) {
@@ -3619,7 +3621,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             // sneak into the commit point:
                             toCommit = segmentInfos.clone();
 
-                            // 每次segment的信息发生变化 就会修改该值
+                            // 每次segment的信息发生变化 就会修改该值   该属性是判断在 pendingCommit 与commit执行时 是否又发生了change
                             pendingCommitChangeCount = changeCount.get();
 
                             // This protects the segmentInfos we are now going
@@ -3627,7 +3629,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
                             // we are trying to sync all referenced files, a
                             // merge completes which would otherwise have
                             // removed the files we are now syncing.
-                            // 获取此时所有segment下的文件名  但是不包含 segment_N 文件  看来segment_N 文件应该就是描述了某次 IndexWriter下所有活跃段的信息
+                            // 获取此时所有segment下的文件名  但是不包含 segment_N 文件
                             filesToCommit = toCommit.files(false);
                             deleter.incRef(filesToCommit);
                         }
@@ -3872,7 +3874,7 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
     }
 
     /**
-     *
+     * 将pendingSegmentN 文件修改成 segmentN 文件
      * @throws IOException
      */
     @SuppressWarnings("try")
@@ -5325,8 +5327,8 @@ public class IndexWriter implements Closeable, TwoPhaseCommit, Accountable,
      * prepare a new segments_N file but do not fully commit
      * it.
      *
-     * 为生成 segment_N 做准备
-     * @param toSync 参与生成segment_N 的数据    实际上就是  IndexWriter.segmentInfos 的副本
+     * @param toSync
+     * 该阶段就是生成 pendingCommit
      */
     private void startCommit(final SegmentInfos toSync) throws IOException {
 

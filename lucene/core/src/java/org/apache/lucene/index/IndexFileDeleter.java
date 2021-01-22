@@ -193,6 +193,8 @@ final class IndexFileDeleter implements Closeable {
             if (sis.getGeneration() == segmentInfos.getGeneration()) {
               currentCommitPoint = commitPoint;
             }
+
+            // 该对象维护此时所有 segment_N 对应的 commitpoint对象
             commits.add(commitPoint);
 
             // 将当前segment_N下所有索引文件的引用计数都增加  isCommit代表本次增加的文件是否包含 segment_N 自身  自此所有索引文件ref都为1了
@@ -437,7 +439,7 @@ final class IndexFileDeleter implements Closeable {
           infoStream.message("IFD", "deleteCommits: now decRef commit \"" + commit.getSegmentsFileName() + "\"");
         }
         try {
-          // 引用计数归0的文件会被删除  只有初始化时被选中的 segment的引用计数不会归0
+          // 引用计数归0的文件会被删除  初始化时指定的 segment_N 如果不是lastSegmentN 也会被删除 但是他的相关索引文件不会被删除
           decRef(commit.files);
         } catch (Throwable t) {
           firstThrowable = IOUtils.useOrSuppress(firstThrowable, t);
@@ -585,9 +587,9 @@ final class IndexFileDeleter implements Closeable {
     // 为目标文件增加引用计数
     incRef(segmentInfos, isCommit);
 
+    // 如果是由于提交 导致的checkpoint操作 还会将满足条件的其他文件删除  即只保留最新的segmentN 以及相关的索引文件  当然如果其他文件正在被使用就无法删除
     if (isCommit) {
       // Append to our commits list:
-      // 在 commit的场景下调用 、会创建新的检查点对象
       commits.add(new CommitPoint(commitsToDelete, directoryOrig, segmentInfos));
 
       // Tell policy so it can remove commits:
