@@ -45,6 +45,10 @@ import org.apache.lucene.util.IOSupplier;
  * 配合软删除使用
  */
 public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMergePolicy {
+
+  /**
+   * 被指定成软删除的field
+   */
   private final String field;
   private final Supplier<Query> retentionQuerySupplier;
   /**
@@ -61,7 +65,7 @@ public final class SoftDeletesRetentionMergePolicy extends OneMergeWrappingMerge
       @Override
       public CodecReader wrapForMerge(CodecReader reader) throws IOException {
         CodecReader wrapped = toWrap.wrapForMerge(reader);
-        // 该位图中包含了软删除的doc
+        // 携带软删除field的doc 还是会保留在liveDoc中
         Bits liveDocs = reader.getLiveDocs();
         if (liveDocs == null) { // no deletes - just keep going
           return wrapped;
